@@ -173,6 +173,15 @@ test('storefront includes quick cart, stock visibility and refreshed branding', 
 	assert.match(css, /\.stock-status/);
 });
 
+test('quick cart is a compact fixed shortcut that follows the viewport', () => {
+	const css = read('main.css');
+	assert.match(css, /\.quick-cart \{[^}]*position: fixed/);
+	assert.match(css, /\.quick-cart \{[^}]*right: 24px/);
+	assert.match(css, /\.quick-cart \{[^}]*bottom: 142px/);
+	assert.match(css, /\.quick-cart \{[^}]*z-index: 7/);
+	assert.match(css, /@media \(max-width: 480px\) \{ \.quick-cart \{[^}]*bottom: 126px/);
+});
+
 test('category cards show data-driven book counts without inventory management', () => {
 	const html = read('index.html');
 	const script = read('main.js');

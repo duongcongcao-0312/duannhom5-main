@@ -235,10 +235,15 @@ async function findOrder(ordersPath, orderId) {
     throw error;
   }
 
-  for (const line of contents.split("\n")) {
-    if (!line) continue;
-    const order = JSON.parse(line);
-    if (order.orderId === orderId) return order;
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const order = JSON.parse(line);
+      if (order && order.orderId === orderId) return order;
+    } catch {
+      // Ignore malformed entries so broken or partial log lines do not crash the API.
+      continue;
+    }
   }
   return null;
 }

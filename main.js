@@ -70,13 +70,9 @@ const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavori
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
-<<<<<<< HEAD
-const sortSelect = document.querySelector('#sortSelect');
-=======
 const sortFilter = document.querySelector('#sortFilter');
 const favoritesFilter = document.querySelector('#favoritesFilter');
 let showFavoritesOnly = false;
->>>>>>> 6df4a1f493f20bb3ecb37e1a43d62cbadf3065c3
 const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 
 function renderCategories() {
@@ -192,24 +188,10 @@ function showPaymentError(message) {
 	error.hidden = !message;
 }
 
-function getSortedBooks(booksToSort) {
-	if (!sortSelect) return booksToSort;
-	const sortedBooks = [...booksToSort];
-	if (sortSelect.value === 'price-asc') return sortedBooks.sort((left, right) => left.price - right.price);
-	if (sortSelect.value === 'price-desc') return sortedBooks.sort((left, right) => right.price - left.price);
-	return sortedBooks;
-}
-
 function renderBooks() {
 	if (!bookGrid || !searchInput || !categoryFilter) return;
 	const query = searchInput.value.trim().toLowerCase();
 	const category = categoryFilter.value;
-<<<<<<< HEAD
-	const visibleBooks = getSortedBooks(books.filter((book) => {
-		const matchesQuery = `${book.title} ${book.author}`.toLowerCase().includes(query);
-		return matchesQuery && (category === 'all' || book.category === category);
-	}));
-=======
 	let visibleBooks = books.filter((book) => {
 		const matchesQuery = `${book.title} ${book.author}`.toLowerCase().includes(query);
 		const matchesFavorite = !showFavoritesOnly || state.favorites.includes(book.title);
@@ -218,7 +200,6 @@ function renderBooks() {
 	if (sortFilter?.value === 'price-asc') visibleBooks.sort((a, b) => a.price - b.price);
 	if (sortFilter?.value === 'price-desc') visibleBooks.sort((a, b) => b.price - a.price);
 	if (sortFilter?.value === 'title') visibleBooks.sort((a, b) => a.title.localeCompare(b.title, 'vi'));
->>>>>>> 6df4a1f493f20bb3ecb37e1a43d62cbadf3065c3
 	bookGrid.innerHTML = visibleBooks.map((book) => `
 		<article class="book-card">
 			<div class="cover ${escapeHtml(book.cover)} has-image"><img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"><span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span></div>
@@ -348,9 +329,6 @@ if (cartItems) {
 }
 if (searchInput) searchInput.addEventListener('input', renderBooks);
 if (categoryFilter) categoryFilter.addEventListener('change', renderBooks);
-<<<<<<< HEAD
-if (sortSelect) sortSelect.addEventListener('change', renderBooks);
-=======
 if (sortFilter) sortFilter.addEventListener('change', renderBooks);
 if (favoritesFilter) favoritesFilter.addEventListener('click', () => {
 	showFavoritesOnly = !showFavoritesOnly;
@@ -377,7 +355,6 @@ document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
 		message.textContent = error.message;
 	}
 });
->>>>>>> 6df4a1f493f20bb3ecb37e1a43d62cbadf3065c3
 const cartButton = document.querySelector('#cartButton');
 if (cartButton) cartButton.addEventListener('click', () => toggleCart(true));
 document.querySelector('#quickCartButton')?.addEventListener('click', () => toggleCart(true));

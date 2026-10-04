@@ -142,6 +142,46 @@ test('account, membership discount and AI assistant are wired', () => {
 	assert.match(script, /getAiAnswer/);
 });
 
+test('catalog supports sorting, favorites, coupons and order tracking', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	assert.match(html, /id="sortFilter"/);
+	assert.match(html, /id="favoritesFilter"/);
+	assert.match(html, /id="couponInput"/);
+	assert.match(html, /id="trackOrderForm"/);
+	assert.match(script, /FAVORITES_STORAGE_KEY/);
+	assert.match(script, /api\/coupons/);
+	assert.match(script, /trackOrderForm/);
+	assert.match(server, /BOOKNEST10/);
+	assert.match(server, /couponCode/);
+});
+
+test('storefront includes quick cart, stock visibility and refreshed branding', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	const css = read('main.css');
+	assert.match(html, /id="quickCartButton"/);
+	assert.match(html, /class="brand-mark"[^>]*>.*<span>B<\/span><i>N<\/i>/s);
+	assert.match(script, /function getBookStock/);
+	assert.match(script, /quickCartSummary/);
+	assert.match(script, /quantityInCart >= getBookStock/);
+	assert.match(server, /defaultBookStock/);
+	assert.match(server, /vượt quá tồn kho/);
+	assert.match(css, /\.quick-cart/);
+	assert.match(css, /\.stock-status/);
+});
+
+test('quick cart is a compact fixed shortcut that follows the viewport', () => {
+	const css = read('main.css');
+	assert.match(css, /\.quick-cart \{[^}]*position: fixed/);
+	assert.match(css, /\.quick-cart \{[^}]*right: 24px/);
+	assert.match(css, /\.quick-cart \{[^}]*bottom: 142px/);
+	assert.match(css, /\.quick-cart \{[^}]*z-index: 7/);
+	assert.match(css, /@media \(max-width: 480px\) \{ \.quick-cart \{[^}]*bottom: 126px/);
+});
+
 test('category cards show data-driven book counts without inventory management', () => {
 	const html = read('index.html');
 	const script = read('main.js');

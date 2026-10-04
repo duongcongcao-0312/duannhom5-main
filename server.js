@@ -37,7 +37,12 @@ const publicRootFiles = new Set([
 ]);
 const bookCatalog = new Map(books.map((book) => [book.title, book]));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
+const coupons = new Map([
+  ["BOOKNEST10", { rate: 0.1, label: "Ưu đãi BookNest" }],
+  ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
+]);
 const maxRequestBytes = 1024 * 1024;
+const defaultBookStock = 12;
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -109,6 +114,7 @@ function createOrder(payload) {
   const phone = typeof payload.phone === "string" ? payload.phone.trim() : "";
   const paymentMethod = payload.paymentMethod;
   const discountRate = payload.discountRate;
+  const couponCode = typeof payload.couponCode === "string" ? payload.couponCode.trim().toUpperCase() : "";
 
   if (customerName.length < 2 || customerName.length > 120) {
     throw new RequestError(400, "Vui lòng kiểm tra họ tên người nhận.");
@@ -125,6 +131,9 @@ function createOrder(payload) {
   if (!allowedDiscountRates.has(discountRate)) {
     throw new RequestError(400, "Mức giảm giá không hợp lệ.");
   }
+  if (couponCode && !coupons.has(couponCode)) {
+    throw new RequestError(400, "Mã ưu đãi không hợp lệ hoặc đã hết hạn.");
+  }
   if (
     !Array.isArray(payload.items) ||
     payload.items.length === 0 ||
@@ -139,11 +148,14 @@ function createOrder(payload) {
       item && typeof item.title === "string"
         ? bookCatalog.get(item.title)
         : null;
+    const stock = Number.isInteger(book && book.stock) && book.stock >= 0
+      ? book.stock
+      : defaultBookStock;
     if (
       !book ||
       !Number.isInteger(item.quantity) ||
       item.quantity < 1 ||
-      item.quantity > 99
+      item.quantity > stock
     ) {
       throw new RequestError(
         400,
@@ -154,10 +166,10 @@ function createOrder(payload) {
       book.title,
       (quantities.get(book.title) || 0) + item.quantity,
     );
-    if (quantities.get(book.title) > 99) {
+    if (quantities.get(book.title) > stock) {
       throw new RequestError(
         400,
-        "Số lượng mỗi tựa sách không được vượt quá 99.",
+        "Số lượng sách vượt quá tồn kho.",
       );
     }
   }
@@ -176,7 +188,8 @@ function createOrder(payload) {
     (total, item) => total + item.lineTotal,
     0,
   );
-  const discount = Math.round(subtotal * discountRate);
+  const couponRate = couponCode ? coupons.get(couponCode).rate : 0;
+  const discount = Math.round(subtotal * Math.min(discountRate + couponRate, 0.3));
 
   return {
     orderId: randomUUID(),
@@ -188,6 +201,7 @@ function createOrder(payload) {
     address,
     paymentMethod,
     discountRate,
+    couponCode: couponCode || null,
     subtotal,
     discount,
     total: subtotal - discount,
@@ -202,6 +216,7 @@ function publicOrder(order) {
     status: order.status,
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
+    couponCode: order.couponCode,
     total: order.total,
     items: order.items.map(({ title, quantity, lineTotal }) => ({
       title,
@@ -220,10 +235,15 @@ async function findOrder(ordersPath, orderId) {
     throw error;
   }
 
-  for (const line of contents.split("\n")) {
-    if (!line) continue;
-    const order = JSON.parse(line);
-    if (order.orderId === orderId) return order;
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const order = JSON.parse(line);
+      if (order && order.orderId === orderId) return order;
+    } catch {
+      // Ignore malformed entries so broken or partial log lines do not crash the API.
+      continue;
+    }
   }
   return null;
 }
@@ -312,6 +332,17 @@ function createServer({
         request.headers["content-type"]?.split(";")[0] !== "application/json"
       ) {
         throw new RequestError(415, "Đơn hàng cần được gửi ở định dạng JSON.");
+      }
+
+      const couponMatch = requestUrl.pathname.match(/^\/api\/coupons\/([A-Za-z0-9_-]+)$/);
+      if (couponMatch && request.method === "GET") {
+        const coupon = coupons.get(couponMatch[1].toUpperCase());
+        if (!coupon) {
+          sendJson(response, 404, { error: "Mã ưu đãi không hợp lệ hoặc đã hết hạn." });
+          return;
+        }
+        sendJson(response, 200, coupon);
+        return;
       }
 
       const order = createOrder(await readJson(request));

@@ -266,6 +266,10 @@ function toggleCart(open) {
 	cartPanel.classList.toggle('open', open);
 	cartPanel.setAttribute('aria-hidden', String(!open));
 	document.querySelector('#overlay').classList.toggle('visible', open);
+	if (open && typeof aiChat !== 'undefined' && aiChat.classList.contains('open')) {
+		aiChat.classList.remove('open');
+		aiChat.setAttribute('aria-hidden', 'true');
+	}
 }
 
 if (bookGrid) {
@@ -538,6 +542,7 @@ function askAi(question) {
 
 document.querySelector('#aiLauncher').addEventListener('click', () => {
 	const open = !aiChat.classList.contains('open');
+	if (open) toggleCart(false);
 	aiChat.classList.toggle('open', open);
 	aiChat.setAttribute('aria-hidden', String(!open));
 	if (open) aiInput.focus();
@@ -555,4 +560,5 @@ renderAccount();
 if (hasCatalogShell) {
 	renderCategories();
 	renderBooks();
+	if (new URLSearchParams(window.location.search).get('cart') === 'open') toggleCart(true);
 }

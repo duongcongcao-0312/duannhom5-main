@@ -52,6 +52,15 @@ test('cart groups duplicate books and provides quantity controls', () => {
 	assert.match(css, /\.quantity-control/);
 });
 
+test('cart opens as a floating window above the BookNest assistant', () => {
+	const css = read('main.css');
+	const script = read('main.js');
+	assert.match(css, /\.cart-panel \{[^}]*position: fixed/);
+	assert.match(css, /\.cart-panel \{[^}]*bottom: 84px/);
+	assert.match(css, /\.cart-panel\.open \{[^}]*pointer-events: auto/);
+	assert.match(script, /if \(open\) toggleCart\(false\)/);
+});
+
 test('responsive CSS includes tablet and mobile breakpoints', () => {
 	const css = read('main.css');
 	assert.match(css, /max-width: 1024px/);
@@ -99,6 +108,27 @@ test('book cards link to a detailed description page', () => {
 	assert.match(script, /getBookDetailsUrl/);
 	assert.match(script, /class="details-link"/);
 	assert.match(read('book-detail.js'), /categoryDescriptions/);
+});
+
+test('book details support purchasing and related book discovery', () => {
+	const html = read('book.html');
+	const script = read('book-detail.js');
+	const css = read('main.css');
+	assert.match(html, /books-data\.js/);
+	assert.match(script, /id="buyBook"/);
+	assert.match(script, /localStorage\.setItem\('booknest-cart'/);
+	assert.match(script, /relatedBooks/);
+	assert.match(script, /Sách khác cùng thể loại/);
+	assert.match(css, /\.related-book-grid/);
+});
+
+test('book details support previous and next book navigation', () => {
+	const script = read('book-detail.js');
+	const css = read('main.css');
+	assert.match(script, /function getBookNavigation/);
+	assert.match(script, /Sách trước/);
+	assert.match(script, /Sách tiếp theo/);
+	assert.match(css, /\.detail-navigation/);
 });
 
 test('account, membership discount and AI assistant are wired', () => {

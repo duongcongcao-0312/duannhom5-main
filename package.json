@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "BookNest static bookstore website",
   "scripts": {
+    "start": "node server.js",
     "test": "node --test tests/site.test.js",
     "audit": "npm audit --omit=dev"
   }

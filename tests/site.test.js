@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const fsPromises = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { createServer } = require('../server');
 
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -70,7 +73,7 @@ test('SEO, legal and deployment assets exist', () => {
 });
 
 test('each book category contains eight titles', () => {
-	const script = read('main.js');
+	const script = read('books-data.js');
 	const categoryValues = ['van-hoc', 'ky-nang', 'kinh-te', 'khoa-hoc', 'lich-su', 'thieu-nhi', 'trinh-tham', 'tam-ly', 'cong-nghe', 'ngoai-ngu'];
 	categoryValues.forEach((category) => {
 		const count = (script.match(new RegExp(`category: '${category}'`, 'g')) || []).length;
@@ -107,4 +110,85 @@ test('category cards show data-driven book counts without inventory management',
 	assert.doesNotMatch(html, /Quản lý kho|inventoryDialog/);
 	assert.doesNotMatch(script, /INVENTORY_STORAGE_KEY|state\.inventory/);
 	assert.doesNotMatch(css, /\.inventory-dialog/);
+});
+
+test('orders are saved before confirmation and can be looked up without exposing delivery details', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-orders-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const address = server.address();
+	const baseUrl = `http://127.0.0.1:${address.port}`;
+	const payload = {
+		customerName: 'Nguyễn Văn A',
+		address: '12 Đường Sách, Quận 1',
+		phone: '0901234567',
+		paymentMethod: 'cod',
+		discountRate: 0.05,
+		items: [{ title: 'Nhà giả kim', quantity: 2 }]
+	};
+
+	const response = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	assert.equal(response.status, 201);
+	const confirmation = await response.json();
+	assert.match(confirmation.orderId, /^[0-9a-f-]{36}$/i);
+	assert.equal(confirmation.total, 169100);
+	assert.equal(confirmation.items[0].quantity, 2);
+	assert.ok((await fsPromises.readFile(ordersPath, 'utf8')).includes(confirmation.orderId));
+
+	const lookupResponse = await fetch(`${baseUrl}/api/orders/${confirmation.orderId}`);
+	assert.equal(lookupResponse.status, 200);
+	const order = await lookupResponse.json();
+	assert.equal(order.orderId, confirmation.orderId);
+	assert.equal(order.total, 169100);
+	assert.equal(Object.hasOwn(order, 'phone'), false);
+	assert.equal(Object.hasOwn(order, 'address'), false);
+
+	const privateDataResponse = await fetch(`${baseUrl}/data/orders.jsonl`);
+	assert.equal(privateDataResponse.status, 404);
+	const serverSourceResponse = await fetch(`${baseUrl}/server.js`);
+	assert.equal(serverSourceResponse.status, 404);
+});
+
+test('invalid books are rejected without saving an order', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-order-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+
+	const response = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Nguyễn Văn A',
+			address: '12 Đường Sách, Quận 1',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Tựa sách không có', quantity: 1 }]
+		})
+	});
+	assert.equal(response.status, 400);
+	assert.equal(await fsPromises.stat(ordersPath).then(() => true, (error) => {
+		if (error.code === 'ENOENT') return false;
+		throw error;
+	}), false);
 });

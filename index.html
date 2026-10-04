@@ -39,6 +39,7 @@
         <button class="cart-button" id="cartButton" type="button" aria-label="Mở giỏ hàng">
             Giỏ hàng <span id="cartCount" aria-live="polite">0</span>
         </button>
+        <button class="account-button" id="trackOrderButton" type="button">Tra cứu đơn</button>
         <button class="account-button" id="accountButton" type="button">Đăng nhập</button>
     </header>
 
@@ -105,6 +106,13 @@
                         <option value="ky-nang">Kỹ năng sống</option>
                         <option value="kinh-te">Kinh tế</option>
                     </select>
+                    <select id="sortFilter" aria-label="Sắp xếp sách">
+                        <option value="featured">Sắp xếp nổi bật</option>
+                        <option value="price-asc">Giá thấp đến cao</option>
+                        <option value="price-desc">Giá cao đến thấp</option>
+                        <option value="title">Tên A-Z</option>
+                    </select>
+                    <button class="secondary-button favorites-filter" id="favoritesFilter" type="button" aria-pressed="false">♡ Yêu thích</button>
                 </div>
             </div>
             <div class="book-grid" id="bookGrid"></div>
@@ -152,8 +160,19 @@
     <aside class="cart-panel" id="cartPanel" aria-label="Giỏ hàng" aria-hidden="true">
         <div class="cart-header"><h2>Giỏ hàng</h2><button id="closeCart" type="button" aria-label="Đóng giỏ hàng">×</button></div>
         <div id="cartItems"><p class="cart-empty">Giỏ hàng đang trống.</p></div>
+        <div class="coupon-box"><label for="couponInput">Mã ưu đãi</label><div><input id="couponInput" type="text" maxlength="20" placeholder="Ví dụ: BOOKNEST10"><button id="applyCoupon" type="button">Áp dụng</button></div><p id="couponMessage" role="status"></p></div>
         <div class="cart-footer"><div><span>Tạm tính</span><strong id="cartSubtotal">0 đ</strong></div><div class="discount-line" id="discountLine" hidden><span>Ưu đãi thành viên</span><strong id="cartDiscount">-0 đ</strong></div><div><span>Thành tiền</span><strong id="cartTotal">0 đ</strong></div><button class="primary-button" id="checkoutButton" type="button" disabled>Thanh toán</button></div>
     </aside>
+    <dialog class="account-dialog" id="trackOrderDialog" aria-labelledby="trackOrderTitle">
+        <div class="payment-header"><h2 id="trackOrderTitle">Tra cứu đơn hàng</h2><button id="closeTrackOrder" type="button" aria-label="Đóng tra cứu">×</button></div>
+        <form id="trackOrderForm">
+            <p class="account-note">Nhập mã đơn hàng sau khi đặt hàng để xem trạng thái và các sách đã mua.</p>
+            <label class="service-field">Mã đơn hàng<input name="orderId" type="text" placeholder="Ví dụ: 123e4567-e89b..." required></label>
+            <p class="form-error" id="trackOrderError" role="alert" hidden></p>
+            <button class="primary-button payment-submit" type="submit">Tra cứu</button>
+        </form>
+        <section class="order-result" id="orderResult" hidden></section>
+    </dialog>
     <div class="overlay" id="overlay"></div>
     <button class="ai-launcher" id="aiLauncher" type="button" aria-label="Mở trợ lý BookNest">✦ <span>Hỏi BookNest</span></button>
     <aside class="ai-chat" id="aiChat" aria-label="Trợ lý hỏi đáp BookNest" aria-hidden="true">

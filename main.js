@@ -14,6 +14,8 @@ const categories = [
 ];
 
 const CART_STORAGE_KEY = 'booknest-cart';
+const FAVORITES_STORAGE_KEY = 'booknest-favorites';
+const COUPON_STORAGE_KEY = 'booknest-coupon';
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
@@ -50,10 +52,22 @@ function loadCurrentUser() {
 	}
 }
 
-const state = { cart: loadCart(), user: loadCurrentUser() };
+function loadFavorites() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]');
+		return Array.isArray(saved) ? saved.filter((title) => books.some((book) => book.title === title)) : [];
+	} catch (error) {
+		return [];
+	}
+}
+
+const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavorites(), coupon: localStorage.getItem(COUPON_STORAGE_KEY) || '' };
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
+const sortFilter = document.querySelector('#sortFilter');
+const favoritesFilter = document.querySelector('#favoritesFilter');
+let showFavoritesOnly = false;
 const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 
 function renderCategories() {
@@ -84,6 +98,10 @@ function getDiscountRate() {
 
 function getDiscountLabel() {
 	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi thành viên';
+}
+
+function getCouponRate() {
+	return state.coupon === 'BOOKNEST10' ? 0.1 : state.coupon === 'WELCOME5' ? 0.05 : 0;
 }
 
 function getAiAnswer(question) {
@@ -169,16 +187,20 @@ function renderBooks() {
 	if (!bookGrid || !searchInput || !categoryFilter) return;
 	const query = searchInput.value.trim().toLowerCase();
 	const category = categoryFilter.value;
-	const visibleBooks = books.filter((book) => {
+	let visibleBooks = books.filter((book) => {
 		const matchesQuery = `${book.title} ${book.author}`.toLowerCase().includes(query);
-		return matchesQuery && (category === 'all' || book.category === category);
+		const matchesFavorite = !showFavoritesOnly || state.favorites.includes(book.title);
+		return matchesQuery && matchesFavorite && (category === 'all' || book.category === category);
 	});
+	if (sortFilter?.value === 'price-asc') visibleBooks.sort((a, b) => a.price - b.price);
+	if (sortFilter?.value === 'price-desc') visibleBooks.sort((a, b) => b.price - a.price);
+	if (sortFilter?.value === 'title') visibleBooks.sort((a, b) => a.title.localeCompare(b.title, 'vi'));
 	bookGrid.innerHTML = visibleBooks.map((book) => `
 		<article class="book-card">
 			<div class="cover ${escapeHtml(book.cover)} has-image"><img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"><span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span></div>
 			<div class="book-info">
 				<h3>${escapeHtml(book.title)}</h3><p class="author">${escapeHtml(book.author)}</p>
-				<div class="book-bottom"><span class="price">${formatPrice(book.price)}</span><a class="details-link" href="${getBookDetailsUrl(book)}">Chi tiết</a><button class="add-button" data-title="${escapeHtml(book.title)}" type="button">Thêm vào giỏ</button></div>
+				<div class="book-bottom"><span class="price">${formatPrice(book.price)}</span><a class="details-link" href="${getBookDetailsUrl(book)}">Chi tiết</a><button class="favorite-button ${state.favorites.includes(book.title) ? 'active' : ''}" data-favorite-title="${escapeHtml(book.title)}" type="button" aria-label="${state.favorites.includes(book.title) ? 'Bỏ yêu thích' : 'Thêm yêu thích'}">${state.favorites.includes(book.title) ? '♥' : '♡'}</button><button class="add-button" data-title="${escapeHtml(book.title)}" type="button">Thêm vào giỏ</button></div>
 			</div>
 		</article>`).join('');
 	removeFailedImages(bookGrid);
@@ -186,6 +208,13 @@ function renderBooks() {
 	const bookCount = document.querySelector('#bookCount');
 	if (emptyState) emptyState.hidden = visibleBooks.length > 0;
 	if (bookCount) bookCount.textContent = visibleBooks.length;
+}
+
+function toggleFavorite(title) {
+	if (state.favorites.includes(title)) state.favorites = state.favorites.filter((item) => item !== title);
+	else state.favorites.push(title);
+	localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(state.favorites));
+	renderBooks();
 }
 
 function addToCart(title) {
@@ -246,7 +275,7 @@ function renderCart() {
 	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(book.price * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 	removeFailedImages(cartItems);
 	const subtotal = state.cart.reduce((sum, book) => sum + book.price, 0);
-	const discount = Math.round(subtotal * getDiscountRate());
+	const discount = Math.round(subtotal * Math.min(getDiscountRate() + getCouponRate(), 0.3));
 	const total = subtotal - discount;
 	document.querySelector('#cartSubtotal').textContent = formatPrice(subtotal);
 	document.querySelector('#cartDiscount').textContent = `-${formatPrice(discount)}`;
@@ -259,6 +288,8 @@ function renderCart() {
 	updatePaymentQr(total);
 	const checkoutButton = document.querySelector('#checkoutButton');
 	if (checkoutButton) checkoutButton.disabled = state.cart.length === 0;
+	const couponInput = document.querySelector('#couponInput');
+	if (couponInput && state.coupon) couponInput.value = state.coupon;
 }
 
 function toggleCart(open) {
@@ -276,6 +307,8 @@ if (bookGrid) {
 	bookGrid.addEventListener('click', (event) => {
 		const button = event.target.closest('.add-button');
 		if (button) addToCart(button.dataset.title);
+		const favoriteButton = event.target.closest('[data-favorite-title]');
+		if (favoriteButton) toggleFavorite(favoriteButton.dataset.favoriteTitle);
 	});
 }
 const cartItems = document.querySelector('#cartItems');
@@ -287,6 +320,32 @@ if (cartItems) {
 }
 if (searchInput) searchInput.addEventListener('input', renderBooks);
 if (categoryFilter) categoryFilter.addEventListener('change', renderBooks);
+if (sortFilter) sortFilter.addEventListener('change', renderBooks);
+if (favoritesFilter) favoritesFilter.addEventListener('click', () => {
+	showFavoritesOnly = !showFavoritesOnly;
+	favoritesFilter.setAttribute('aria-pressed', String(showFavoritesOnly));
+	favoritesFilter.textContent = showFavoritesOnly ? '♥ Đang xem yêu thích' : '♡ Yêu thích';
+	renderBooks();
+});
+document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
+	const input = document.querySelector('#couponInput');
+	const message = document.querySelector('#couponMessage');
+	const code = input.value.trim().toUpperCase();
+	if (!code) { message.textContent = 'Vui lòng nhập mã ưu đãi.'; return; }
+	try {
+		const response = await fetch(`/api/coupons/${encodeURIComponent(code)}`);
+		const result = await response.json();
+		if (!response.ok) throw new Error(result.error || 'Mã ưu đãi không hợp lệ.');
+		state.coupon = code;
+		localStorage.setItem(COUPON_STORAGE_KEY, code);
+		message.textContent = `${result.label}: giảm ${result.rate * 100}%.`;
+		renderCart();
+	} catch (error) {
+		state.coupon = '';
+		localStorage.removeItem(COUPON_STORAGE_KEY);
+		message.textContent = error.message;
+	}
+});
 const cartButton = document.querySelector('#cartButton');
 if (cartButton) cartButton.addEventListener('click', () => toggleCart(true));
 document.querySelector('#closeCart')?.addEventListener('click', () => toggleCart(false));
@@ -331,6 +390,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 					phone,
 					paymentMethod: method,
 					discountRate: getDiscountRate(),
+					couponCode: state.coupon,
 					items
 				})
 			});
@@ -412,6 +472,7 @@ serviceForm.addEventListener('submit', (event) => {
 });
 const accountDialog = document.querySelector('#accountDialog');
 const accountButton = document.querySelector('#accountButton');
+const trackOrderDialog = document.querySelector('#trackOrderDialog');
 const accountViews = {
 	login: document.querySelector('#loginForm'),
 	register: document.querySelector('#registerForm'),
@@ -519,6 +580,32 @@ document.querySelector('#logoutButton').addEventListener('click', () => {
 	renderAccount();
 	renderCart();
 	setAccountView('login');
+});
+document.querySelector('#trackOrderButton')?.addEventListener('click', () => {
+	document.querySelector('#trackOrderError').hidden = true;
+	document.querySelector('#orderResult').hidden = true;
+	trackOrderDialog.showModal();
+});
+document.querySelector('#closeTrackOrder')?.addEventListener('click', () => trackOrderDialog.close());
+document.querySelector('#trackOrderForm')?.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const form = event.currentTarget;
+	const error = document.querySelector('#trackOrderError');
+	const result = document.querySelector('#orderResult');
+	error.hidden = true;
+	result.hidden = true;
+	if (!form.reportValidity()) return;
+	try {
+		const orderId = String(new FormData(form).get('orderId')).trim();
+		const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+		const order = await response.json();
+		if (!response.ok) throw new Error(order.error || 'Không tìm thấy đơn hàng.');
+		result.innerHTML = `<h3>Đơn hàng ${escapeHtml(order.orderId)}</h3><p>Trạng thái: <strong>${escapeHtml(order.status)}</strong></p><p>Tổng tiền: <strong>${formatPrice(order.total)}</strong></p><ul>${order.items.map((item) => `<li>${escapeHtml(item.title)} × ${item.quantity}</li>`).join('')}</ul>`;
+		result.hidden = false;
+	} catch (trackError) {
+		error.textContent = trackError instanceof Error ? trackError.message : 'Không thể tra cứu đơn hàng.';
+		error.hidden = false;
+	}
 });
 const aiChat = document.querySelector('#aiChat');
 const aiMessages = document.querySelector('#aiMessages');

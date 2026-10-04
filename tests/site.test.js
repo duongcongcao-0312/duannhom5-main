@@ -142,6 +142,21 @@ test('account, membership discount and AI assistant are wired', () => {
 	assert.match(script, /getAiAnswer/);
 });
 
+test('catalog supports sorting, favorites, coupons and order tracking', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	assert.match(html, /id="sortFilter"/);
+	assert.match(html, /id="favoritesFilter"/);
+	assert.match(html, /id="couponInput"/);
+	assert.match(html, /id="trackOrderForm"/);
+	assert.match(script, /FAVORITES_STORAGE_KEY/);
+	assert.match(script, /api\/coupons/);
+	assert.match(script, /trackOrderForm/);
+	assert.match(server, /BOOKNEST10/);
+	assert.match(server, /couponCode/);
+});
+
 test('category cards show data-driven book counts without inventory management', () => {
 	const html = read('index.html');
 	const script = read('main.js');

@@ -1,0 +1,19 @@
+{
+  "name": "BookNest | Sách hay mỗi ngày",
+  "short_name": "BookNest",
+  "lang": "vi",
+  "dir": "ltr",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3eb",
+  "theme_color": "#1d5545",
+  "description": "Cửa hàng sách trực tuyến BookNest",
+  "icons": [
+    {
+      "src": "assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

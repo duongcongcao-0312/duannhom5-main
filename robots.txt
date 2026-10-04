@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Disallow: /500.html
+Sitemap: https://booknest.example.com/sitemap.xml

@@ -41,6 +41,17 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
+test('cart groups duplicate books and provides quantity controls', () => {
+	const script = read('main.js');
+	const css = read('main.css');
+	assert.match(script, /function getCartGroups/);
+	assert.match(script, /function changeCartQuantity/);
+	assert.match(script, /data-cart-change="-1"/);
+	assert.match(script, /data-cart-change="1"/);
+	assert.match(script, /data-cart-change="-\$\{quantity\}"/);
+	assert.match(css, /\.quantity-control/);
+});
+
 test('responsive CSS includes tablet and mobile breakpoints', () => {
 	const css = read('main.css');
 	assert.match(css, /max-width: 1024px/);

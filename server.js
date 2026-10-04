@@ -42,6 +42,7 @@ const coupons = new Map([
   ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
 ]);
 const maxRequestBytes = 1024 * 1024;
+const defaultBookStock = 12;
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -147,11 +148,14 @@ function createOrder(payload) {
       item && typeof item.title === "string"
         ? bookCatalog.get(item.title)
         : null;
+    const stock = Number.isInteger(book && book.stock) && book.stock >= 0
+      ? book.stock
+      : defaultBookStock;
     if (
       !book ||
       !Number.isInteger(item.quantity) ||
       item.quantity < 1 ||
-      item.quantity > 99
+      item.quantity > stock
     ) {
       throw new RequestError(
         400,
@@ -162,10 +166,10 @@ function createOrder(payload) {
       book.title,
       (quantities.get(book.title) || 0) + item.quantity,
     );
-    if (quantities.get(book.title) > 99) {
+    if (quantities.get(book.title) > stock) {
       throw new RequestError(
         400,
-        "Số lượng mỗi tựa sách không được vượt quá 99.",
+        "Số lượng sách vượt quá tồn kho.",
       );
     }
   }

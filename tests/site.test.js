@@ -157,6 +157,22 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(server, /couponCode/);
 });
 
+test('storefront includes quick cart, stock visibility and refreshed branding', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	const css = read('main.css');
+	assert.match(html, /id="quickCartButton"/);
+	assert.match(html, /class="brand-mark"[^>]*>.*<span>B<\/span><i>N<\/i>/s);
+	assert.match(script, /function getBookStock/);
+	assert.match(script, /quickCartSummary/);
+	assert.match(script, /quantityInCart >= getBookStock/);
+	assert.match(server, /defaultBookStock/);
+	assert.match(server, /vượt quá tồn kho/);
+	assert.match(css, /\.quick-cart/);
+	assert.match(css, /\.stock-status/);
+});
+
 test('category cards show data-driven book counts without inventory management', () => {
 	const html = read('index.html');
 	const script = read('main.js');

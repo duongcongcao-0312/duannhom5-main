@@ -16,6 +16,7 @@ const categories = [
 const CART_STORAGE_KEY = 'booknest-cart';
 const FAVORITES_STORAGE_KEY = 'booknest-favorites';
 const COUPON_STORAGE_KEY = 'booknest-coupon';
+const DEFAULT_BOOK_STOCK = 12;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
@@ -42,6 +43,10 @@ function loadCart() {
 	} catch (error) {
 		return [];
 	}
+}
+
+function getBookStock(book) {
+	return Number.isInteger(book.stock) && book.stock >= 0 ? book.stock : DEFAULT_BOOK_STOCK;
 }
 
 function loadCurrentUser() {
@@ -199,8 +204,8 @@ function renderBooks() {
 		<article class="book-card">
 			<div class="cover ${escapeHtml(book.cover)} has-image"><img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"><span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span></div>
 			<div class="book-info">
-				<h3>${escapeHtml(book.title)}</h3><p class="author">${escapeHtml(book.author)}</p>
-				<div class="book-bottom"><span class="price">${formatPrice(book.price)}</span><a class="details-link" href="${getBookDetailsUrl(book)}">Chi tiết</a><button class="favorite-button ${state.favorites.includes(book.title) ? 'active' : ''}" data-favorite-title="${escapeHtml(book.title)}" type="button" aria-label="${state.favorites.includes(book.title) ? 'Bỏ yêu thích' : 'Thêm yêu thích'}">${state.favorites.includes(book.title) ? '♥' : '♡'}</button><button class="add-button" data-title="${escapeHtml(book.title)}" type="button">Thêm vào giỏ</button></div>
+				<h3>${escapeHtml(book.title)}</h3><p class="author">${escapeHtml(book.author)}</p><p class="stock-status ${getBookStock(book) < 4 ? 'stock-low' : ''}">${getBookStock(book) ? `Còn ${getBookStock(book)} cuốn` : 'Tạm hết hàng'}</p>
+				<div class="book-bottom"><span class="price">${formatPrice(book.price)}</span><a class="details-link" href="${getBookDetailsUrl(book)}">Chi tiết</a><button class="favorite-button ${state.favorites.includes(book.title) ? 'active' : ''}" data-favorite-title="${escapeHtml(book.title)}" type="button" aria-label="${state.favorites.includes(book.title) ? 'Bỏ yêu thích' : 'Thêm yêu thích'}">${state.favorites.includes(book.title) ? '♥' : '♡'}</button><button class="add-button" data-title="${escapeHtml(book.title)}" type="button" ${getBookStock(book) === 0 ? 'disabled' : ''}>${getBookStock(book) === 0 ? 'Hết hàng' : 'Thêm vào giỏ'}</button></div>
 			</div>
 		</article>`).join('');
 	removeFailedImages(bookGrid);
@@ -220,6 +225,8 @@ function toggleFavorite(title) {
 function addToCart(title) {
 	const book = books.find((item) => item.title === title);
 	if (!book) return;
+	const quantityInCart = state.cart.filter((item) => item.title === title).length;
+	if (quantityInCart >= getBookStock(book)) return;
 	state.cart.push(book);
 	renderCart();
 }
@@ -238,7 +245,7 @@ function changeCartQuantity(title, change) {
 	if (firstIndex < 0 || !Number.isInteger(change) || !change) return;
 	if (change > 0) {
 		const book = state.cart[firstIndex];
-		if (state.cart.filter((item) => item.title === title).length < 99) state.cart.push(book);
+		if (state.cart.filter((item) => item.title === title).length < getBookStock(book)) state.cart.push(book);
 	} else {
 		state.cart.splice(firstIndex, Math.min(Math.abs(change), state.cart.filter((book) => book.title === title).length));
 	}
@@ -268,10 +275,12 @@ function renderCart() {
 	} catch (error) {
 	}
 	const cartCount = document.querySelector('#cartCount');
+	const quickCartSummary = document.querySelector('#quickCartSummary');
 	const cartItems = document.querySelector('#cartItems');
 	if (!cartItems) return;
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
+	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
 	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(book.price * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 	removeFailedImages(cartItems);
 	const subtotal = state.cart.reduce((sum, book) => sum + book.price, 0);
@@ -348,6 +357,7 @@ document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
 });
 const cartButton = document.querySelector('#cartButton');
 if (cartButton) cartButton.addEventListener('click', () => toggleCart(true));
+document.querySelector('#quickCartButton')?.addEventListener('click', () => toggleCart(true));
 document.querySelector('#closeCart')?.addEventListener('click', () => toggleCart(false));
 document.querySelector('#overlay')?.addEventListener('click', () => toggleCart(false));
 document.querySelector('#checkoutButton')?.addEventListener('click', () => document.querySelector('#paymentDialog')?.showModal());

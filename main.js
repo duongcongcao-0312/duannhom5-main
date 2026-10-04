@@ -54,17 +54,24 @@ const state = { cart: loadCart(), user: loadCurrentUser() };
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
+const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 
 function renderCategories() {
+	if (!categoryFilter) return;
 	categoryFilter.innerHTML = '<option value="all">Tất cả thể loại</option>' + categories.map((category) => `<option value="${category.value}">${category.label}</option>`).join('');
-	document.querySelector('.category-list').innerHTML = categories.map((category) => {
-		const count = books.filter((book) => book.category === category.value).length;
-		return `<button data-category="${category.value}" type="button"><span>${category.label}<small>${count} tựa sách</small></span><span>→</span></button>`;
-	}).join('');
+	const categoryList = document.querySelector('.category-list');
+	if (categoryList) {
+		categoryList.innerHTML = categories.map((category) => {
+			const count = books.filter((book) => book.category === category.value).length;
+			return `<button data-category="${category.value}" type="button"><span>${category.label}<small>${count} tựa sách</small></span><span>→</span></button>`;
+		}).join('');
+	}
 	document.querySelectorAll('[data-category]').forEach((button) => button.addEventListener('click', () => {
+		if (!categoryFilter) return;
 		categoryFilter.value = button.dataset.category;
 		renderBooks();
-		document.querySelector('#books').scrollIntoView({ behavior: 'smooth' });
+		const booksSection = document.querySelector('#books');
+		if (booksSection) booksSection.scrollIntoView({ behavior: 'smooth' });
 	}));
 }
 
@@ -159,6 +166,7 @@ function showPaymentError(message) {
 }
 
 function renderBooks() {
+	if (!bookGrid || !searchInput || !categoryFilter) return;
 	const query = searchInput.value.trim().toLowerCase();
 	const category = categoryFilter.value;
 	const visibleBooks = books.filter((book) => {
@@ -174,8 +182,10 @@ function renderBooks() {
 			</div>
 		</article>`).join('');
 	removeFailedImages(bookGrid);
-	document.querySelector('#emptyState').hidden = visibleBooks.length > 0;
-	document.querySelector('#bookCount').textContent = visibleBooks.length;
+	const emptyState = document.querySelector('#emptyState');
+	const bookCount = document.querySelector('#bookCount');
+	if (emptyState) emptyState.hidden = visibleBooks.length > 0;
+	if (bookCount) bookCount.textContent = visibleBooks.length;
 }
 
 function addToCart(title) {
@@ -213,8 +223,10 @@ function renderCart() {
 		localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.cart.map((book) => book.title)));
 	} catch (error) {
 	}
-	document.querySelector('#cartCount').textContent = state.cart.length;
+	const cartCount = document.querySelector('#cartCount');
+	if (cartCount) cartCount.textContent = state.cart.length;
 	const cartItems = document.querySelector('#cartItems');
+	if (!cartItems) return;
 	cartItems.innerHTML = state.cart.length ? state.cart.map((book, index) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><p>${escapeHtml(book.title)}</p><strong>${formatPrice(book.price)}</strong><button class="remove-button" data-cart-index="${index}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 	removeFailedImages(cartItems);
 	const subtotal = state.cart.reduce((sum, book) => sum + book.price, 0);
@@ -222,12 +234,15 @@ function renderCart() {
 	const total = subtotal - discount;
 	document.querySelector('#cartSubtotal').textContent = formatPrice(subtotal);
 	document.querySelector('#cartDiscount').textContent = `-${formatPrice(discount)}`;
-	document.querySelector('#discountLine').hidden = discount === 0;
-	document.querySelector('#discountLine span').textContent = getDiscountLabel();
+	const discountLine = document.querySelector('#discountLine');
+	if (discountLine) discountLine.hidden = discount === 0;
+	const discountLineLabel = document.querySelector('#discountLine span');
+	if (discountLineLabel) discountLineLabel.textContent = getDiscountLabel();
 	document.querySelector('#cartTotal').textContent = formatPrice(total);
 	document.querySelector('#paymentTotal').textContent = formatPrice(total);
 	updatePaymentQr(total);
-	document.querySelector('#checkoutButton').disabled = state.cart.length === 0;
+	const checkoutButton = document.querySelector('#checkoutButton');
+	if (checkoutButton) checkoutButton.disabled = state.cart.length === 0;
 }
 
 function toggleCart(open) {
@@ -237,24 +252,31 @@ function toggleCart(open) {
 	document.querySelector('#overlay').classList.toggle('visible', open);
 }
 
-bookGrid.addEventListener('click', (event) => {
-	const button = event.target.closest('.add-button');
-	if (button) addToCart(button.dataset.title);
-});
-document.querySelector('#cartItems').addEventListener('click', (event) => {
-	const button = event.target.closest('.remove-button');
-	if (button) removeFromCart(Number(button.dataset.cartIndex));
-});
-searchInput.addEventListener('input', renderBooks);
-categoryFilter.addEventListener('change', renderBooks);
-document.querySelector('#cartButton').addEventListener('click', () => toggleCart(true));
-document.querySelector('#closeCart').addEventListener('click', () => toggleCart(false));
-document.querySelector('#overlay').addEventListener('click', () => toggleCart(false));
-document.querySelector('#checkoutButton').addEventListener('click', () => document.querySelector('#paymentDialog').showModal());
-document.querySelector('#closePayment').addEventListener('click', () => document.querySelector('#paymentDialog').close());
+if (bookGrid) {
+	bookGrid.addEventListener('click', (event) => {
+		const button = event.target.closest('.add-button');
+		if (button) addToCart(button.dataset.title);
+	});
+}
+const cartItems = document.querySelector('#cartItems');
+if (cartItems) {
+	document.querySelector('#cartItems').addEventListener('click', (event) => {
+		const button = event.target.closest('.remove-button');
+		if (button) removeFromCart(Number(button.dataset.cartIndex));
+	});
+}
+if (searchInput) searchInput.addEventListener('input', renderBooks);
+if (categoryFilter) categoryFilter.addEventListener('change', renderBooks);
+const cartButton = document.querySelector('#cartButton');
+if (cartButton) cartButton.addEventListener('click', () => toggleCart(true));
+document.querySelector('#closeCart')?.addEventListener('click', () => toggleCart(false));
+document.querySelector('#overlay')?.addEventListener('click', () => toggleCart(false));
+document.querySelector('#checkoutButton')?.addEventListener('click', () => document.querySelector('#paymentDialog')?.showModal());
+document.querySelector('#closePayment')?.addEventListener('click', () => document.querySelector('#paymentDialog')?.close());
 document.querySelectorAll('input[name="paymentMethod"]').forEach((input) => input.addEventListener('change', () => {
+	const transferDetails = document.querySelector('#transferDetails');
 	const isTransfer = input.value === 'transfer' && input.checked;
-	document.querySelector('#transferDetails').hidden = !isTransfer;
+	if (transferDetails) transferDetails.hidden = !isTransfer;
 }));
 document.querySelector('#paymentForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
@@ -514,5 +536,7 @@ document.querySelector('#aiForm').addEventListener('submit', (event) => {
 });
 document.querySelectorAll('[data-ai-question]').forEach((button) => button.addEventListener('click', () => askAi(button.dataset.aiQuestion)));
 renderAccount();
-renderCategories();
-renderBooks();
+if (hasCatalogShell) {
+	renderCategories();
+	renderBooks();
+}

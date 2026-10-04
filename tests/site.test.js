@@ -157,6 +157,20 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(server, /couponCode/);
 });
 
+test('book catalog supports price sorting with search and category filters', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	assert.match(html, /<option value="featured">Sắp xếp nổi bật<\/option>/);
+	assert.match(html, /<option value="price-asc">Giá thấp đến cao<\/option>/);
+	assert.match(html, /<option value="price-desc">Giá cao đến thấp<\/option>/);
+	assert.match(script, /const query = searchInput\.value\.trim\(\)\.toLowerCase\(\)/);
+	assert.match(script, /category === 'all' \|\| book\.category === category/);
+	assert.match(script, /visibleBooks\.sort\(\(a, b\) => a\.price - b\.price\)/);
+	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.price - a\.price\)/);
+	assert.match(script, /sortFilter\) sortFilter\.addEventListener\('change', renderBooks\)/);
+	assert.match(script, /data-title="\$\{escapeHtml\(book\.title\)\}"/);
+});
+
 test('storefront includes quick cart, stock visibility and refreshed branding', () => {
 	const html = read('index.html');
 	const script = read('main.js');

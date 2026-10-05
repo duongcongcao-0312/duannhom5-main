@@ -13,8 +13,7 @@ mục sách và máy chủ Node.js để tiếp nhận, lưu và tra cứu đơn
 - Thêm sách vào giỏ, điều chỉnh số lượng, áp dụng mã giảm giá và xem tổng tiền.
 - Đặt hàng bằng chuyển khoản qua mã QR hoặc thanh toán khi nhận hàng (COD).
   Máy chủ kiểm tra sách và tính giá, lưu đơn hàng rồi trả mã đơn để tra cứu.
-- Đăng ký thuê, thu mua và trao đổi sách; có trợ lý hỏi đáp và chương trình
-  hội viên.
+- Đăng ký thuê, thu mua và trao đổi sách; có trợ lý hỏi đáp và ưu đãi tài khoản.
 - Bố cục tương thích với máy tính và điện thoại, kèm trang chính sách, điều
   khoản và trang lỗi.
 
@@ -90,7 +89,7 @@ API tra cứu chỉ trả về thông tin đơn hàng cơ bản, không trả v�
 
 ## Lưu ý khi triển khai
 
-Đây là ứng dụng mẫu. Tài khoản hội viên và yêu cầu thuê/thu mua/trao đổi hiện
+Đây là ứng dụng mẫu. Tài khoản người dùng và yêu cầu thuê/thu mua/trao đổi hiện
 được lưu trong `localStorage` của trình duyệt; chúng chưa được xác thực hoặc
 đồng bộ an toàn qua máy chủ. Vì vậy, không dùng website để xử lý mật khẩu hay
 thông tin khách hàng thật.

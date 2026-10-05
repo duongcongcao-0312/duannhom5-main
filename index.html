@@ -186,7 +186,7 @@
             <button id="closeAi" type="button" aria-label="Đóng trợ lý">×</button>
         </div>
         <div class="ai-messages" id="aiMessages" aria-live="polite">
-            <div class="ai-message ai-message-bot">Xin chào! Mình có thể gợi ý sách, giải thích dịch vụ thuê/thu mua/trao đổi hoặc thông tin hội viên. Bạn muốn hỏi gì?</div>
+            <div class="ai-message ai-message-bot">Xin chào! Mình có thể gợi ý sách, giải thích dịch vụ thuê/thu mua/trao đổi hoặc ưu đãi tài khoản. Bạn muốn hỏi gì?</div>
         </div>
         <div class="ai-suggestions">
             <button type="button" data-ai-question="Gợi ý sách văn học hay">Sách văn học</button>
@@ -207,17 +207,16 @@
         <div class="account-tabs" role="tablist" aria-label="Tài khoản">
             <button class="account-tab active" data-account-view="login" type="button">Đăng nhập</button>
             <button class="account-tab" data-account-view="register" type="button">Đăng ký</button>
-            <button class="account-tab" data-account-view="member" type="button">Thẻ hội viên</button>
         </div>
         <form id="loginForm" class="account-form">
-            <p class="account-note">Đăng nhập để lưu giỏ hàng và nhận ưu đãi thành viên.</p>
+            <p class="account-note">Đăng nhập để lưu giỏ hàng và nhận ưu đãi tài khoản.</p>
             <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" required></label>
             <label class="service-field">Mật khẩu<input name="password" type="password" minlength="6" required></label>
             <p class="form-error" id="loginError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Đăng nhập</button>
         </form>
         <form id="registerForm" class="account-form" hidden>
-            <p class="account-note">Tạo tài khoản miễn phí và nhận thẻ hội viên BookNest.</p>
+            <p class="account-note">Tạo tài khoản miễn phí để lưu thông tin và nhận ưu đãi.</p>
             <label class="service-field">Họ và tên<input name="name" type="text" placeholder="Nguyễn Văn A" required></label>
             <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" required></label>
             <label class="service-field">Mật khẩu<input name="password" type="password" minlength="6" required></label>
@@ -232,16 +231,7 @@
             <p class="form-error" id="registerError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Tạo tài khoản</button>
         </form>
-        <section class="member-card-panel" id="memberPanel" hidden>
-            <div class="member-card">
-                <p class="eyebrow">BookNest membership</p>
-                <strong id="memberName">Bạn chưa đăng nhập</strong>
-                <span id="memberNumber">Đăng ký để nhận mã hội viên</span>
-                <b id="memberBenefit">Giảm 5% cho thành viên</b>
-            </div>
-            <p class="account-note" id="memberStatus">Đăng ký tài khoản để sở hữu thẻ hội viên điện tử.</p>
-            <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
-        </section>
+        <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
     </dialog>
     <dialog class="payment-dialog" id="paymentDialog" aria-labelledby="paymentTitle">
         <div class="payment-header">

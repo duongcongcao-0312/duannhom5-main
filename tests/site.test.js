@@ -131,15 +131,17 @@ test('book details support previous and next book navigation', () => {
 	assert.match(css, /\.detail-navigation/);
 });
 
-test('account, membership discount and AI assistant are wired', () => {
+test('account discounts and AI assistant are wired without membership cards', () => {
 	const html = read('index.html');
 	const script = read('main.js');
 	assert.match(html, /id="accountButton"/);
 	assert.match(html, /id="registerForm"/);
-	assert.match(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /data-account-view="member"/);
 	assert.match(html, /id="aiChat"/);
 	assert.match(script, /getDiscountRate/);
 	assert.match(script, /getAiAnswer/);
+	assert.doesNotMatch(script, /memberNumber/);
 });
 
 test('catalog supports sorting, favorites, coupons and order tracking', () => {

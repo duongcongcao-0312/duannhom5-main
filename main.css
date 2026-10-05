@@ -142,11 +142,6 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
 .account-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 10px 12px; }
 .account-tab.active { border-bottom-color: var(--coral); color: var(--ink); font-weight: 700; }
 .account-note { color: var(--muted); font-size: .88rem; line-height: 1.55; }
-.member-card { background: linear-gradient(125deg, var(--green), #327761); border-radius: 10px; box-shadow: 0 12px 25px #1d554533; color: white; display: grid; gap: 8px; min-height: 180px; padding: 24px; }
-.member-card .eyebrow { color: #f1ae78; margin-bottom: 12px; }
-.member-card strong { font-family: 'Playfair Display', serif; font-size: 1.5rem; }
-.member-card span { color: #dce8dd; font-size: .85rem; }
-.member-card b { font-size: .9rem; margin-top: auto; }
 .account-logout { background: transparent; cursor: pointer; margin-top: 8px; }
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); }
 .ai-launcher { align-items: center; background: var(--coral); border: 0; border-radius: 999px; bottom: 24px; box-shadow: 0 10px 25px #d85f4e55; color: white; display: flex; font-weight: 700; gap: 8px; padding: 13px 18px; position: fixed; right: 24px; z-index: 8; }

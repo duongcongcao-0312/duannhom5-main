@@ -102,7 +102,7 @@ function getDiscountRate() {
 }
 
 function getDiscountLabel() {
-	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi thành viên';
+	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi tài khoản';
 }
 
 function getCouponRate() {
@@ -114,8 +114,8 @@ function getAiAnswer(question) {
 	if (/(thuê|muon|mượn)/.test(normalized)) return 'Bạn có thể thuê sách theo tuần hoặc tháng. Hãy mở mục “Dịch vụ” ở cuối trang và chọn “Đăng ký thuê” để gửi tên sách và thông tin liên hệ.';
 	if (/(thu mua|bán sách|ban sach)/.test(normalized)) return 'BookNest nhận thu mua sách đã qua sử dụng. Chọn “Bán sách cho BookNest” trong mục “Dịch vụ”; đội ngũ sẽ xem tình trạng và phản hồi mức giá dự kiến.';
 	if (/(trao đổi|trao doi|đổi sách|doi sach)/.test(normalized)) return 'Bạn có thể đăng sách muốn trao đổi tại mục “Trao đổi sách”. Hãy ghi tên sách và cuốn bạn đang tìm để BookNest hỗ trợ ghép cặp.';
-	if (/(học sinh|sinh viên|sinh vien|ưu đãi|giam|giảm)/.test(normalized)) return 'Thành viên thông thường được giảm 5%. Học sinh và sinh viên được giảm 10% sau khi chọn đúng loại tài khoản và nhập mã học sinh/sinh viên.';
-	if (/(hội viên|hoi vien|thẻ|the thanh vien|đăng ký|dang ky)/.test(normalized)) return 'Bạn mở nút “Đăng nhập” ở đầu trang, chọn “Đăng ký”. Sau khi tạo tài khoản, BookNest tự cấp thẻ hội viên điện tử và mã thành viên.';
+	if (/(học sinh|sinh viên|sinh vien|ưu đãi|giam|giảm)/.test(normalized)) return 'Tài khoản thông thường được giảm 5%. Học sinh và sinh viên được giảm 10% sau khi chọn đúng loại tài khoản và nhập mã học sinh/sinh viên.';
+	if (/(hội viên|hoi vien|thẻ|the thanh vien|đăng ký|dang ky)/.test(normalized)) return 'Bạn mở nút “Đăng nhập” ở đầu trang, chọn “Đăng ký” để tạo tài khoản và nhận ưu đãi.';
 	const category = categories.find((item) => normalized.includes(item.label.toLowerCase()) || normalized.includes(item.value));
 	if (category) {
 		const recommendations = books.filter((book) => book.category === category.value).slice(0, 3);
@@ -123,7 +123,7 @@ function getAiAnswer(question) {
 	}
 	if (/(gợi ý|goi y|sách|sach|đọc gì|doc gi)/.test(normalized)) return 'Bạn có thể thử “Nhà giả kim”, “Mắt biếc” hoặc “Đi tìm lẽ sống”. Hãy cho mình biết thể loại bạn yêu thích để nhận gợi ý sát hơn nhé.';
 	if (/(thanh toán|thanh toan|cod|chuyển khoản|chuyen khoan)/.test(normalized)) return 'BookNest hỗ trợ chuyển khoản qua mã QR và thanh toán khi nhận hàng (COD). Bạn chọn phương thức ở bước thanh toán trong giỏ hàng.';
-	return 'Mình có thể hỗ trợ về gợi ý sách, thuê sách, thu mua, trao đổi, tài khoản hội viên và ưu đãi học sinh/sinh viên. Bạn thử hỏi cụ thể hơn nhé!';
+	return 'Mình có thể hỗ trợ về gợi ý sách, thuê sách, thu mua, trao đổi, tài khoản và ưu đãi học sinh/sinh viên. Bạn thử hỏi cụ thể hơn nhé!';
 }
 
 function getBookImage(book) {
@@ -485,8 +485,7 @@ const accountButton = document.querySelector('#accountButton');
 const trackOrderDialog = document.querySelector('#trackOrderDialog');
 const accountViews = {
 	login: document.querySelector('#loginForm'),
-	register: document.querySelector('#registerForm'),
-	member: document.querySelector('#memberPanel')
+	register: document.querySelector('#registerForm')
 };
 
 function readUsers() {
@@ -506,17 +505,9 @@ function setAccountView(view) {
 function renderAccount() {
 	if (state.user) {
 		accountButton.textContent = state.user.name;
-		document.querySelector('#memberName').textContent = state.user.name;
-		document.querySelector('#memberNumber').textContent = `Mã hội viên: ${state.user.memberNumber}`;
-		document.querySelector('#memberBenefit').textContent = getDiscountRate() === 0.1 ? 'Giảm 10% cho học sinh / sinh viên' : 'Giảm 5% cho thành viên';
-		document.querySelector('#memberStatus').textContent = 'Thẻ hội viên điện tử đang hoạt động trên tài khoản này.';
 		document.querySelector('#logoutButton').hidden = false;
 	} else {
 		accountButton.textContent = 'Đăng nhập';
-		document.querySelector('#memberName').textContent = 'Bạn chưa đăng nhập';
-		document.querySelector('#memberNumber').textContent = 'Đăng ký để nhận mã hội viên';
-		document.querySelector('#memberBenefit').textContent = 'Giảm 5% cho thành viên';
-		document.querySelector('#memberStatus').textContent = 'Đăng ký tài khoản để sở hữu thẻ hội viên điện tử.';
 		document.querySelector('#logoutButton').hidden = true;
 	}
 }
@@ -529,7 +520,7 @@ function showAccountError(id, message) {
 
 accountButton.addEventListener('click', () => {
 	renderAccount();
-	setAccountView(state.user ? 'member' : 'login');
+	setAccountView('login');
 	accountDialog.showModal();
 });
 document.querySelector('#closeAccount').addEventListener('click', () => accountDialog.close());
@@ -551,7 +542,7 @@ document.querySelector('#loginForm').addEventListener('submit', (event) => {
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
-	setAccountView('member');
+	setAccountView('login');
 	event.currentTarget.reset();
 });
 document.querySelector('#registerForm').addEventListener('submit', (event) => {
@@ -571,8 +562,7 @@ document.querySelector('#registerForm').addEventListener('submit', (event) => {
 		email,
 		password: data.get('password'),
 		studentType: data.get('studentType'),
-		studentId: String(data.get('studentId') || '').trim(),
-		memberNumber: `BN${Date.now().toString().slice(-8)}`
+		studentId: String(data.get('studentId') || '').trim()
 	};
 	users.push(user);
 	localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
@@ -580,7 +570,7 @@ document.querySelector('#registerForm').addEventListener('submit', (event) => {
 	state.user = user;
 	renderAccount();
 	renderCart();
-	setAccountView('member');
+	setAccountView('login');
 	form.reset();
 	document.querySelector('.student-id-field').hidden = true;
 });

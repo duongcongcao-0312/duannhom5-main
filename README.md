@@ -63,28 +63,62 @@ dữ liệu khách thật trong môi trường thử nghiệm.
 
 Các API hiện có:
 
-| Phương thức | Đường dẫn | Mô tả |
-| --- | --- | --- |
-| `GET` | `/api/coupons/:code` | Kiểm tra mã ưu đãi |
-| `POST` | `/api/orders` | Xác thực và lưu đơn hàng |
-| `GET` | `/api/orders/:id` | Tra cứu trạng thái và chi tiết cơ bản của đơn |
+| Phương thức | Đường dẫn | Quyền hạn | Mô tả |
+| --- | --- | --- | --- |
+| `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi |
+| `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng |
+| `GET` | `/api/orders/:id` | Công khai | Tra cứu trạng thái và chi tiết cơ bản của đơn |
+| `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản (mã hoá scrypt) |
+| `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận token xác thực |
+| `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại |
+| `POST` | `/api/auth/logout` | Người dùng | Đăng xuất tài khoản |
+| `GET` | `/api/books` | Công khai | Lấy toàn bộ danh mục sách |
+| `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua, trao đổi sách |
+| `GET` | `/api/admin/stats` | Quản trị | Thống kê doanh thu, đơn hàng, người dùng |
+| `GET` | `/api/admin/orders` | Quản trị | Xem danh sách đầy đủ tất cả đơn hàng |
+| `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn và thanh toán |
+| `POST` | `/api/admin/books` | Quản trị | Thêm sách mới vào hệ thống |
+| `PUT` | `/api/admin/books/:id` | Quản trị | Cập nhật thông tin và tồn kho sách |
+| `DELETE` | `/api/admin/books/:id` | Quản trị | Xoá sách khỏi hệ thống |
+| `GET` | `/api/admin/services` | Quản trị | Xem các yêu cầu dịch vụ sách |
+| `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật trạng thái yêu cầu dịch vụ |
+| `GET` | `/api/admin/users` | Quản trị | Xem danh sách thành viên |
 
-API tra cứu chỉ trả về thông tin đơn hàng cơ bản, không trả về địa chỉ hoặc số
-điện thoại. Khi đặt hàng thành công, hãy lưu mã đơn để tra cứu sau.
+## Cổng quản trị (Admin Portal)
 
-## Cấu trúc chính
+Hệ thống có trang quản trị chuyên biệt tại đường dẫn: <http://127.0.0.1:8000/admin.html>.
+- **Tài khoản quản trị viên mặc định**: `admin@booknest.vn`
+- **Mật khẩu**: `admin123`
+
+Trang quản trị cho phép:
+1. **Bảng điều khiển**: Thống kê doanh thu, số đơn hàng đang xử lý, số sách, số thành viên.
+2. **Quản lý đơn hàng**: Xem chi tiết người nhận (tên, SĐT, địa chỉ, phương thức COD/QR), lọc theo trạng thái và đổi trạng thái đơn (Mới nhận, Đang xử lý, Đang giao, Hoàn tất, Đã huỷ).
+3. **Quản lý kho sách**: Thêm sách mới (tiêu đề, tác giả, thể loại, giá, tồn kho, ảnh bìa, mô tả), chỉnh sửa hoặc xoá sách.
+4. **Yêu cầu dịch vụ**: Tiếp nhận và chuyển trạng thái các yêu cầu thuê/thu mua/đổi sách của bạn đọc.
+5. **Thành viên**: Xem danh sách thành viên, vai trò và phân loại đối tượng (Học sinh / Sinh viên / Khách hàng).
+
+## Cấu trúc mã nguồn
 
 ```text
 .
-├── assets/           # Biểu tượng và tài nguyên tĩnh
-├── tests/            # Kiểm thử giao diện và API
-├── books-data.js     # Danh mục sách dùng chung
-├── book.html         # Trang chi tiết sách
-├── book-detail.js    # Tương tác cho trang chi tiết
-├── index.html        # Trang chính
-├── main.css          # Giao diện và bố cục responsive
-├── main.js           # Tìm kiếm, giỏ hàng và tương tác giao diện
-└── server.js         # Máy chủ web và API
+├── assets/                 # Biểu tượng và tài nguyên tĩnh
+├── backend/                # Xử lý phía máy chủ (Backend)
+│   ├── auth.js             # Mã hoá mật khẩu scrypt & quản lý token phiên
+│   └── db.js               # Lưu trữ dữ liệu (Users, Books, Services, Orders)
+├── data/                   # Thư mục dữ liệu (Users, Orders, Services)
+├── tests/                  # Kiểm thử giao diện và API
+│   ├── site.test.js        # Kiểm thử giao diện storefront & API đơn hàng
+│   └── backend.test.js     # Kiểm thử toàn bộ API Backend & Admin
+├── admin.html              # Giao diện trang quản trị Admin
+├── admin.css               # Phong cách trang quản trị
+├── admin.js                # Tương tác và gọi API trang quản trị
+├── books-data.js           # Danh mục sách dùng chung
+├── book.html               # Trang chi tiết sách
+├── book-detail.js          # Tương tác cho trang chi tiết
+├── index.html              # Trang chủ cửa hàng
+├── main.css                # Giao diện và bố cục responsive
+├── main.js                 # Tương tác giao diện và tích hợp API
+└── server.js               # Máy chủ Node.js REST API & tĩnh
 ```
 
 ## Lưu ý khi triển khai

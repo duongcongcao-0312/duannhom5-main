@@ -473,6 +473,11 @@ serviceForm.addEventListener('submit', (event) => {
 		if (!Array.isArray(savedRequests)) throw new Error('Không thể lưu yêu cầu lúc này.');
 		savedRequests.push(request);
 		localStorage.setItem(SERVICE_REQUESTS_STORAGE_KEY, JSON.stringify(savedRequests));
+		fetch('/api/services', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		}).catch(() => {});
 		alert(`Đã nhận yêu cầu ${serviceDetails[request.service].title.toLowerCase()} của ${request.name}. BookNest sẽ sớm liên hệ!`);
 		serviceForm.reset();
 		serviceDialog.close();
@@ -528,12 +533,43 @@ document.querySelectorAll('.account-tab').forEach((tab) => tab.addEventListener(
 document.querySelector('#registerForm select[name="studentType"]').addEventListener('change', (event) => {
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
-document.querySelector('#loginForm').addEventListener('submit', (event) => {
+document.querySelector('#loginForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
 	showAccountError('#loginError', '');
 	if (!event.currentTarget.reportValidity()) return;
-	const formData = new FormData(event.currentTarget);
-	const user = readUsers().find((item) => item.email === formData.get('email') && item.password === formData.get('password'));
+	const form = event.currentTarget;
+	const formData = new FormData(form);
+	const email = String(formData.get('email') || '').trim().toLowerCase();
+	const password = String(formData.get('password') || '');
+
+	try {
+		const response = await fetch('/api/auth/login', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password })
+		});
+		if (response.ok) {
+			const data = await response.json();
+			if (data.token) localStorage.setItem('booknest-auth-token', data.token);
+			if (data.user && data.user.role === 'admin') localStorage.setItem('booknest-admin-token', data.token);
+			state.user = data.user;
+			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
+			renderAccount();
+			renderCart();
+			setAccountView('login');
+			accountDialog.close();
+			form.reset();
+			return;
+		} else if (response.status === 401) {
+			const errorData = await response.json().catch(() => ({}));
+			showAccountError('#loginError', errorData.error || 'Email hoặc mật khẩu chưa đúng.');
+			return;
+		}
+	} catch {
+		// Server offline fallback
+	}
+
+	const user = readUsers().find((item) => item.email === email && item.password === password);
 	if (!user) {
 		showAccountError('#loginError', 'Email hoặc mật khẩu chưa đúng.');
 		return;
@@ -543,20 +579,16 @@ document.querySelector('#loginForm').addEventListener('submit', (event) => {
 	renderAccount();
 	renderCart();
 	setAccountView('login');
-	event.currentTarget.reset();
+	accountDialog.close();
+	form.reset();
 });
-document.querySelector('#registerForm').addEventListener('submit', (event) => {
+document.querySelector('#registerForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
 	showAccountError('#registerError', '');
 	const form = event.currentTarget;
 	if (!form.reportValidity()) return;
 	const data = new FormData(form);
-	const users = readUsers();
 	const email = String(data.get('email')).trim().toLowerCase();
-	if (users.some((item) => item.email === email)) {
-		showAccountError('#registerError', 'Email này đã được đăng ký.');
-		return;
-	}
 	const user = {
 		name: String(data.get('name')).trim(),
 		email,
@@ -564,6 +596,42 @@ document.querySelector('#registerForm').addEventListener('submit', (event) => {
 		studentType: data.get('studentType'),
 		studentId: String(data.get('studentId') || '').trim()
 	};
+
+	try {
+		const response = await fetch('/api/auth/register', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(user)
+		});
+		if (response.ok) {
+			const resData = await response.json();
+			if (resData.token) localStorage.setItem('booknest-auth-token', resData.token);
+			state.user = resData.user || user;
+			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
+			const users = readUsers();
+			users.push(user);
+			localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+			renderAccount();
+			renderCart();
+			setAccountView('login');
+			accountDialog.close();
+			form.reset();
+			document.querySelector('.student-id-field').hidden = true;
+			return;
+		} else {
+			const errorData = await response.json().catch(() => ({}));
+			showAccountError('#registerError', errorData.error || 'Email này đã được đăng ký.');
+			return;
+		}
+	} catch {
+		// Server offline fallback
+	}
+
+	const users = readUsers();
+	if (users.some((item) => item.email === email)) {
+		showAccountError('#registerError', 'Email này đã được đăng ký.');
+		return;
+	}
 	users.push(user);
 	localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
@@ -571,10 +639,22 @@ document.querySelector('#registerForm').addEventListener('submit', (event) => {
 	renderAccount();
 	renderCart();
 	setAccountView('login');
+	accountDialog.close();
 	form.reset();
 	document.querySelector('.student-id-field').hidden = true;
 });
-document.querySelector('#logoutButton').addEventListener('click', () => {
+document.querySelector('#logoutButton').addEventListener('click', async () => {
+	try {
+		const token = localStorage.getItem('booknest-auth-token');
+		if (token) {
+			await fetch('/api/auth/logout', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` }
+			});
+		}
+	} catch {}
+	localStorage.removeItem('booknest-auth-token');
+	localStorage.removeItem('booknest-admin-token');
 	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
 	renderAccount();

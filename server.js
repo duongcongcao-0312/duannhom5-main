@@ -3,6 +3,8 @@ const http = require("node:http");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const books = require("./books-data");
+const { Database } = require("./backend/db");
+const { SessionStore, verifyPassword } = require("./backend/auth");
 
 const root = __dirname;
 const defaultOrdersPath = path.join(root, "data", "orders.jsonl");
@@ -21,6 +23,9 @@ const mimeTypes = {
   ".xml": "application/xml; charset=utf-8",
 };
 const publicRootFiles = new Set([
+  "admin.css",
+  "admin.html",
+  "admin.js",
   "404.html",
   "500.html",
   "book-detail.js",
@@ -53,6 +58,7 @@ class RequestError extends Error {
 
 function sendJson(response, status, value) {
   response.writeHead(status, {
+    "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
@@ -298,20 +304,32 @@ async function serveStatic(request, response, pathname, staticRoot) {
     throw error;
   }
 
-	response.writeHead(200, {
-		'Cache-Control': 'no-cache',
-		'Content-Length': contents.length,
-		'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
-		'X-Content-Type-Options': 'nosniff'
-	});
-	response.end(request.method === 'HEAD' ? undefined : contents);
+  response.writeHead(200, {
+    "Cache-Control": "no-cache",
+    "Content-Length": contents.length,
+    "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(request.method === "HEAD" ? undefined : contents);
 }
 
 function createServer({
   ordersPath = defaultOrdersPath,
   staticRoot = root,
+  usersPath,
+  servicesPath,
+  booksPath,
 } = {}) {
   let persistenceQueue = Promise.resolve();
+  const db = new Database({ root, ordersPath, usersPath, servicesPath, booksPath });
+  const sessionStore = new SessionStore();
+
+  // Load custom books into catalog cache
+  db.getCustomBooks().then((custom) => {
+    for (const b of custom) {
+      if (b && b.title) bookCatalog.set(b.title, b);
+    }
+  }).catch(() => {});
 
   async function persistOrder(order) {
     await fs.mkdir(path.dirname(ordersPath), { recursive: true });
@@ -325,24 +343,124 @@ function createServer({
     await write;
   }
 
+  function getAuthUser(request) {
+    const authHeader = request.headers["authorization"] || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    return sessionStore.getSession(token);
+  }
+
+  function requireAdmin(request) {
+    const user = getAuthUser(request);
+    if (!user || user.role !== "admin") {
+      throw new RequestError(403, "Yêu cầu quyền quản trị viên.");
+    }
+    return user;
+  }
+
   async function handleRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
+
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      });
+      response.end();
+      return;
+    }
+
+    // --- API: Coupons (Look up discount coupon) ---
+    const couponMatch = requestUrl.pathname.match(/^\/api\/coupons\/([A-Za-z0-9_-]+)$/);
+    if (couponMatch && request.method === "GET") {
+      const coupon = coupons.get(couponMatch[1].toUpperCase());
+      if (!coupon) {
+        sendJson(response, 404, { error: "Mã ưu đãi không hợp lệ hoặc đã hết hạn." });
+        return;
+      }
+      sendJson(response, 200, coupon);
+      return;
+    }
+
+    // --- API: Auth (Register / Login / Profile / Logout) ---
+    if (requestUrl.pathname === "/api/auth/register" && request.method === "POST") {
+      const payload = await readJson(request);
+      if (!payload.email || !payload.password || !payload.name) {
+        throw new RequestError(400, "Vui lòng điền đầy đủ họ tên, email và mật khẩu.");
+      }
+      if (String(payload.password).length < 6) {
+        throw new RequestError(400, "Mật khẩu phải có ít nhất 6 ký tự.");
+      }
+      try {
+        const user = await db.createUser({
+          name: payload.name,
+          email: payload.email,
+          password: payload.password,
+          studentType: payload.studentType || "other",
+          studentId: payload.studentId || "",
+        });
+        const session = sessionStore.createSession(user);
+        sendJson(response, 201, {
+          token: session.token,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            studentType: user.studentType,
+            studentId: user.studentId,
+          },
+        });
+      } catch (err) {
+        throw new RequestError(400, err.message);
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/auth/login" && request.method === "POST") {
+      const payload = await readJson(request);
+      const user = await db.findUserByEmail(payload.email);
+      if (!user || !verifyPassword(payload.password, user.password)) {
+        throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
+      }
+      const session = sessionStore.createSession(user);
+      sendJson(response, 200, {
+        token: session.token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          studentType: user.studentType,
+          studentId: user.studentId,
+        },
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/auth/me" && request.method === "GET") {
+      const user = getAuthUser(request);
+      if (!user) {
+        throw new RequestError(401, "Chưa đăng nhập.");
+      }
+      sendJson(response, 200, { user });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/auth/logout" && request.method === "POST") {
+      const authHeader = request.headers["authorization"] || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      sessionStore.destroySession(token);
+      sendJson(response, 200, { message: "Đã đăng xuất thành công." });
+      return;
+    }
+
+    // --- API: Orders ---
     if (requestUrl.pathname === "/api/orders" && request.method === "POST") {
       if (
         request.headers["content-type"]?.split(";")[0] !== "application/json"
       ) {
         throw new RequestError(415, "Đơn hàng cần được gửi ở định dạng JSON.");
-      }
-
-      const couponMatch = requestUrl.pathname.match(/^\/api\/coupons\/([A-Za-z0-9_-]+)$/);
-      if (couponMatch && request.method === "GET") {
-        const coupon = coupons.get(couponMatch[1].toUpperCase());
-        if (!coupon) {
-          sendJson(response, 404, { error: "Mã ưu đãi không hợp lệ hoặc đã hết hạn." });
-          return;
-        }
-        sendJson(response, 200, coupon);
-        return;
       }
 
       const order = createOrder(await readJson(request));
@@ -364,15 +482,135 @@ function createServer({
       return;
     }
 
+    // --- API: Services (Thuê / Thu mua / Trao đổi) ---
+    if (requestUrl.pathname === "/api/services" && request.method === "POST") {
+      const payload = await readJson(request);
+      if (!payload.bookTitle || !payload.name || !payload.phone || !payload.service) {
+        throw new RequestError(400, "Vui lòng nhập đầy đủ thông tin dịch vụ.");
+      }
+      const entry = await db.addServiceRequest(payload);
+      sendJson(response, 201, { message: "Đã gửi yêu cầu thành công.", request: entry });
+      return;
+    }
+
+    // --- API: Books Catalog (Base + Custom) ---
+    if (requestUrl.pathname === "/api/books" && request.method === "GET") {
+      const custom = await db.getCustomBooks();
+      const allBooks = [...books, ...custom];
+      sendJson(response, 200, allBooks);
+      return;
+    }
+
+    // --- Admin API: Stats ---
+    if (requestUrl.pathname === "/api/admin/stats" && request.method === "GET") {
+      requireAdmin(request);
+      const stats = await db.getStats(ordersPath, books.length);
+      sendJson(response, 200, stats);
+      return;
+    }
+
+    // --- Admin API: Orders (Full detail, status update) ---
+    if (requestUrl.pathname === "/api/admin/orders" && request.method === "GET") {
+      requireAdmin(request);
+      const orders = await db.getAllOrders(ordersPath);
+      sendJson(response, 200, orders);
+      return;
+    }
+
+    const adminOrderMatch = requestUrl.pathname.match(/^\/api\/admin\/orders\/([0-9a-f-]+)$/i);
+    if (adminOrderMatch && (request.method === "PATCH" || request.method === "PUT")) {
+      requireAdmin(request);
+      const payload = await readJson(request);
+      const updated = await db.updateOrderStatus(adminOrderMatch[1], payload, ordersPath);
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy đơn hàng.");
+      }
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    // --- Admin API: Services ---
+    if (requestUrl.pathname === "/api/admin/services" && request.method === "GET") {
+      requireAdmin(request);
+      const list = await db.getServiceRequests();
+      sendJson(response, 200, list);
+      return;
+    }
+
+    const adminServiceMatch = requestUrl.pathname.match(/^\/api\/admin\/services\/([0-9a-f-]+)$/i);
+    if (adminServiceMatch && (request.method === "PATCH" || request.method === "PUT")) {
+      requireAdmin(request);
+      const payload = await readJson(request);
+      const updated = await db.updateServiceRequestStatus(adminServiceMatch[1], payload.status);
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy yêu cầu.");
+      }
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    // --- Admin API: Books Management ---
+    if (requestUrl.pathname === "/api/admin/books" && request.method === "POST") {
+      requireAdmin(request);
+      const payload = await readJson(request);
+      if (!payload.title || !payload.author || !payload.price) {
+        throw new RequestError(400, "Vui lòng nhập tên sách, tác giả và giá.");
+      }
+      const newBook = await db.addCustomBook(payload);
+      bookCatalog.set(newBook.title, newBook);
+      sendJson(response, 201, newBook);
+      return;
+    }
+
+    const adminBookMatch = requestUrl.pathname.match(/^\/api\/admin\/books\/([A-Za-z0-9_-]+)$/i);
+    if (adminBookMatch && (request.method === "PUT" || request.method === "PATCH")) {
+      requireAdmin(request);
+      const payload = await readJson(request);
+      const updated = await db.updateCustomBook(adminBookMatch[1], payload);
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy sách.");
+      }
+      if (updated.title) bookCatalog.set(updated.title, updated);
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    if (adminBookMatch && request.method === "DELETE") {
+      requireAdmin(request);
+      const deleted = await db.deleteCustomBook(adminBookMatch[1]);
+      sendJson(response, 200, { success: deleted });
+      return;
+    }
+
+    // --- Admin API: Users Management ---
+    if (requestUrl.pathname === "/api/admin/users" && request.method === "GET") {
+      requireAdmin(request);
+      const users = await db.getUsers();
+      const safeUsers = users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        studentType: u.studentType,
+        studentId: u.studentId,
+        createdAt: u.createdAt,
+      }));
+      sendJson(response, 200, safeUsers);
+      return;
+    }
+
+    // Catch unhandled /api/ requests
     if (requestUrl.pathname.startsWith("/api/")) {
       sendJson(response, 404, { error: "Không tìm thấy API." });
       return;
     }
+
     if (request.method !== "GET" && request.method !== "HEAD") {
       response.writeHead(405, { Allow: "GET, HEAD" });
       response.end();
       return;
     }
+
     await serveStatic(request, response, requestUrl.pathname, staticRoot);
   }
 

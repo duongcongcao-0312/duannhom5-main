@@ -1,0 +1,22 @@
+[
+  {
+    "id": "admin-master",
+    "name": "Quản trị viên BookNest",
+    "email": "admin@booknest.vn",
+    "password": "7a1f6177ae90b3dec1a1de3c23b5186c:b26e5e2b9082164cc6b95cf970021e53bea07cffb13850d3eba3d12f187a469eb87b6cbedfaaa94a898957d309f037b08a7377e88e8d5a4773fc9d2a6fa9220e",
+    "role": "admin",
+    "studentType": "other",
+    "studentId": "",
+    "createdAt": "2026-10-06T17:13:02.315Z"
+  },
+  {
+    "id": "d72c6550-3779-4868-97b7-ba5674faab80",
+    "name": "Trần Minh",
+    "email": "tranminh@example.com",
+    "password": "ec7dfbbafe74d2bcef49a21cd661a477:e78a9953917edf8650308a73e5e7bc89d2282e6a9764d82e3521071b86a33196094e4b05c3723ae798186f3f6bec18db85ca48427384956ca9c505a591bc7b0b",
+    "role": "user",
+    "studentType": "student",
+    "studentId": "HS-9988",
+    "createdAt": "2026-10-06T17:15:09.397Z"
+  }
+]

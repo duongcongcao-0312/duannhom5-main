@@ -156,66 +156,132 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 
 ## Kiến trúc phần mềm
 
-BookNest hiện chạy theo kiến trúc client–server gọn nhẹ. Trình duyệt gửi yêu
-cầu HTTP đến máy chủ Node.js; máy chủ phục vụ giao diện tĩnh và xử lý REST API.
-Các API dùng thành phần xác thực và lớp đọc/ghi dữ liệu để hoàn tất nghiệp vụ.
+BookNest sử dụng kiến trúc **client–server** theo các lớp trình bày, ứng dụng
+và lưu trữ. Sơ đồ dưới đây mô tả cả thành phần đang chạy lẫn quy trình kiểm thử;
+các nhóm trong sơ đồ là cách phân loại logic, không hàm ý rằng dự án đã có
+những service độc lập.
 
 ```mermaid
-flowchart LR
-    subgraph Client["1. Giao diện — Trình duyệt"]
-        UI["Trang cửa hàng và quản trị<br/>HTML · CSS · JavaScript"]
-        LS[("localStorage<br/>giỏ hàng · yêu thích · phiên")]
-        UI <--> LS
+flowchart TB
+    subgraph USER["NGƯỜI DÙNG"]
+        CUSTOMER["Khách hàng"]
+        ADMIN["Quản trị viên"]
     end
 
-    subgraph Server["2. Ứng dụng — Node.js"]
-        HTTP["server.js<br/>HTTP server · tệp tĩnh · REST API"]
-        AUTH["backend/auth.js<br/>xác thực · phiên"]
-        DB["backend/db.js<br/>đọc và ghi dữ liệu"]
-        HTTP --> AUTH
-        HTTP --> DB
+    subgraph CLIENT["01 · LỚP GIAO DIỆN — TRÌNH DUYỆT"]
+        direction LR
+        STORE["Cửa hàng<br/>index.html · main.js · main.css"]
+        DETAIL["Chi tiết sách<br/>book.html · book-detail.js"]
+        ADMIN_UI["Cổng quản trị<br/>admin.html · admin.js · admin.css"]
+        BROWSER_DATA[("localStorage<br/>giỏ hàng · yêu thích · token")]
+        STORE <--> BROWSER_DATA
+        DETAIL <--> BROWSER_DATA
+        ADMIN_UI <--> BROWSER_DATA
     end
 
-    subgraph Storage["3. Lưu trữ phía máy chủ"]
-        USERS[("data/users.json")]
-        BOOKS[("data/books.json<br/>+ books-data.js")]
-        ORDERS[("data/orders.jsonl")]
-        SERVICES[("data/service-requests.jsonl")]
+    subgraph APP["02 · LỚP ỨNG DỤNG — MỘT TIẾN TRÌNH NODE.JS"]
+        direction LR
+        SERVER["HTTP server<br/>server.js"]
+        STATIC["Phục vụ tệp tĩnh"]
+        API["REST API<br/>định tuyến · kiểm tra đầu vào<br/>nghiệp vụ cửa hàng/quản trị"]
+        AUTH["Xác thực<br/>backend/auth.js"]
+        SESSION[("Phiên trong bộ nhớ<br/>hạn dùng 7 ngày")]
+        REPOSITORY["Đọc/ghi dữ liệu<br/>backend/db.js"]
+        SERVER --> STATIC
+        SERVER --> API
+        API -->|"API cần đăng nhập"| AUTH
+        AUTH <--> SESSION
+        API --> REPOSITORY
     end
 
-    UI <-->|"HTTP / HTTPS · REST API"| HTTP
-    DB --> USERS
-    DB --> BOOKS
-    DB --> ORDERS
-    DB --> SERVICES
+    subgraph DATA["03 · LỚP DỮ LIỆU"]
+        direction LR
+        USERS[("users.json<br/>tài khoản")]
+        BOOKS[("books.json<br/>sách do quản trị thêm")]
+        ORDERS[("orders.jsonl<br/>đơn hàng")]
+        SERVICES[("service-requests.jsonl<br/>yêu cầu dịch vụ")]
+        CATALOG["books-data.js<br/>danh mục mặc định"]
+    end
+
+    subgraph QUALITY["04 · CHẤT LƯỢNG VÀ TỰ ĐỘNG HÓA"]
+        direction LR
+        TESTS["Kiểm thử tự động<br/>tests/ · node:test"]
+        CI["GitHub Actions<br/>kiểm thử · rà soát dependency"]
+        PACKAGE["package.json<br/>npm start · npm test"]
+        PACKAGE --> TESTS
+        CI --> TESTS
+    end
+
+    CUSTOMER --> STORE
+    CUSTOMER --> DETAIL
+    ADMIN --> ADMIN_UI
+    STORE <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
+    DETAIL <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
+    ADMIN_UI <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
+    REPOSITORY --> USERS
+    REPOSITORY --> BOOKS
+    REPOSITORY --> ORDERS
+    REPOSITORY --> SERVICES
+    API --> CATALOG
+
+    classDef people fill:#f1f5f9,stroke:#64748b,color:#0f172a,stroke-width:1px
+    classDef client fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:1px
+    classDef app fill:#ede9fe,stroke:#7c3aed,color:#3b0764,stroke-width:1px
+    classDef storage fill:#dcfce7,stroke:#16a34a,color:#14532d,stroke-width:1px
+    classDef quality fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:1px
+    class CUSTOMER,ADMIN people
+    class STORE,DETAIL,ADMIN_UI client
+    class SERVER,STATIC,API,AUTH app
+    class BROWSER_DATA,SESSION,USERS,BOOKS,ORDERS,SERVICES storage
+    class CATALOG app
+    class TESTS,CI,PACKAGE quality
+    style USER fill:#f8fafc,stroke:#cbd5e1
+    style CLIENT fill:#f0f9ff,stroke:#7dd3fc
+    style APP fill:#f5f3ff,stroke:#c4b5fd
+    style DATA fill:#f0fdf4,stroke:#86efac
+    style QUALITY fill:#fffbeb,stroke:#fcd34d
 ```
 
-| Thành phần | Trách nhiệm | Thành phần mã nguồn |
+### Các lớp và trách nhiệm
+
+| Lớp | Thành phần | Trách nhiệm |
 | --- | --- | --- |
-| Giao diện | Hiển thị cửa hàng/cổng quản trị; gửi request đến API; lưu một số trạng thái giao diện trên trình duyệt | `index.html`, `admin.html`, `main.js`, `admin.js`, `localStorage` |
-| Máy chủ ứng dụng | Phục vụ tệp tĩnh, nhận API request và điều phối xử lý nghiệp vụ | `server.js` |
-| Xác thực và phiên | Xử lý đăng nhập, mật khẩu và phiên người dùng | `backend/auth.js` |
-| Truy cập dữ liệu | Đọc/ghi dữ liệu ứng dụng dưới dạng JSON hoặc JSONL | `backend/db.js`, thư mục `data/` |
-| Danh mục sách mặc định | Cung cấp dữ liệu sách khởi tạo/đóng gói cùng mã nguồn | `books-data.js` |
+| Giao diện | Trang cửa hàng, trang chi tiết sách và cổng quản trị | Hiển thị nội dung, nhận thao tác người dùng và gọi REST API. |
+| Ứng dụng | `server.js` | Chạy HTTP server, phục vụ tệp tĩnh, định tuyến API, kiểm tra dữ liệu và thực hiện các luồng nghiệp vụ. |
+| Xác thực | `backend/auth.js` | Băm/kiểm tra mật khẩu bằng `scrypt`; tạo, xác thực và huỷ phiên đăng nhập. |
+| Truy cập dữ liệu | `backend/db.js` | Đọc và ghi tài khoản, sách quản trị và yêu cầu dịch vụ; dữ liệu đơn hàng được ghi/đọc theo JSONL. |
+| Dữ liệu | Thư mục `data/` và `books-data.js` | Lưu dữ liệu ứng dụng trên máy chủ và cung cấp danh mục sách mặc định. |
+| Chất lượng | `tests/`, `.github/workflows/`, `package.json` | Chạy kiểm thử tự động và các bước kiểm tra dependency trong CI. |
 
-### Luồng xử lý request
+### Luồng xử lý chính
 
-1. Người dùng thao tác trên giao diện cửa hàng hoặc trang quản trị.
-2. Frontend gửi request đến `server.js` qua REST API; request trang cũng được
-   máy chủ dùng để phục vụ các tệp tĩnh.
-3. Với API cần đăng nhập, máy chủ xác thực phiên và kiểm tra quyền trước khi
-   thực hiện thao tác.
-4. Máy chủ xử lý nghiệp vụ, gọi lớp truy cập dữ liệu khi cần, rồi trả kết quả
-   về trình duyệt.
-5. Trạng thái giao diện như giỏ hàng và sách yêu thích được lưu ở
-   `localStorage`; đây không phải kho dữ liệu đáng tin cậy cho nghiệp vụ hoặc
-   dữ liệu cần bảo vệ.
+1. Trình duyệt tải các trang tĩnh từ Node.js server; người dùng thao tác ở cửa
+   hàng, trang sách hoặc cổng quản trị.
+2. Khi cần dữ liệu hoặc cập nhật, frontend gọi REST API. Server kiểm tra request,
+   xác thực phiên và quyền truy cập với các API được bảo vệ.
+3. API thực hiện nghiệp vụ; nếu cần, đọc/ghi dữ liệu thông qua các thành phần
+   tương ứng. Giá và dữ liệu đơn hàng được xử lý ở máy chủ, không lấy
+   `localStorage` làm nguồn dữ liệu đáng tin cậy.
+4. Server trả kết quả cho trình duyệt. Trạng thái phục vụ trải nghiệm người dùng
+   (ví dụ giỏ hàng và yêu thích) được lưu trong `localStorage`.
+5. Kiểm thử chạy bằng `node:test`; GitHub Actions thực thi kiểm thử và rà soát
+   dependency khi có thay đổi phù hợp.
 
-**Phạm vi hiện tại:** đây là ứng dụng Node.js một tiến trình, dùng tệp JSON/JSONL
-để lưu dữ liệu. `localStorage` nằm ở trình duyệt, tách biệt với dữ liệu phía
-máy chủ. Kiến trúc phù hợp cho demo và quy mô nhỏ; khi triển khai thực tế hoặc
-cần nhiều người dùng đồng thời, nên chuyển sang cơ sở dữ liệu có giao dịch,
-tách nghiệp vụ thành các module rõ ràng và bổ sung giám sát/sao lưu phù hợp.
+### Ranh giới lưu trữ và giới hạn hiện tại
+
+- **Trên trình duyệt:** `localStorage` chứa trạng thái giao diện và token phiên.
+- **Trong tiến trình Node.js:** phiên đăng nhập được lưu trong bộ nhớ, có hạn
+  dùng 7 ngày; phiên sẽ mất khi tiến trình khởi động lại.
+- **Trên máy chủ:** tài khoản, sách quản trị, đơn hàng và yêu cầu dịch vụ được
+  lưu bằng tệp JSON/JSONL. Danh mục sách mặc định nằm trong `books-data.js`.
+- **Vận hành:** ứng dụng hiện là một tiến trình Node.js, không có database,
+  hàng đợi hay cache độc lập. Lưu trữ dạng file phù hợp cho demo/quy mô nhỏ,
+  nhưng hạn chế giao dịch, mở rộng nhiều instance và phục hồi dữ liệu.
+
+Khi phát triển thành dịch vụ thực tế, nên thay lưu trữ file bằng cơ sở dữ liệu
+có giao dịch và sao lưu, chuyển phiên sang kho dùng chung nếu chạy nhiều
+instance, đồng thời bổ sung giám sát và quy trình triển khai. Đây là hướng nâng
+cấp đề xuất, không phải thành phần đã có trong phiên bản hiện tại.
 
 ## Yêu cầu phi chức năng
 

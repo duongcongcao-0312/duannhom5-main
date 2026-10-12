@@ -17,6 +17,9 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - [API](#api)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
+- [Kiến trúc phần mềm](#kiến-trúc-phần-mềm)
+- [Yêu cầu phi chức năng](#yêu-cầu-phi-chức-năng)
+- [Bảo mật của hệ thống](#bảo-mật-của-hệ-thống)
 - [Thành viên và đóng góp](#thành-viên-và-đóng-góp)
 - [Lưu ý bảo mật](#lưu-ý-bảo-mật)
 
@@ -137,6 +140,115 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 ├── server.js                # Máy chủ REST API và tệp tĩnh
 └── package.json             # Lệnh dự án
 ```
+
+## Kiến trúc phần mềm
+
+BookNest được thiết kế theo mô hình 3 lớp để dễ phát triển, dễ kiểm thử và thuận
+cho việc mở rộng trong tương lai:
+
+```text
++---------------------------+
+| Client / Browser          |
+| - HTML/CSS/JS            |
+| - Giỏ hàng, sản phẩm     |
+| - Đăng nhập, quản trị    |
++------------+--------------+
+             |
+             | HTTPS / HTTP
+             v
++---------------------------+
+| Application Layer         |
+| Node.js + REST API        |
+| server.js                 |
+| - Xử lý xác thực          |
+| - Tính toán đơn hàng     |
+| - Quản lý sách, dịch vụ  |
+| - Kiểm tra quyền truy cập |
++------------+--------------+
+             |
+             v
++---------------------------+
+| Data Layer               |
+| JSON/JSONL files         |
+| - users.json             |
+| - books.json             |
+| - orders.jsonl          |
+| - service-requests.jsonl |
+| localStorage (client)    |
++---------------------------+
+```
+
+Các thành phần chính:
+
+- Giao diện người dùng: chạy trong trình duyệt, xử lý tương tác với giỏ hàng,
+  danh mục sách, đăng ký và thanh toán.
+- API nền: `server.js` là điểm truy cập trung tâm, nhận request từ frontend,
+  thực hiện nghiệp vụ, kiểm tra token và phân quyền.
+- Cơ sở dữ liệu dữ liệu: dùng file JSON/JSONL thay cho database truyền thống để
+  phù hợp với dự án demo và đơn giản hoá triển khai.
+- Bên khách: `localStorage` lưu trạng thái phiên bản client như giỏ hàng và
+  sách yêu thích; dữ liệu này không thay thế cho dữ liệu gốc ở server.
+
+Về mặt kiến trúc, hệ thống ưu tiên đơn giản, dễ cài đặt và tiện cho học tập;
+điểm cần lưu ý khi nâng cấp lên môi trường thực tế là bổ sung database mạnh
+hơn, service layer rõ ràng, hệ thống cache và giới hạn truy cập.
+
+## Yêu cầu phi chức năng
+
+Dưới đây là các yêu cầu phi chức năng phù hợp với mức độ của dự án BookNest:
+
+- Hiệu năng: trang chủ và danh sách sách cần tải nhanh trong môi trường local
+  hoặc server vừa phải; số lượng dữ liệu mẫu nên giới hạn trong phạm vi hợp lý
+  để giữ thời gian phản hồi thấp.
+- Khả năng mở rộng: hệ thống nên dễ thêm thể loại sách, trường dữ liệu, API mới
+  mà không cần sửa nhiều điểm trung tâm.
+- Tính sẵn sàng: máy chủ cần chạy ổn định trong thời gian dài; khi lưu dữ liệu
+  vào file cần tránh race condition khi có nhiều request đồng thời.
+- Tính khả dụng trên thiết bị: giao diện cần tương thích với máy tính và điện
+  thoại, giữ bố cục rõ ràng ở màn hình nhỏ.
+- Khả năng bảo trì: code nên tách rõ phần view, API và dữ liệu; mỗi chức năng có
+  cấu trúc mô-đun dễ kiểm tra và mở rộng.
+- Độ tin cậy: cập nhật đơn hàng, thanh toán và kho hàng cần tránh trạng thái
+  không nhất quán; mỗi thao tác quan trọng nên có kiểm tra xác thực và dữ liệu.
+- Bảo mật dữ liệu: thông tin người dùng, đơn hàng và token phải được lưu và xử lý
+  đúng cách, tránh rò rỉ hay lộ ra khi triển khai môi trường công cộng.
+- Khả năng kiểm thử: API và luồng chính cần có bộ kiểm thử tự động để đảm bảo
+  không phá vỡ chức năng khi phát triển thêm.
+
+## Bảo mật của hệ thống
+
+BookNest ở phiên bản demo hiện có một số biện pháp cơ bản, nhưng vẫn cần được
+cải thiện trước khi vận hành thực tế:
+
+- Mã hoá mật khẩu: mật khẩu cần được băm bằng thuật toán thích hợp như bcrypt
+  hoặc Argon2 thay vì lưu ở dạng văn bản thuần.
+- Quản lý phiên: token hoặc session nên có thời gian sống, có chữ ký và được
+  lưu an toàn; không nên để token ở dạng dễ khai thác trên client.
+- Xác thực và phân quyền: API quản trị chỉ được truy cập bởi người dùng có role
+  quản trị; các route quan trọng phải kiểm tra quyền trước khi thực thi.
+- Kiểm tra đầu vào: dữ liệu từ form, URL và request body cần được validate để
+  tránh lỗi, tấn công injection hoặc payload bất thường.
+- Giới hạn truy cập: nên ánh xạ `HOST` và `PORT`, đóng service trên localhost khi
+  phát triển; không mở node server trực tiếp trên internet nếu chưa có HTTPS và
+  quy trình bảo mật đầy đủ.
+- Bảo vệ dữ liệu nhạy cảm: không lưu dữ liệu thật, mật khẩu, thông tin giao
+  nhận hoặc token vào repository; các file JSON nên giữ riêng trong môi trường
+  triển khai có phân quyền.
+- HTTPS và bảo mật truyền tải: khi triển khai thực tế, bắt buộc dùng HTTPS để
+  mã hoá dữ liệu giữa browser và server.
+- Sao lưu và phục hồi: dữ liệu người dùng, đơn hàng và sách cần có sao lưu định
+  kỳ và quy trình khôi phục sự cố.
+- Rà soát dependency: dùng `npm audit` và cập nhật các gói liên quan nhằm giảm
+  rủi ro lỗ hổng trong thư viện bên thứ ba.
+
+Các nguyên tắc bảo mật khuyến nghị:
+
+1. Không để tài khoản admin mặc định ở môi trường production.
+2. Không công khai file dữ liệu nhạy cảm trên GitHub hoặc shared storage.
+3. Giới hạn quyền truy cập file hệ thống và thư mục data theo user/service account.
+4. Báo cáo và xử lý lỗi không lộ stack trace, password hay thông tin nhạy cảm.
+5. Có nhật ký sự kiện (audit log) cho đăng nhập, cập nhật đơn hàng và thay đổi
+   quyền quản trị.
 
 ## Thành viên và đóng góp
 

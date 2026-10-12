@@ -156,55 +156,66 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 
 ## Kiến trúc phần mềm
 
-BookNest được thiết kế theo mô hình 3 lớp để dễ phát triển, dễ kiểm thử và thuận
-cho việc mở rộng trong tương lai:
+BookNest hiện chạy theo kiến trúc client–server gọn nhẹ. Trình duyệt gửi yêu
+cầu HTTP đến máy chủ Node.js; máy chủ phục vụ giao diện tĩnh và xử lý REST API.
+Các API dùng thành phần xác thực và lớp đọc/ghi dữ liệu để hoàn tất nghiệp vụ.
 
-```text
-+---------------------------+
-| Client / Browser          |
-| - HTML/CSS/JS            |
-| - Giỏ hàng, sản phẩm     |
-| - Đăng nhập, quản trị    |
-+------------+--------------+
-             |
-             | HTTPS / HTTP
-             v
-+---------------------------+
-| Application Layer         |
-| Node.js + REST API        |
-| server.js                 |
-| - Xử lý xác thực          |
-| - Tính toán đơn hàng     |
-| - Quản lý sách, dịch vụ  |
-| - Kiểm tra quyền truy cập |
-+------------+--------------+
-             |
-             v
-+---------------------------+
-| Data Layer               |
-| JSON/JSONL files         |
-| - users.json             |
-| - books.json             |
-| - orders.jsonl          |
-| - service-requests.jsonl |
-| localStorage (client)    |
-+---------------------------+
+```mermaid
+flowchart LR
+    subgraph Client["1. Giao diện — Trình duyệt"]
+        UI["Trang cửa hàng và quản trị<br/>HTML · CSS · JavaScript"]
+        LS[("localStorage<br/>giỏ hàng · yêu thích · phiên")]
+        UI <--> LS
+    end
+
+    subgraph Server["2. Ứng dụng — Node.js"]
+        HTTP["server.js<br/>HTTP server · tệp tĩnh · REST API"]
+        AUTH["backend/auth.js<br/>xác thực · phiên"]
+        DB["backend/db.js<br/>đọc và ghi dữ liệu"]
+        HTTP --> AUTH
+        HTTP --> DB
+    end
+
+    subgraph Storage["3. Lưu trữ phía máy chủ"]
+        USERS[("data/users.json")]
+        BOOKS[("data/books.json<br/>+ books-data.js")]
+        ORDERS[("data/orders.jsonl")]
+        SERVICES[("data/service-requests.jsonl")]
+    end
+
+    UI <-->|"HTTP / HTTPS · REST API"| HTTP
+    DB --> USERS
+    DB --> BOOKS
+    DB --> ORDERS
+    DB --> SERVICES
 ```
 
-Các thành phần chính:
+| Thành phần | Trách nhiệm | Thành phần mã nguồn |
+| --- | --- | --- |
+| Giao diện | Hiển thị cửa hàng/cổng quản trị; gửi request đến API; lưu một số trạng thái giao diện trên trình duyệt | `index.html`, `admin.html`, `main.js`, `admin.js`, `localStorage` |
+| Máy chủ ứng dụng | Phục vụ tệp tĩnh, nhận API request và điều phối xử lý nghiệp vụ | `server.js` |
+| Xác thực và phiên | Xử lý đăng nhập, mật khẩu và phiên người dùng | `backend/auth.js` |
+| Truy cập dữ liệu | Đọc/ghi dữ liệu ứng dụng dưới dạng JSON hoặc JSONL | `backend/db.js`, thư mục `data/` |
+| Danh mục sách mặc định | Cung cấp dữ liệu sách khởi tạo/đóng gói cùng mã nguồn | `books-data.js` |
 
-- Giao diện người dùng: chạy trong trình duyệt, xử lý tương tác với giỏ hàng,
-  danh mục sách, đăng ký và thanh toán.
-- API nền: `server.js` là điểm truy cập trung tâm, nhận request từ frontend,
-  thực hiện nghiệp vụ, kiểm tra token và phân quyền.
-- Cơ sở dữ liệu dữ liệu: dùng file JSON/JSONL thay cho database truyền thống để
-  phù hợp với dự án demo và đơn giản hoá triển khai.
-- Bên khách: `localStorage` lưu trạng thái phiên bản client như giỏ hàng và
-  sách yêu thích; dữ liệu này không thay thế cho dữ liệu gốc ở server.
+### Luồng xử lý request
 
-Về mặt kiến trúc, hệ thống ưu tiên đơn giản, dễ cài đặt và tiện cho học tập;
-điểm cần lưu ý khi nâng cấp lên môi trường thực tế là bổ sung database mạnh
-hơn, service layer rõ ràng, hệ thống cache và giới hạn truy cập.
+1. Người dùng thao tác trên giao diện cửa hàng hoặc trang quản trị.
+2. Frontend gửi request đến `server.js` qua REST API; request trang cũng được
+   máy chủ dùng để phục vụ các tệp tĩnh.
+3. Với API cần đăng nhập, máy chủ xác thực phiên và kiểm tra quyền trước khi
+   thực hiện thao tác.
+4. Máy chủ xử lý nghiệp vụ, gọi lớp truy cập dữ liệu khi cần, rồi trả kết quả
+   về trình duyệt.
+5. Trạng thái giao diện như giỏ hàng và sách yêu thích được lưu ở
+   `localStorage`; đây không phải kho dữ liệu đáng tin cậy cho nghiệp vụ hoặc
+   dữ liệu cần bảo vệ.
+
+**Phạm vi hiện tại:** đây là ứng dụng Node.js một tiến trình, dùng tệp JSON/JSONL
+để lưu dữ liệu. `localStorage` nằm ở trình duyệt, tách biệt với dữ liệu phía
+máy chủ. Kiến trúc phù hợp cho demo và quy mô nhỏ; khi triển khai thực tế hoặc
+cần nhiều người dùng đồng thời, nên chuyển sang cơ sở dữ liệu có giao dịch,
+tách nghiệp vụ thành các module rõ ràng và bổ sung giám sát/sao lưu phù hợp.
 
 ## Yêu cầu phi chức năng
 

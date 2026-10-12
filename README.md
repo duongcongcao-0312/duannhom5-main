@@ -58,6 +58,19 @@ $env:HOST = "127.0.0.1"
 npm start
 ```
 
+## Xuất bản GitHub Pages
+
+Workflow `Deploy BookNest to GitHub Pages` tự động xuất bản giao diện khi có
+thay đổi trên nhánh `main`. URL mặc định của dự án là
+<https://duongcongcao-0312.github.io/duannhom5-main/>. Nếu GitHub yêu cầu,
+hãy đặt Settings > Pages > Build and deployment > Source thành GitHub Actions.
+
+GitHub Pages chỉ phục vụ giao diện tĩnh; API Node.js không chạy trên Pages nên
+đăng ký tài khoản qua API, đặt hàng và quản trị cần máy chủ backend riêng.
+Build Pages chỉ chép danh sách file giao diện cho phép, không xuất bản `data/`
+hay mã máy chủ. Để Google/Facebook Auth hoạt động trên Pages, cần thêm
+`duongcongcao-0312.github.io` vào Authorized domains trong Firebase Console.
+
 ## Cổng quản trị
 
 Mở <http://127.0.0.1:8000/admin.html> để đăng nhập và quản lý cửa hàng. Tài
@@ -163,3 +176,16 @@ Trước khi triển khai thực tế, cần thay đổi cơ chế quản trị 
 sở dữ liệu phù hợp có sao lưu, bật HTTPS, rà soát quyền truy cập và bổ sung
 các biện pháp bảo vệ dữ liệu cá nhân. Máy chủ Node.js cần môi trường lưu trữ
 được dữ liệu lâu dài; GitHub Pages chỉ phục vụ tệp tĩnh và không chạy được API.
+
+## Google and Facebook registration
+
+The registration form uses Firebase Authentication popups for Google and
+Facebook. Set the Firebase web app values in `assets/firebase-config.js` from
+Firebase Console > Project settings > Your apps. These browser configuration
+values are public; never put a provider client secret in this file.
+
+Enable Google and Facebook under Firebase Authentication > Sign-in method, add
+`sachlatrithuc.com` under Authorized domains, and configure each provider's
+OAuth app with Firebase's redirect URI shown in its provider settings. Serve the
+site over HTTPS (or localhost while developing). The Facebook App ID and secret
+belong only in Firebase Console.

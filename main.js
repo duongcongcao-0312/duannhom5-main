@@ -20,6 +20,17 @@ const DEFAULT_BOOK_STOCK = 12;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
+const firebaseConfig = window.BOOKNEST_FIREBASE_CONFIG;
+const firebaseAuth = (() => {
+	const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
+	if (!window.firebase || !firebaseConfig || requiredFields.some((field) => !firebaseConfig[field])) return null;
+	try {
+		if (!window.firebase.apps.length) window.firebase.initializeApp(firebaseConfig);
+		return window.firebase.auth();
+	} catch (error) {
+		return null;
+	}
+})();
 const serviceDetails = {
 	rent: {
 		title: 'Thuê sách theo nhu cầu',
@@ -503,11 +514,17 @@ function readUsers() {
 }
 
 function setAccountView(view) {
-	Object.entries(accountViews).forEach(([name, element]) => { element.hidden = name !== view; });
+	const loginForm = document.querySelector('#loginForm');
+	const registerForm = document.querySelector('#registerForm');
+
+	if (loginForm) loginForm.hidden = view !== 'login';
+	if (registerForm) registerForm.hidden = view !== 'register';
+
 	document.querySelectorAll('.account-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.accountView === view));
 }
 
 function renderAccount() {
+	const logoutButton = document.querySelector('#logoutButton');
 	if (state.user) {
 		accountButton.textContent = state.user.name;
 		document.querySelector('#logoutButton').hidden = false;
@@ -523,6 +540,31 @@ function showAccountError(id, message) {
 	error.hidden = !message;
 }
 
+function saveFederatedAccount(firebaseUser) {
+	const previousUser = state.user?.firebaseUid === firebaseUser.uid ? state.user : null;
+	const user = {
+		name: firebaseUser.displayName || firebaseUser.email || 'Thành viên BookNest',
+		email: firebaseUser.email || '',
+		firebaseUid: firebaseUser.uid,
+		authProvider: firebaseUser.providerData[0]?.providerId || 'federated',
+		studentType: previousUser?.studentType || 'other',
+		studentId: previousUser?.studentId || ''
+	};
+	state.user = user;
+	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+	renderAccount();
+	renderCart();
+	accountDialog.close();
+}
+
+function getSocialAuthError(error) {
+	if (error.code === 'auth/popup-closed-by-user') return 'Cửa sổ đăng nhập đã được đóng.';
+	if (error.code === 'auth/unauthorized-domain') return 'Domain này chưa được cho phép trong Firebase Authentication.';
+	if (error.code === 'auth/operation-not-allowed') return 'Phương thức đăng nhập này chưa được bật trong Firebase.';
+	if (error.code === 'auth/account-exists-with-different-credential') return 'Email này đã được đăng ký bằng một phương thức khác.';
+	return 'Không thể đăng nhập lúc này. Vui lòng thử lại.';
+}
+
 accountButton.addEventListener('click', () => {
 	renderAccount();
 	setAccountView('login');
@@ -533,6 +575,40 @@ document.querySelectorAll('.account-tab').forEach((tab) => tab.addEventListener(
 document.querySelector('#registerForm select[name="studentType"]').addEventListener('change', (event) => {
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
+document.querySelectorAll('[data-social-provider]').forEach((button) => button.addEventListener('click', async () => {
+	showAccountError('#registerError', '');
+	if (!firebaseAuth) {
+		showAccountError('#registerError', 'Chưa cấu hình Firebase Auth. Vui lòng kiểm tra assets/firebase-config.js.');
+		return;
+	}
+
+	const provider = button.dataset.socialProvider === 'google'
+		? new window.firebase.auth.GoogleAuthProvider()
+		: new window.firebase.auth.FacebookAuthProvider();
+	if (button.dataset.socialProvider === 'facebook') provider.addScope('email');
+	const socialButtons = [...document.querySelectorAll('[data-social-provider]')];
+	socialButtons.forEach((socialButton) => { socialButton.disabled = true; });
+	try {
+		const result = await firebaseAuth.signInWithPopup(provider);
+		saveFederatedAccount(result.user);
+	} catch (error) {
+		showAccountError('#registerError', getSocialAuthError(error));
+	} finally {
+		socialButtons.forEach((socialButton) => { socialButton.disabled = false; });
+	}
+}));
+if (firebaseAuth) {
+	firebaseAuth.onAuthStateChanged((firebaseUser) => {
+		if (firebaseUser) {
+			saveFederatedAccount(firebaseUser);
+		} else if (state.user?.firebaseUid) {
+			state.user = null;
+			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+			renderAccount();
+			renderCart();
+		}
+	});
+}
 document.querySelector('#loginForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
 	showAccountError('#loginError', '');
@@ -644,6 +720,14 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 	document.querySelector('.student-id-field').hidden = true;
 });
 document.querySelector('#logoutButton').addEventListener('click', async () => {
+	if (state.user?.firebaseUid && firebaseAuth) {
+		try {
+			await firebaseAuth.signOut();
+		} catch (error) {
+			showAccountError('#registerError', 'Không thể đăng xuất khỏi Firebase lúc này.');
+			return;
+		}
+	}
 	try {
 		const token = localStorage.getItem('booknest-auth-token');
 		if (token) {

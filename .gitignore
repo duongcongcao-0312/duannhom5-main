@@ -3,4 +3,5 @@ dist/
 .env
 .env.*
 !.env.example
-data/orders.jsonl
+/data/*.json
+/data/*.jsonl

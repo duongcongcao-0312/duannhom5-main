@@ -239,7 +239,9 @@ test("customer management access is role-scoped and audit fields are recorded", 
 });
 
 test("customer management validation rejects invalid roles and duplicate users", async (t) => {
-  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-user-validation-"));
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-user-validation-"),
+  );
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
@@ -250,30 +252,32 @@ test("customer management validation rejects invalid roles and duplicate users",
   });
 
   await assert.rejects(
-    () => db.createUser({
-      name: "Bad role",
-      email: "bad-role@example.com",
-      password: "password123",
-      role: "boss"
-    }),
-    /Vai trò người dùng không hợp lệ/
+    () =>
+      db.createUser({
+        name: "Bad role",
+        email: "bad-role@example.com",
+        password: "password123",
+        role: "boss",
+      }),
+    /Vai trò người dùng không hợp lệ/,
   );
 
   await db.createUser({
     name: "Nguyễn Anh",
     email: "anh@example.com",
     password: "password123",
-    role: "user"
+    role: "user",
   });
 
   await assert.rejects(
-    () => db.createUser({
-      name: "Nguyễn Anh Lặp",
-      email: "anh@example.com",
-      password: "password456",
-      role: "user"
-    }),
-    /Email này đã được đăng ký/
+    () =>
+      db.createUser({
+        name: "Nguyễn Anh Lặp",
+        email: "anh@example.com",
+        password: "password456",
+        role: "user",
+      }),
+    /Email này đã được đăng ký/,
   );
 
   const savedUser = await db.findUserByEmail("anh@example.com");

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BookNest Admin | Hệ thống quản trị nhà sách</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div id="adminApp">
+        <!-- Admin Navigation Header -->
+        <header class="admin-header">
+            <div class="header-left">
+                <a href="admin.html" class="admin-brand">
+                    <span class="brand-badge">BN</span>
+                    <span class="brand-title">BookNest <i>Admin</i></span>
+                </a>
+            </div>
+            <nav class="admin-nav" id="adminNav">
+                <button class="nav-tab active" data-view="dashboard" type="button">📊 Tổng quan</button>
+                <button class="nav-tab" data-view="orders" type="button">📦 Đơn hàng</button>
+                <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
+                <button class="nav-tab" data-view="services" type="button">🤝 Yêu cầu dịch vụ</button>
+                <button class="nav-tab" data-view="users" type="button">👥 Thành viên</button>
+            </nav>
+            <div class="header-right">
+                <div class="admin-user-pill" id="adminUserPill">
+                    <span class="user-avatar">👤</span>
+                    <span id="adminUserName">Quản trị viên</span>
+                </div>
+                <a href="index.html" class="btn-storefront" target="_blank" rel="noopener">🏪 Xem website</a>
+                <button id="adminLogoutBtn" class="btn-logout" type="button">Đăng xuất</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="admin-main">
+            <!-- VIEW: DASHBOARD -->
+            <section id="viewDashboard" class="admin-view active">
+                <div class="view-header">
+                    <div>
+                        <h1>Bảng điều khiển quản trị</h1>
+                        <p class="subtitle">Thống kê hoạt động kinh doanh và vận hành nhà sách BookNest</p>
+                    </div>
+                    <button class="btn-refresh" id="refreshStatsBtn" type="button">🔄 Làm mới dữ liệu</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card revenue">
+                        <div class="stat-icon">💰</div>
+                        <div class="stat-info">
+                            <span class="stat-label">Tổng doanh thu</span>
+                            <strong class="stat-value" id="statRevenue">0 đ</strong>
+                            <small class="stat-hint">Tính trên các đơn không huỷ</small>
+                        </div>
+                    </div>
+                    <div class="stat-card orders">
+                        <div class="stat-icon">📦</div>
+                        <div class="stat-info">
+                            <span class="stat-label">Tổng đơn hàng</span>
+                            <strong class="stat-value" id="statOrders">0</strong>
+                            <small class="stat-hint" id="statActiveOrders">0 đơn đang xử lý</small>
+                        </div>
+                    </div>
+                    <div class="stat-card books">
+                        <div class="stat-icon">📚</div>
+                        <div class="stat-info">
+                            <span class="stat-label">Đầu sách trong hệ thống</span>
+                            <strong class="stat-value" id="statBooks">80</strong>
+                            <small class="stat-hint">10 thể loại sách</small>
+                        </div>
+                    </div>
+                    <div class="stat-card users">
+                        <div class="stat-icon">👥</div>
+                        <div class="stat-info">
+                            <span class="stat-label">Tài khoản thành viên</span>
+                            <strong class="stat-value" id="statUsers">0</strong>
+                            <small class="stat-hint" id="statServices">0 yêu cầu dịch vụ</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-panels">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h2>Đơn hàng mới nhất</h2>
+                            <button class="btn-link" id="gotoOrdersBtn" type="button">Xem tất cả →</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="admin-table">
+                                <thead>
+                                    <tr>
+                                        <th>Mã đơn</th>
+                                        <th>Khách hàng</th>
+                                        <th>Ngày đặt</th>
+                                        <th>Tổng tiền</th>
+                                        <th>Thanh toán</th>
+                                        <th>Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recentOrdersBody">
+                                    <tr><td colspan="6" class="text-center">Đang tải dữ liệu...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: ORDERS -->
+            <section id="viewOrders" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý đơn hàng</h1>
+                        <p class="subtitle">Theo dõi, kiểm tra chi tiết giao hàng và xử lý trạng thái đơn</p>
+                    </div>
+                    <div class="filter-actions">
+                        <select id="orderStatusFilter" class="form-select">
+                            <option value="all">Tất cả trạng thái</option>
+                            <option value="received">Mới nhận (Received)</option>
+                            <option value="processing">Đang xử lý (Processing)</option>
+                            <option value="shipping">Đang giao hàng (Shipping)</option>
+                            <option value="completed">Đã hoàn tất (Completed)</option>
+                            <option value="cancelled">Đã hủy (Cancelled)</option>
+                        </select>
+                        <input id="orderSearchInput" class="form-input" type="search" placeholder="Tìm theo mã đơn, tên khách, SĐT...">
+                    </div>
+                </div>
+
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Mã đơn</th>
+                                <th>Thời gian</th>
+                                <th>Người nhận</th>
+                                <th>SĐT & Địa chỉ</th>
+                                <th>Sản phẩm</th>
+                                <th>PT Thanh toán</th>
+                                <th>Tổng tiền</th>
+                                <th>Trạng thái</th>
+                                <th>Cập nhật</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTableBody">
+                            <tr><td colspan="9" class="text-center">Đang tải đơn hàng...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- VIEW: BOOKS -->
+            <section id="viewBooks" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý danh mục sách</h1>
+                        <p class="subtitle">Xem kho sách, thêm sách mới hoặc cập nhật thông tin và số lượng</p>
+                    </div>
+                    <div class="filter-actions">
+                        <button class="btn-primary" id="openAddBookBtn" type="button">➕ Thêm sách mới</button>
+                        <select id="bookCategoryFilter" class="form-select">
+                            <option value="all">Tất cả thể loại</option>
+                            <option value="van-hoc">Văn học</option>
+                            <option value="ky-nang">Kỹ năng sống</option>
+                            <option value="kinh-te">Kinh tế & Đầu tư</option>
+                            <option value="khoa-hoc">Khoa học & Vũ trụ</option>
+                            <option value="lich-su">Lịch sử & Văn hóa</option>
+                            <option value="thieu-nhi">Thiếu nhi</option>
+                            <option value="trinh-tham">Trinh thám & Bí ẩn</option>
+                            <option value="tam-ly">Tâm lý học</option>
+                            <option value="cong-nghe">Công nghệ & AI</option>
+                            <option value="ngoai-ngu">Ngoại ngữ</option>
+                        </select>
+                        <input id="bookSearchInput" class="form-input" type="search" placeholder="Tìm kiếm sách hoặc tác giả...">
+                    </div>
+                </div>
+
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Bìa</th>
+                                <th>Tên sách</th>
+                                <th>Tác giả</th>
+                                <th>Thể loại</th>
+                                <th>Đơn giá</th>
+                                <th>Tồn kho</th>
+                                <th>Mô tả tóm tắt</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="booksTableBody">
+                            <tr><td colspan="8" class="text-center">Đang tải danh mục sách...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- VIEW: SERVICES -->
+            <section id="viewServices" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Yêu cầu dịch vụ sách</h1>
+                        <p class="subtitle">Đăng ký thuê sách, thu mua sách cũ và trao đổi sách từ bạn đọc</p>
+                    </div>
+                </div>
+
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Mã yêu cầu</th>
+                                <th>Thời gian</th>
+                                <th>Loại dịch vụ</th>
+                                <th>Tựa sách & Tình trạng</th>
+                                <th>Khách hàng</th>
+                                <th>Số điện thoại</th>
+                                <th>Ghi chú</th>
+                                <th>Trạng thái</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="servicesTableBody">
+                            <tr><td colspan="9" class="text-center">Đang tải danh sách dịch vụ...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- VIEW: USERS -->
+            <section id="viewUsers" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Danh sách thành viên</h1>
+                        <p class="subtitle">Tài khoản người dùng đã đăng ký trên hệ thống máy chủ</p>
+                    </div>
+                </div>
+
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Mã ID</th>
+                                <th>Họ và tên</th>
+                                <th>Email</th>
+                                <th>Vai trò</th>
+                                <th>Đối tượng</th>
+                                <th>Mã HSSV</th>
+                                <th>Ngày tạo</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr><td colspan="7" class="text-center">Đang tải danh sách người dùng...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODAL: ADD / EDIT BOOK -->
+    <dialog id="bookModal" class="admin-dialog">
+        <div class="dialog-header">
+            <h2 id="bookModalTitle">Thêm sách mới</h2>
+            <button id="closeBookModal" class="btn-close" type="button">×</button>
+        </div>
+        <form id="bookForm" class="dialog-form">
+            <input type="hidden" id="bookIdInput" name="id">
+            <div class="form-row">
+                <label class="form-group">
+                    <span>Tên sách *</span>
+                    <input type="text" name="title" class="form-input" required placeholder="Ví dụ: Lược Sử Loài Người">
+                </label>
+                <label class="form-group">
+                    <span>Tác giả *</span>
+                    <input type="text" name="author" class="form-input" required placeholder="Ví dụ: Yuval Noah Harari">
+                </label>
+            </div>
+            <div class="form-row">
+                <label class="form-group">
+                    <span>Thể loại *</span>
+                    <select name="category" class="form-select" required>
+                        <option value="van-hoc">Văn học</option>
+                        <option value="ky-nang">Kỹ năng sống</option>
+                        <option value="kinh-te">Kinh tế & Đầu tư</option>
+                        <option value="khoa-hoc">Khoa học & Vũ trụ</option>
+                        <option value="lich-su">Lịch sử & Văn hóa</option>
+                        <option value="thieu-nhi">Thiếu nhi</option>
+                        <option value="trinh-tham">Trinh thám & Bí ẩn</option>
+                        <option value="tam-ly">Tâm lý học</option>
+                        <option value="cong-nghe">Công nghệ & AI</option>
+                        <option value="ngoai-ngu">Ngoại ngữ</option>
+                    </select>
+                </label>
+                <label class="form-group">
+                    <span>Đơn giá (VNĐ) *</span>
+                    <input type="number" name="price" class="form-input" min="1000" step="1000" required placeholder="120000">
+                </label>
+                <label class="form-group">
+                    <span>Tồn kho (quyển) *</span>
+                    <input type="number" name="stock" class="form-input" min="0" value="12" required>
+                </label>
+            </div>
+            <label class="form-group">
+                <span>Đường dẫn ảnh bìa (URL)</span>
+                <input type="url" name="cover" class="form-input" placeholder="https://images.unsplash.com/...">
+            </label>
+            <label class="form-group">
+                <span>Mô tả cuốn sách</span>
+                <textarea name="description" class="form-textarea" rows="3" placeholder="Giới thiệu nội dung nổi bật của cuốn sách..."></textarea>
+            </label>
+            <div class="dialog-footer">
+                <button type="button" id="cancelBookModal" class="btn-secondary">Hủy</button>
+                <button type="submit" class="btn-primary">Lưu cuốn sách</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- ADMIN LOGIN OVERLAY -->
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-box">
+            <div class="login-brand">
+                <span class="brand-badge">BN</span>
+                <h2>BookNest Admin Portal</h2>
+                <p>Vui lòng đăng nhập với tài khoản Quản trị viên để truy cập</p>
+            </div>
+            <form id="adminLoginForm">
+                <label class="form-group">
+                    <span>Email quản trị</span>
+                    <input type="email" name="email" class="form-input" value="admin@booknest.vn" required>
+                </label>
+                <label class="form-group">
+                    <span>Mật khẩu</span>
+                    <input type="password" name="password" class="form-input" value="admin123" required>
+                </label>
+                <p class="login-hint">💡 Tài khoản mặc định: <b>admin@booknest.vn</b> | Mật khẩu: <b>admin123</b></p>
+                <p id="adminLoginError" class="login-error" hidden></p>
+                <button type="submit" class="btn-primary btn-block">Đăng nhập Quản trị</button>
+            </form>
+            <div class="login-back">
+                <a href="index.html">← Quay lại trang chủ BookNest</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOAST CONTAINER -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="admin.js"></script>
+</body>
+</html>
+

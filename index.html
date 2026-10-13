@@ -10,14 +10,14 @@
     <meta property="og:site_name" content="BookNest">
     <meta property="og:title" content="BookNest | Sách hay mỗi ngày">
     <meta property="og:description" content="Khám phá những tựa sách được chọn kỹ cho những giờ đọc thật trọn vẹn.">
-    <meta property="og:url" content="https://booknest.example.com/">
-    <meta property="og:image" content="https://booknest.example.com/assets/favicon.svg">
+    <meta property="og:url" content="https://duongcongcao-0312.github.io/duannhom5-main/">
+    <meta property="og:image" content="https://duongcongcao-0312.github.io/duannhom5-main/assets/favicon.svg">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="BookNest | Sách hay mỗi ngày">
     <meta name="twitter:description" content="Khám phá những tựa sách được chọn kỹ cho những giờ đọc thật trọn vẹn.">
-    <meta name="twitter:image" content="https://booknest.example.com/assets/favicon.svg">
+    <meta name="twitter:image" content="https://duongcongcao-0312.github.io/duannhom5-main/assets/favicon.svg">
     <title>BookNest | Sách hay mỗi ngày</title>
-    <link rel="canonical" href="https://booknest.example.com/">
+    <link rel="canonical" href="https://duongcongcao-0312.github.io/duannhom5-main/">
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="assets/favicon.svg">
     <link rel="manifest" href="manifest.json">
@@ -27,7 +27,7 @@
     <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
     <header class="site-header" id="top">
         <a class="brand" href="#top" aria-label="BookNest trang chủ">
-            <span class="brand-mark">BN</span>
+            <span class="brand-mark" aria-hidden="true"><span>B</span><i>N</i></span>
             <span>BookNest</span>
         </a>
         <nav class="main-nav" aria-label="Điều hướng chính">
@@ -35,10 +35,12 @@
             <a href="#books">Sách</a>
             <a href="#categories">Thể loại</a>
             <a href="#services">Dịch vụ</a>
+            <a href="admin.html">Quản trị</a>
         </nav>
         <button class="cart-button" id="cartButton" type="button" aria-label="Mở giỏ hàng">
             Giỏ hàng <span id="cartCount" aria-live="polite">0</span>
         </button>
+        <button class="account-button" id="trackOrderButton" type="button">Tra cứu đơn</button>
         <button class="account-button" id="accountButton" type="button">Đăng nhập</button>
     </header>
 
@@ -55,6 +57,11 @@
                 <div class="hero-book book-red">MỘT<br>ĐỜI<br>ĐÁNG SỐNG</div>
                 <div class="hero-book book-gold">READ<br>MORE</div>
             </div>
+        </section>
+        <section class="quick-cart" aria-label="Tóm tắt giỏ hàng">
+            <div class="quick-cart-icon" aria-hidden="true">▣</div>
+            <div><strong>Giỏ hàng nhanh</strong><span id="quickCartSummary">Chưa có sách được chọn</span></div>
+            <button class="secondary-button" id="quickCartButton" type="button">Xem giỏ hàng</button>
         </section>
 
         <section class="season-strip" aria-labelledby="seasonTitle">
@@ -105,6 +112,13 @@
                         <option value="ky-nang">Kỹ năng sống</option>
                         <option value="kinh-te">Kinh tế</option>
                     </select>
+                    <select id="sortFilter" aria-label="Sắp xếp sách">
+                        <option value="featured">Sắp xếp nổi bật</option>
+                        <option value="price-asc">Giá thấp đến cao</option>
+                        <option value="price-desc">Giá cao đến thấp</option>
+                        <option value="title">Tên A-Z</option>
+                    </select>
+                    <button class="secondary-button favorites-filter" id="favoritesFilter" type="button" aria-pressed="false">♡ Yêu thích</button>
                 </div>
             </div>
             <div class="book-grid" id="bookGrid"></div>
@@ -152,8 +166,19 @@
     <aside class="cart-panel" id="cartPanel" aria-label="Giỏ hàng" aria-hidden="true">
         <div class="cart-header"><h2>Giỏ hàng</h2><button id="closeCart" type="button" aria-label="Đóng giỏ hàng">×</button></div>
         <div id="cartItems"><p class="cart-empty">Giỏ hàng đang trống.</p></div>
+        <div class="coupon-box"><label for="couponInput">Mã ưu đãi</label><div><input id="couponInput" type="text" maxlength="20" placeholder="Ví dụ: BOOKNEST10"><button id="applyCoupon" type="button">Áp dụng</button></div><p id="couponMessage" role="status"></p></div>
         <div class="cart-footer"><div><span>Tạm tính</span><strong id="cartSubtotal">0 đ</strong></div><div class="discount-line" id="discountLine" hidden><span>Ưu đãi thành viên</span><strong id="cartDiscount">-0 đ</strong></div><div><span>Thành tiền</span><strong id="cartTotal">0 đ</strong></div><button class="primary-button" id="checkoutButton" type="button" disabled>Thanh toán</button></div>
     </aside>
+    <dialog class="account-dialog" id="trackOrderDialog" aria-labelledby="trackOrderTitle">
+        <div class="payment-header"><h2 id="trackOrderTitle">Tra cứu đơn hàng</h2><button id="closeTrackOrder" type="button" aria-label="Đóng tra cứu">×</button></div>
+        <form id="trackOrderForm">
+            <p class="account-note">Nhập mã đơn hàng sau khi đặt hàng để xem trạng thái và các sách đã mua.</p>
+            <label class="service-field">Mã đơn hàng<input name="orderId" type="text" placeholder="Ví dụ: 123e4567-e89b..." required></label>
+            <p class="form-error" id="trackOrderError" role="alert" hidden></p>
+            <button class="primary-button payment-submit" type="submit">Tra cứu</button>
+        </form>
+        <section class="order-result" id="orderResult" hidden></section>
+    </dialog>
     <div class="overlay" id="overlay"></div>
     <button class="ai-launcher" id="aiLauncher" type="button" aria-label="Mở trợ lý BookNest">✦ <span>Hỏi BookNest</span></button>
     <aside class="ai-chat" id="aiChat" aria-label="Trợ lý hỏi đáp BookNest" aria-hidden="true">
@@ -162,7 +187,7 @@
             <button id="closeAi" type="button" aria-label="Đóng trợ lý">×</button>
         </div>
         <div class="ai-messages" id="aiMessages" aria-live="polite">
-            <div class="ai-message ai-message-bot">Xin chào! Mình có thể gợi ý sách, giải thích dịch vụ thuê/thu mua/trao đổi hoặc thông tin hội viên. Bạn muốn hỏi gì?</div>
+            <div class="ai-message ai-message-bot">Xin chào! Mình có thể gợi ý sách, giải thích dịch vụ thuê/thu mua/trao đổi hoặc ưu đãi tài khoản. Bạn muốn hỏi gì?</div>
         </div>
         <div class="ai-suggestions">
             <button type="button" data-ai-question="Gợi ý sách văn học hay">Sách văn học</button>
@@ -183,17 +208,16 @@
         <div class="account-tabs" role="tablist" aria-label="Tài khoản">
             <button class="account-tab active" data-account-view="login" type="button">Đăng nhập</button>
             <button class="account-tab" data-account-view="register" type="button">Đăng ký</button>
-            <button class="account-tab" data-account-view="member" type="button">Thẻ hội viên</button>
         </div>
         <form id="loginForm" class="account-form">
-            <p class="account-note">Đăng nhập để lưu giỏ hàng và nhận ưu đãi thành viên.</p>
+            <p class="account-note">Đăng nhập để lưu giỏ hàng và nhận ưu đãi tài khoản.</p>
             <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" required></label>
             <label class="service-field">Mật khẩu<input name="password" type="password" minlength="6" required></label>
             <p class="form-error" id="loginError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Đăng nhập</button>
         </form>
         <form id="registerForm" class="account-form" hidden>
-            <p class="account-note">Tạo tài khoản miễn phí và nhận thẻ hội viên BookNest.</p>
+            <p class="account-note">Tạo tài khoản miễn phí để lưu thông tin và nhận ưu đãi.</p>
             <label class="service-field">Họ và tên<input name="name" type="text" placeholder="Nguyễn Văn A" required></label>
             <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" required></label>
             <label class="service-field">Mật khẩu<input name="password" type="password" minlength="6" required></label>
@@ -207,17 +231,15 @@
             <label class="service-field student-id-field" hidden>Mã học sinh / sinh viên<input name="studentId" type="text" placeholder="Nhập mã để nhận ưu đãi"></label>
             <p class="form-error" id="registerError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Tạo tài khoản</button>
-        </form>
-        <section class="member-card-panel" id="memberPanel" hidden>
-            <div class="member-card">
-                <p class="eyebrow">BookNest membership</p>
-                <strong id="memberName">Bạn chưa đăng nhập</strong>
-                <span id="memberNumber">Đăng ký để nhận mã hội viên</span>
-                <b id="memberBenefit">Giảm 5% cho thành viên</b>
+            <div class="account-social">
+                <p class="social-divider"><span>Hoặc đăng ký bằng</span></p>
+                <div class="social-buttons">
+                    <button class="social-button" data-social-provider="google" type="button"><span class="social-mark google-mark" aria-hidden="true">G</span>Google (Gmail)</button>
+                    <button class="social-button" data-social-provider="facebook" type="button"><span class="social-mark facebook-mark" aria-hidden="true">f</span>Facebook</button>
+                </div>
             </div>
-            <p class="account-note" id="memberStatus">Đăng ký tài khoản để sở hữu thẻ hội viên điện tử.</p>
-            <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
-        </section>
+        </form>
+        <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
     </dialog>
     <dialog class="payment-dialog" id="paymentDialog" aria-labelledby="paymentTitle">
         <div class="payment-header">
@@ -276,6 +298,9 @@
         </form>
     </dialog>
     <footer><p>BookNest</p><span>Những trang sách mở ra những thế giới mới.</span><nav aria-label="Liên kết pháp lý"><a href="privacy.html">Chính sách bảo mật</a><a href="terms.html">Điều khoản dịch vụ</a></nav></footer>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="assets/firebase-config.js"></script>
     <script src="books-data.js"></script>
     <script src="main.js"></script>
 </body>

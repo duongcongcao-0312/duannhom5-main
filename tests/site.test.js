@@ -41,6 +41,42 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
+test('customer contact information persists for purchases and book services after logout', () => {
+	const script = read('main.js');
+	assert.match(script, /const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info'/);
+	assert.match(script, /function loadCustomerInfo/);
+	assert.match(script, /function saveCustomerInfo/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), customerName, address, phone \}/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), name: request\.name, phone: request\.phone \}/);
+	assert.match(script, /function fillSavedCustomerInfo/);
+	assert.match(script, /fillSavedCustomerInfo\(\);/);
+	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
+	assert.match(script, /saveCustomerInfoToAccount/);
+	assert.match(script, /api\/auth\/customer-info/);
+	assert.match(script, /hydrateAuthenticatedUser/);
+	assert.match(script, /api\/auth\/me/);
+});
+
+test('cart groups duplicate books and provides quantity controls', () => {
+	const script = read('main.js');
+	const css = read('main.css');
+	assert.match(script, /function getCartGroups/);
+	assert.match(script, /function changeCartQuantity/);
+	assert.match(script, /data-cart-change="-1"/);
+	assert.match(script, /data-cart-change="1"/);
+	assert.match(script, /data-cart-change="-\$\{quantity\}"/);
+	assert.match(css, /\.quantity-control/);
+});
+
+test('cart opens as a floating window above the BookNest assistant', () => {
+	const css = read('main.css');
+	const script = read('main.js');
+	assert.match(css, /\.cart-panel \{[^}]*position: fixed/);
+	assert.match(css, /\.cart-panel \{[^}]*bottom: 84px/);
+	assert.match(css, /\.cart-panel\.open \{[^}]*pointer-events: auto/);
+	assert.match(script, /if \(open\) toggleCart\(false\)/);
+});
+
 test('responsive CSS includes tablet and mobile breakpoints', () => {
 	const css = read('main.css');
 	assert.match(css, /max-width: 1024px/);
@@ -90,15 +126,98 @@ test('book cards link to a detailed description page', () => {
 	assert.match(read('book-detail.js'), /categoryDescriptions/);
 });
 
-test('account, membership discount and AI assistant are wired', () => {
+test('book details support purchasing and related book discovery', () => {
+	const html = read('book.html');
+	const script = read('book-detail.js');
+	const css = read('main.css');
+	assert.match(html, /books-data\.js/);
+	assert.match(script, /id="buyBook"/);
+	assert.match(script, /localStorage\.setItem\('booknest-cart'/);
+	assert.match(script, /relatedBooks/);
+	assert.match(script, /Sách khác cùng thể loại/);
+	assert.match(css, /\.related-book-grid/);
+});
+
+test('book details support previous and next book navigation', () => {
+	const script = read('book-detail.js');
+	const css = read('main.css');
+	assert.match(script, /function getBookNavigation/);
+	assert.match(script, /Sách trước/);
+	assert.match(script, /Sách tiếp theo/);
+	assert.match(css, /\.detail-navigation/);
+});
+
+test('account discounts and AI assistant are wired without membership cards', () => {
 	const html = read('index.html');
 	const script = read('main.js');
+	const css = read('main.css');
+	const firebaseConfig = read('assets/firebase-config.js');
 	assert.match(html, /id="accountButton"/);
 	assert.match(html, /id="registerForm"/);
-	assert.match(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /data-account-view="member"/);
+	assert.match(html, /data-social-provider="google"/);
+	assert.match(html, /data-social-provider="facebook"/);
+	assert.match(css, /\.account-form\[hidden\]\s*\{\s*display:\s*none;/);
 	assert.match(html, /id="aiChat"/);
+	assert.match(script, /signInWithPopup\(provider\)/);
+	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
 	assert.match(script, /getDiscountRate/);
 	assert.match(script, /getAiAnswer/);
+	assert.doesNotMatch(script, /memberNumber/);
+});
+
+test('catalog supports sorting, favorites, coupons and order tracking', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	assert.match(html, /id="sortFilter"/);
+	assert.match(html, /id="favoritesFilter"/);
+	assert.match(html, /id="couponInput"/);
+	assert.match(html, /id="trackOrderForm"/);
+	assert.match(script, /FAVORITES_STORAGE_KEY/);
+	assert.match(script, /api\/coupons/);
+	assert.match(script, /trackOrderForm/);
+	assert.match(server, /BOOKNEST10/);
+	assert.match(server, /couponCode/);
+});
+
+test('book catalog supports price sorting with search and category filters', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	assert.match(html, /<option value="featured">Sắp xếp nổi bật<\/option>/);
+	assert.match(html, /<option value="price-asc">Giá thấp đến cao<\/option>/);
+	assert.match(html, /<option value="price-desc">Giá cao đến thấp<\/option>/);
+	assert.match(script, /const query = searchInput\.value\.trim\(\)\.toLowerCase\(\)/);
+	assert.match(script, /category === 'all' \|\| book\.category === category/);
+	assert.match(script, /visibleBooks\.sort\(\(a, b\) => a\.price - b\.price\)/);
+	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.price - a\.price\)/);
+	assert.match(script, /sortFilter\) sortFilter\.addEventListener\('change', renderBooks\)/);
+	assert.match(script, /data-title="\$\{escapeHtml\(book\.title\)\}"/);
+});
+test('storefront includes quick cart, stock visibility and refreshed branding', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const server = read('server.js');
+	const css = read('main.css');
+	assert.match(html, /id="quickCartButton"/);
+	assert.match(html, /class="brand-mark"[^>]*>.*<span>B<\/span><i>N<\/i>/s);
+	assert.match(script, /function getBookStock/);
+	assert.match(script, /quickCartSummary/);
+	assert.match(script, /quantityInCart >= getBookStock/);
+	assert.match(server, /defaultBookStock/);
+	assert.match(server, /vượt quá tồn kho/);
+	assert.match(css, /\.quick-cart/);
+	assert.match(css, /\.stock-status/);
+});
+
+test('quick cart is a compact fixed shortcut that follows the viewport', () => {
+	const css = read('main.css');
+	assert.match(css, /\.quick-cart \{[^}]*position: fixed/);
+	assert.match(css, /\.quick-cart \{[^}]*right: 24px/);
+	assert.match(css, /\.quick-cart \{[^}]*bottom: 142px/);
+	assert.match(css, /\.quick-cart \{[^}]*z-index: 7/);
+	assert.match(css, /@media \(max-width: 480px\) \{ \.quick-cart \{[^}]*bottom: 126px/);
 });
 
 test('category cards show data-driven book counts without inventory management', () => {

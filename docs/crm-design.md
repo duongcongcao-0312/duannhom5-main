@@ -45,7 +45,7 @@ customers 1──N consent_records
 | `id` | UUID | PK | Định danh tài khoản |
 | `email` | VARCHAR(254) | UNIQUE, NOT NULL | Email chuẩn hóa chữ thường |
 | `password_hash` | TEXT | NOT NULL | Hash scrypt/Argon2; không lưu mật khẩu gốc |
-| `role` | VARCHAR(20) | NOT NULL, `user`/`admin` | Quyền hệ thống |
+| `role` | VARCHAR(20) | NOT NULL, `user`/`admin`/`sales`/`support` | Quyền hệ thống |
 | `created_at` | TIMESTAMP | NOT NULL | Thời điểm tạo |
 | `updated_at` | TIMESTAMP | NOT NULL | Lần cập nhật cuối |
 | `last_login_at` | TIMESTAMP | NULL | Lần đăng nhập gần nhất |
@@ -64,6 +64,8 @@ Index: unique `lower(email)`, `role`.
 | `student_type` | VARCHAR(20) | NOT NULL, mặc định `other` | `student`, `university`, `other` |
 | `student_id` | VARCHAR(80) | NULL | Mã học sinh/sinh viên; chỉ lưu khi có đồng ý |
 | `notes` | TEXT | NULL | Ghi chú chăm sóc, không lưu dữ liệu nhạy cảm |
+| `created_by` | UUID | FK `users.id`, NOT NULL | Người tạo hồ sơ |
+| `updated_by` | UUID | FK `users.id`, NOT NULL | Người cập nhật/xoá gần nhất |
 | `created_at` | TIMESTAMP | NOT NULL | Thời điểm tạo hồ sơ |
 | `updated_at` | TIMESTAMP | NOT NULL | Lần cập nhật cuối |
 
@@ -161,12 +163,18 @@ Bản ghi `consent_records` phải giữ đủ thông tin để chứng minh kh�
 
 ## Quyền truy cập và bảo mật
 
-| Vai trò | Được xem | Được sửa |
-| --- | --- | --- |
-| Khách chưa đăng nhập | Dữ liệu trong phiên hiện tại | Dữ liệu tạm trong phiên |
-| Khách đã đăng nhập | Hồ sơ, địa chỉ và đơn của chính mình | Hồ sơ và địa chỉ của chính mình |
-| Nhân viên CSKH | Hồ sơ, đơn và yêu cầu được phân công | Trạng thái yêu cầu, ghi chú nghiệp vụ |
-| Admin | Toàn bộ CRM và audit log | Toàn bộ dữ liệu nghiệp vụ |
+| Vai trò | Xem CRM | Tạo hồ sơ | Cập nhật trạng thái | Xoá mềm |
+| --- | --- | --- | --- | --- |
+| `admin` | Có | Có | Có | Có |
+| `sales` | Có | Có | Có | Không |
+| `support` | Có | Không | Không | Không |
+| `user` / chưa đăng nhập | Không | Không | Không | Không |
+
+Các quyền này được thực thi cho API CRM hiện tại tại `/api/admin/customers`.
+Vai trò không được lấy từ payload đăng ký công khai; chỉ quy trình cấp quyền
+đáng tin cậy mới gán vai trò nhân viên. Tạo hồ sơ lưu `created_by` và
+`updated_by`; mọi cập nhật và xoá mềm thay `updated_by` bằng ID người dùng đã
+xác thực thực hiện thao tác.
 
 - Mọi endpoint CRM phải xác thực Bearer token; kiểm tra quyền sở hữu ở tầng
   service, không chỉ dựa vào ID từ request.

@@ -3,7 +3,11 @@ const http = require("node:http");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const books = require("./books-data");
-const { Database } = require("./backend/db");
+const {
+  CustomerError,
+  Database,
+  validateCustomerData,
+} = require("./backend/db");
 const { SessionStore, verifyPassword } = require("./backend/auth");
 
 const root = __dirname;
@@ -99,6 +103,11 @@ const coupons = new Map([
 ]);
 const maxRequestBytes = 1024 * 1024;
 const defaultBookStock = 12;
+const customerRolePermissions = {
+  admin: new Set(["view", "create", "update", "delete"]),
+  sales: new Set(["view", "create", "update"]),
+  support: new Set(["view"]),
+};
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -385,6 +394,7 @@ function createServer({
   ordersPath = defaultOrdersPath,
   staticRoot = root,
   usersPath,
+  customersPath,
   servicesPath,
   booksPath,
 } = {}) {
@@ -393,6 +403,7 @@ function createServer({
     root,
     ordersPath,
     usersPath,
+    customersPath,
     servicesPath,
     booksPath,
   });
@@ -430,7 +441,9 @@ function createServer({
     if (!user) {
       throw new RequestError(401, "Chưa đăng nhập.");
     }
-    const role = String(user.role || "user").trim().toLowerCase();
+    const role = String(user.role || "user")
+      .trim()
+      .toLowerCase();
     const allowedPermissions = rolePermissions[role] || [];
     if (!allowedPermissions.includes(permission)) {
       throw new RequestError(
@@ -575,6 +588,60 @@ function createServer({
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
       sessionStore.destroySession(token);
       sendJson(response, 200, { message: "Đã đăng xuất thành công." });
+      return;
+    }
+
+    // --- Admin API: CRM Customers ---
+    if (
+      requestUrl.pathname === "/api/admin/customers" &&
+      request.method === "GET"
+    ) {
+      requireCustomerPermission(request, "view");
+      sendJson(response, 200, await db.getCustomers());
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/customers" &&
+      request.method === "POST"
+    ) {
+      const user = requireCustomerPermission(request, "create");
+      const customer = await db.createCustomer(
+        validateCustomerData(await readJson(request)),
+        user.userId,
+      );
+      sendJson(response, 201, customer);
+      return;
+    }
+
+    const adminCustomerMatch = requestUrl.pathname.match(
+      /^\/api\/admin\/customers\/([0-9a-f-]{36})$/i,
+    );
+    if (adminCustomerMatch && request.method === "PATCH") {
+      const user = requireCustomerPermission(request, "update");
+      const payload = await readJson(request);
+      const updated = await db.updateCustomerStatus(
+        adminCustomerMatch[1],
+        payload && payload.status,
+        user.userId,
+      );
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy khách hàng.");
+      }
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    if (adminCustomerMatch && request.method === "DELETE") {
+      const user = requireCustomerPermission(request, "delete");
+      const deleted = await db.softDeleteCustomer(
+        adminCustomerMatch[1],
+        user.userId,
+      );
+      if (!deleted) {
+        throw new RequestError(404, "Không tìm thấy khách hàng.");
+      }
+      sendJson(response, 200, { success: true });
       return;
     }
 
@@ -809,7 +876,7 @@ function createServer({
 
   return http.createServer((request, response) => {
     void handleRequest(request, response).catch((error) => {
-      if (error instanceof RequestError) {
+      if (error instanceof RequestError || error instanceof CustomerError) {
         sendJson(response, error.status, { error: error.message });
         return;
       }

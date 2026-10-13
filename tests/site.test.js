@@ -280,6 +280,20 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(serverSourceResponse.status, 404);
 });
 
+test('customer schema is documented with required tables, keys and indexes', () => {
+	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
+	assert.ok(fs.existsSync(schemaPath));
+	const schema = fs.readFileSync(schemaPath, 'utf8');
+	assert.match(schema, /CREATE TABLE customers/);
+	assert.match(schema, /CREATE TABLE customer_interactions/);
+	assert.match(schema, /CREATE TABLE customer_orders/);
+	assert.match(schema, /UNIQUE \(email\)/);
+	assert.match(schema, /UNIQUE \(phone\)/);
+	assert.match(schema, /CREATE INDEX idx_customers_phone/);
+	assert.match(schema, /CREATE INDEX idx_customers_email/);
+	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
+});
+
 test('invalid books are rejected without saving an order', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-order-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');

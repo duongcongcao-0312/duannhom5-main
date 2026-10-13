@@ -6,7 +6,6 @@ const test = require("node:test");
 const { hashPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
 const { createServer } = require("../server");
-const { Database } = require("../backend/db");
 
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
@@ -237,6 +236,50 @@ test("customer management access is role-scoped and audit fields are recorded", 
   assert.equal(salesRecord.role, "sales");
   assert.equal(salesRecord.createdBy, "admin@booknest.vn");
   assert.ok(salesRecord.updatedAt);
+});
+
+test("customer management validation rejects invalid roles and duplicate users", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-user-validation-"));
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const db = new Database({ usersPath, servicesPath, ordersPath });
+
+  t.after(async () => {
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    () => db.createUser({
+      name: "Bad role",
+      email: "bad-role@example.com",
+      password: "password123",
+      role: "boss"
+    }),
+    /Vai trò người dùng không hợp lệ/
+  );
+
+  await db.createUser({
+    name: "Nguyễn Anh",
+    email: "anh@example.com",
+    password: "password123",
+    role: "user"
+  });
+
+  await assert.rejects(
+    () => db.createUser({
+      name: "Nguyễn Anh Lặp",
+      email: "anh@example.com",
+      password: "password456",
+      role: "user"
+    }),
+    /Email này đã được đăng ký/
+  );
+
+  const savedUser = await db.findUserByEmail("anh@example.com");
+  assert.equal(savedUser.role, "user");
+  assert.ok(savedUser.createdAt);
+  assert.ok(savedUser.updatedAt);
 });
 
 test("backend rejects invalid service and status payloads", async (t) => {

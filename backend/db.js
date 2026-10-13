@@ -3,6 +3,11 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
 
+const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
+const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
+const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
+const allowedServiceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
+
 class Database {
   constructor(options = {}) {
     const root = options.root || path.resolve(__dirname, "..");
@@ -123,6 +128,13 @@ class Database {
 
   async updateOrderStatus(orderId, { status, paymentStatus }, ordersPathOverride) {
     const filePath = ordersPathOverride || this.ordersPath;
+    if (status !== undefined && !allowedOrderStatuses.has(String(status).trim())) {
+      throw new Error("Trạng thái đơn hàng không hợp lệ.");
+    }
+    if (paymentStatus !== undefined && !allowedPaymentStatuses.has(String(paymentStatus).trim())) {
+      throw new Error("Trạng thái thanh toán không hợp lệ.");
+    }
+
     let content;
     try {
       content = await fs.readFile(filePath, "utf8");
@@ -158,9 +170,13 @@ class Database {
   // --- Service Requests (Thuê / Thu mua / Trao đổi sách) ---
   async addServiceRequest(request) {
     await this.init();
+    const serviceType = String(request.service || "").trim();
+    if (!allowedServiceTypes.has(serviceType)) {
+      throw new Error("Loại dịch vụ không hợp lệ.");
+    }
     const entry = {
       id: crypto.randomUUID(),
-      service: request.service,
+      service: serviceType,
       bookTitle: String(request.bookTitle).trim(),
       condition: request.condition,
       name: String(request.name).trim(),
@@ -195,6 +211,9 @@ class Database {
 
   async updateServiceRequestStatus(id, status) {
     await this.init();
+    if (status !== undefined && !allowedServiceStatuses.has(String(status).trim())) {
+      throw new Error("Trạng thái yêu cầu dịch vụ không hợp lệ.");
+    }
     let content;
     try {
       content = await fs.readFile(this.servicesPath, "utf8");

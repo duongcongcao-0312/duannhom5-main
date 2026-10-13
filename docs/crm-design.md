@@ -7,6 +7,15 @@ sang cơ sở dữ liệu quan hệ mà không thay đổi luồng giao diện.
 
 ## Phạm vi và nguyên tắc
 
+### Trạng thái triển khai
+
+Luồng hiện tại đã hỗ trợ lưu hồ sơ liên hệ xuyên thiết bị qua tài khoản:
+`GET /api/auth/me` trả về `customerInfo` và
+`PATCH /api/auth/customer-info` cập nhật các trường `customerName`, `name`,
+`phone`, `address`. Giao diện vẫn giữ bản sao cục bộ để hỗ trợ khách chưa đăng
+nhập hoặc khi máy chủ tạm thời không kết nối. Các bảng CRM bên dưới là schema
+đích cho bước tách dữ liệu hồ sơ khỏi `users.json`.
+
 - Một khách hàng được định danh bằng `customer.id`, không dùng email hoặc số
   điện thoại làm khóa chính.
 - Một tài khoản đăng nhập có tối đa một hồ sơ khách hàng; tài khoản khách chưa

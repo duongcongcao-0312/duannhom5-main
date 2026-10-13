@@ -53,6 +53,8 @@ test('customer contact information persists for purchases and book services afte
 	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
 	assert.match(script, /saveCustomerInfoToAccount/);
 	assert.match(script, /api\/auth\/customer-info/);
+	assert.match(script, /hydrateAuthenticatedUser/);
+	assert.match(script, /api\/auth\/me/);
 });
 
 test('cart groups duplicate books and provides quantity controls', () => {
@@ -148,11 +150,18 @@ test('book details support previous and next book navigation', () => {
 test('account discounts and AI assistant are wired without membership cards', () => {
 	const html = read('index.html');
 	const script = read('main.js');
+	const css = read('main.css');
+	const firebaseConfig = read('assets/firebase-config.js');
 	assert.match(html, /id="accountButton"/);
 	assert.match(html, /id="registerForm"/);
 	assert.doesNotMatch(html, /id="memberPanel"/);
 	assert.doesNotMatch(html, /data-account-view="member"/);
+	assert.match(html, /data-social-provider="google"/);
+	assert.match(html, /data-social-provider="facebook"/);
+	assert.match(css, /\.account-form\[hidden\]\s*\{\s*display:\s*none;/);
 	assert.match(html, /id="aiChat"/);
+	assert.match(script, /signInWithPopup\(provider\)/);
+	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
 	assert.match(script, /getDiscountRate/);
 	assert.match(script, /getAiAnswer/);
 	assert.doesNotMatch(script, /memberNumber/);

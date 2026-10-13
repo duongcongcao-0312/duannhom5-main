@@ -10,14 +10,14 @@
     <meta property="og:site_name" content="BookNest">
     <meta property="og:title" content="BookNest | Sách hay mỗi ngày">
     <meta property="og:description" content="Khám phá những tựa sách được chọn kỹ cho những giờ đọc thật trọn vẹn.">
-    <meta property="og:url" content="https://booknest.example.com/">
-    <meta property="og:image" content="https://booknest.example.com/assets/favicon.svg">
+    <meta property="og:url" content="https://duongcongcao-0312.github.io/duannhom5-main/">
+    <meta property="og:image" content="https://duongcongcao-0312.github.io/duannhom5-main/assets/favicon.svg">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="BookNest | Sách hay mỗi ngày">
     <meta name="twitter:description" content="Khám phá những tựa sách được chọn kỹ cho những giờ đọc thật trọn vẹn.">
-    <meta name="twitter:image" content="https://booknest.example.com/assets/favicon.svg">
+    <meta name="twitter:image" content="https://duongcongcao-0312.github.io/duannhom5-main/assets/favicon.svg">
     <title>BookNest | Sách hay mỗi ngày</title>
-    <link rel="canonical" href="https://booknest.example.com/">
+    <link rel="canonical" href="https://duongcongcao-0312.github.io/duannhom5-main/">
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="assets/favicon.svg">
     <link rel="manifest" href="manifest.json">
@@ -231,6 +231,13 @@
             <label class="service-field student-id-field" hidden>Mã học sinh / sinh viên<input name="studentId" type="text" placeholder="Nhập mã để nhận ưu đãi"></label>
             <p class="form-error" id="registerError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Tạo tài khoản</button>
+            <div class="account-social">
+                <p class="social-divider"><span>Hoặc đăng ký bằng</span></p>
+                <div class="social-buttons">
+                    <button class="social-button" data-social-provider="google" type="button"><span class="social-mark google-mark" aria-hidden="true">G</span>Google (Gmail)</button>
+                    <button class="social-button" data-social-provider="facebook" type="button"><span class="social-mark facebook-mark" aria-hidden="true">f</span>Facebook</button>
+                </div>
+            </div>
         </form>
         <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
     </dialog>
@@ -290,7 +297,10 @@
             <button class="primary-button payment-submit" type="submit">Gửi yêu cầu</button>
         </form>
     </dialog>
-    <footer><p>BookNest</p><span>Những trang sách mở ra những thế giới mới.</span><nav aria-label="Liên kết pháp lý"><a href="privacy.html">Chính sách bảo mật</a><a href="terms.html">Điều khoản dịch vụ</a><a href="admin.html">Quản trị</a></nav></footer>
+    <footer><p>BookNest</p><span>Những trang sách mở ra những thế giới mới.</span><nav aria-label="Liên kết pháp lý"><a href="privacy.html">Chính sách bảo mật</a><a href="terms.html">Điều khoản dịch vụ</a></nav></footer>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="assets/firebase-config.js"></script>
     <script src="books-data.js"></script>
     <script src="main.js"></script>
 </body>

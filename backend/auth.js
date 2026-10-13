@@ -45,6 +45,7 @@ class SessionStore {
       role: user.role || "user",
       studentType: user.studentType || "other",
       studentId: user.studentId || "",
+      customerInfo: user.customerInfo || {},
       createdAt: Date.now(),
       expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days validity
     };
@@ -74,4 +75,3 @@ module.exports = {
   verifyPassword,
   SessionStore
 };
-

@@ -32,7 +32,8 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - Đặt hàng bằng chuyển khoản qua mã QR hoặc thanh toán khi nhận hàng (COD);
   máy chủ kiểm tra giá, lưu đơn và cấp mã để tra cứu.
 - Đăng ký thuê, thu mua hoặc trao đổi sách; đăng ký tài khoản và đăng nhập.
-- Quản lý đơn hàng, kho sách, yêu cầu dịch vụ và thành viên qua cổng quản trị.
+- Quản lý đơn hàng, kho sách, yêu cầu dịch vụ, thành viên và khách hàng qua API
+  quản trị.
 - Giao diện tương thích với máy tính và điện thoại; có trang chi tiết sách,
   chính sách, điều khoản và trang lỗi.
 
@@ -117,10 +118,22 @@ lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào 
 | `GET` | `/api/admin/services` | Quản trị | Xem yêu cầu dịch vụ |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật trạng thái yêu cầu dịch vụ |
 | `GET` | `/api/admin/users` | Quản trị | Xem danh sách thành viên |
+| `GET` | `/api/admin/customers` | Quản trị | Xem khách hàng chưa bị xoá |
+| `POST` | `/api/admin/customers` | Quản trị | Tạo khách hàng mới |
+| `PATCH` | `/api/admin/customers/:id` | Quản trị | Chuyển trạng thái mới → tiềm năng → khách hàng |
+| `DELETE` | `/api/admin/customers/:id` | Quản trị | Xoá mềm khách hàng |
+
+Khách hàng cần có họ tên, email hợp lệ và số điện thoại từ 8 đến 15 chữ số.
+Email và số điện thoại không được trùng với khách hàng đang hoạt động. Xoá
+khách hàng chỉ đặt `deletedAt`, giữ nguyên dữ liệu trong kho lưu trữ và ẩn
+khách hàng khỏi danh sách; thông tin đã xoá không còn giữ chỗ email hoặc số
+điện thoại. Trạng thái chỉ được chuyển tiến từng bước, không thể bỏ qua hoặc
+quay lui.
 
 ## Dữ liệu và lưu trữ
 
-Máy chủ lưu người dùng trong `data/users.json`, yêu cầu dịch vụ trong
+Máy chủ lưu người dùng trong `data/users.json`, khách hàng CRM trong
+`data/customers.json`, yêu cầu dịch vụ trong
 `data/service-requests.jsonl`, sách quản trị thêm trong `data/books.json` và
 đơn hàng trong `data/orders.jsonl`. Một số trạng thái giao diện như giỏ hàng,
 sách yêu thích và phiên đăng nhập cũng được lưu trong `localStorage` của trình
@@ -138,7 +151,7 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 ├── backend/
 │   ├── auth.js              # Mã hoá mật khẩu và quản lý phiên
 │   └── db.js                # Đọc và ghi dữ liệu JSON/JSONL
-├── data/                    # Dữ liệu người dùng, sách và yêu cầu dịch vụ
+├── data/                    # Dữ liệu người dùng, khách hàng, sách và dịch vụ
 ├── tests/                   # Kiểm thử giao diện và API
 ├── .github/workflows/       # Quy trình CI
 ├── admin.html               # Giao diện cổng quản trị
@@ -197,6 +210,7 @@ flowchart TB
     subgraph DATA["03 · LỚP DỮ LIỆU"]
         direction LR
         USERS[("users.json<br/>tài khoản")]
+        CUSTOMERS[("customers.json<br/>khách hàng CRM")]
         BOOKS[("books.json<br/>sách do quản trị thêm")]
         ORDERS[("orders.jsonl<br/>đơn hàng")]
         SERVICES[("service-requests.jsonl<br/>yêu cầu dịch vụ")]
@@ -219,6 +233,7 @@ flowchart TB
     DETAIL <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
     ADMIN_UI <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
     REPOSITORY --> USERS
+    REPOSITORY --> CUSTOMERS
     REPOSITORY --> BOOKS
     REPOSITORY --> ORDERS
     REPOSITORY --> SERVICES
@@ -373,8 +388,99 @@ Facebook. Set the Firebase web app values in `assets/firebase-config.js` from
 Firebase Console > Project settings > Your apps. These browser configuration
 values are public; never put a provider client secret in this file.
 
-Enable Google and Facebook under Firebase Authentication > Sign-in method, add
-`sachlatrithuc.com` under Authorized domains, and configure each provider's
-OAuth app with Firebase's redirect URI shown in its provider settings. Serve the
-site over HTTPS (or localhost while developing). The Facebook App ID and secret
-belong only in Firebase Console.
+```sh
+npm test
+npm audit --omit=dev
+```
+
+GitHub Actions cũng cài các gói theo lockfile, chạy kiểm thử và kiểm tra lỗ
+hổng dependency khi có push lên nhánh `main` hoặc pull request.
+
+## Đơn hàng và API
+
+Thiết kế lưu trữ hồ sơ khách hàng, schema CRM, quyền truy cập, bảo mật và lộ
+trình migration được ghi tại [docs/crm-design.md](docs/crm-design.md).
+
+Máy chủ lưu mỗi đơn thành một dòng JSON trong `data/orders.jsonl`. Tệp này có
+thông tin giao nhận của khách hàng, đã được thêm vào `.gitignore` để không bị
+đẩy lên Git. Hãy bảo vệ và sao lưu tệp nếu cần giữ dữ liệu đơn hàng; không dùng
+dữ liệu khách thật trong môi trường thử nghiệm.
+
+Các API hiện có:
+
+| Phương thức | Đường dẫn | Quyền hạn | Mô tả |
+| --- | --- | --- | --- |
+| `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi |
+| `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng |
+| `GET` | `/api/orders/:id` | Công khai | Tra cứu trạng thái và chi tiết cơ bản của đơn |
+| `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản (mã hoá scrypt) |
+| `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận token xác thực |
+| `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại |
+| `POST` | `/api/auth/logout` | Người dùng | Đăng xuất tài khoản |
+| `PATCH` | `/api/auth/customer-info` | Người dùng | Lưu thông tin liên hệ vào tài khoản |
+| `GET` | `/api/books` | Công khai | Lấy toàn bộ danh mục sách |
+| `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua, trao đổi sách |
+| `GET` | `/api/admin/stats` | Quản trị | Thống kê doanh thu, đơn hàng, người dùng |
+| `GET` | `/api/admin/orders` | Quản trị | Xem danh sách đầy đủ tất cả đơn hàng |
+| `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn và thanh toán |
+| `POST` | `/api/admin/books` | Quản trị | Thêm sách mới vào hệ thống |
+| `PUT` | `/api/admin/books/:id` | Quản trị | Cập nhật thông tin và tồn kho sách |
+| `DELETE` | `/api/admin/books/:id` | Quản trị | Xoá sách khỏi hệ thống |
+| `GET` | `/api/admin/services` | Quản trị | Xem các yêu cầu dịch vụ sách |
+| `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật trạng thái yêu cầu dịch vụ |
+| `GET` | `/api/admin/users` | Quản trị | Xem danh sách thành viên |
+
+## Cổng quản trị (Admin Portal)
+
+Hệ thống có trang quản trị chuyên biệt tại đường dẫn: <http://127.0.0.1:8000/admin.html>.
+- **Tài khoản quản trị viên mặc định**: `admin@booknest.vn`
+- **Mật khẩu**: `admin123`
+
+Trang quản trị cho phép:
+1. **Bảng điều khiển**: Thống kê doanh thu, số đơn hàng đang xử lý, số sách, số thành viên.
+2. **Quản lý đơn hàng**: Xem chi tiết người nhận (tên, SĐT, địa chỉ, phương thức COD/QR), lọc theo trạng thái và đổi trạng thái đơn (Mới nhận, Đang xử lý, Đang giao, Hoàn tất, Đã huỷ).
+3. **Quản lý kho sách**: Thêm sách mới (tiêu đề, tác giả, thể loại, giá, tồn kho, ảnh bìa, mô tả), chỉnh sửa hoặc xoá sách.
+4. **Yêu cầu dịch vụ**: Tiếp nhận và chuyển trạng thái các yêu cầu thuê/thu mua/đổi sách của bạn đọc.
+5. **Thành viên**: Xem danh sách thành viên, vai trò và phân loại đối tượng (Học sinh / Sinh viên / Khách hàng).
+
+## Cấu trúc mã nguồn
+
+```text
+.
+├── assets/                 # Biểu tượng và tài nguyên tĩnh
+├── backend/                # Xử lý phía máy chủ (Backend)
+│   ├── auth.js             # Mã hoá mật khẩu scrypt & quản lý token phiên
+│   └── db.js               # Lưu trữ dữ liệu (Users, Books, Services, Orders)
+├── data/                   # Thư mục dữ liệu (Users, Orders, Services)
+├── tests/                  # Kiểm thử giao diện và API
+│   ├── site.test.js        # Kiểm thử giao diện storefront & API đơn hàng
+│   └── backend.test.js     # Kiểm thử toàn bộ API Backend & Admin
+├── admin.html              # Giao diện trang quản trị Admin
+├── admin.css               # Phong cách trang quản trị
+├── admin.js                # Tương tác và gọi API trang quản trị
+├── books-data.js           # Danh mục sách dùng chung
+├── book.html               # Trang chi tiết sách
+├── book-detail.js          # Tương tác cho trang chi tiết
+├── index.html              # Trang chủ cửa hàng
+├── main.css                # Giao diện và bố cục responsive
+├── main.js                 # Tương tác giao diện và tích hợp API
+└── server.js               # Máy chủ Node.js REST API & tĩnh
+```
+
+## Lưu ý khi triển khai
+
+Đây là ứng dụng mẫu. Tài khoản người dùng và yêu cầu thuê/thu mua/trao đổi hiện
+được lưu trong `localStorage` của trình duyệt; chúng chưa được xác thực hoặc
+đồng bộ an toàn qua máy chủ. Vì vậy, không dùng website để xử lý mật khẩu hay
+thông tin khách hàng thật.
+
+Để triển khai thực tế, cần bổ sung xác thực phía máy chủ, cơ sở dữ liệu có sao
+lưu, HTTPS, kiểm soát quyền truy cập đơn hàng và cơ chế bảo vệ dữ liệu cá nhân.
+Ứng dụng cần môi trường lưu được dữ liệu lâu dài để giữ đơn hàng; GitHub Pages
+chỉ lưu trữ tệp tĩnh nên không chạy được API Node.js.
+Để bật Google và Facebook, hãy bật cả hai nhà cung cấp trong Firebase
+Authentication > Sign-in method, thêm `sachlatrithuc.com` vào Authorized
+domains và cấu hình OAuth redirect URI mà Firebase hiển thị trong cài đặt nhà
+cung cấp. Chạy website qua HTTPS (hoặc localhost khi phát triển). Chỉ lưu
+Facebook App ID trong cấu hình phía trình duyệt; giữ App Secret trong Firebase
+Console.

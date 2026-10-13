@@ -41,6 +41,22 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
+test('customer contact information persists for purchases and book services after logout', () => {
+	const script = read('main.js');
+	assert.match(script, /const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info'/);
+	assert.match(script, /function loadCustomerInfo/);
+	assert.match(script, /function saveCustomerInfo/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), customerName, address, phone \}/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), name: request\.name, phone: request\.phone \}/);
+	assert.match(script, /function fillSavedCustomerInfo/);
+	assert.match(script, /fillSavedCustomerInfo\(\);/);
+	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
+	assert.match(script, /saveCustomerInfoToAccount/);
+	assert.match(script, /api\/auth\/customer-info/);
+	assert.match(script, /hydrateAuthenticatedUser/);
+	assert.match(script, /api\/auth\/me/);
+});
+
 test('cart groups duplicate books and provides quantity controls', () => {
 	const script = read('main.js');
 	const css = read('main.css');

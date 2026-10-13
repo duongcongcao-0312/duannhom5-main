@@ -278,13 +278,15 @@ async function serveStatic(request, response, pathname, staticRoot) {
     throw error;
   }
 
-	response.writeHead(200, {
-		'Cache-Control': 'no-cache',
-		'Content-Length': contents.length,
-		'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
-		'X-Content-Type-Options': 'nosniff'
-	});
-	response.end(request.method === 'HEAD' ? undefined : contents);
+  response.writeHead(200, {
+    "Cache-Control": "no-cache",
+    "Content-Length": contents.length,
+    "Content-Type":
+      mimeTypes[path.extname(filePath).toLowerCase()] ||
+      "application/octet-stream",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(request.method === "HEAD" ? undefined : contents);
 }
 
 function createServer({

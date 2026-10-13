@@ -43,9 +43,13 @@ function validateCustomerData(data) {
   ) {
     throw new CustomerError(400, "Vui lòng nhập số điện thoại hợp lệ.");
   }
-
   return { name, email, phone };
 }
+
+const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
+const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
+const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
+const allowedServiceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
 
 class Database {
   constructor(options = {}) {
@@ -108,6 +112,19 @@ class Database {
     return users.find((u) => u.id === id) || null;
   }
 
+  async updateCustomerInfo(id, customerInfo) {
+    await this.init();
+    const users = await this.getUsers();
+    const userIndex = users.findIndex((user) => user.id === id);
+    if (userIndex < 0) return null;
+    users[userIndex].customerInfo = {
+      ...(users[userIndex].customerInfo || {}),
+      ...customerInfo,
+    };
+    await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+    return users[userIndex];
+  }
+
   async createUser(data) {
     await this.init();
     const users = await this.getUsers();
@@ -124,6 +141,7 @@ class Database {
       role: data.role || "user",
       studentType: data.studentType || "other",
       studentId: String(data.studentId || "").trim(),
+      customerInfo: {},
       createdAt: new Date().toISOString()
     };
 
@@ -237,6 +255,13 @@ class Database {
 
   async updateOrderStatus(orderId, { status, paymentStatus }, ordersPathOverride) {
     const filePath = ordersPathOverride || this.ordersPath;
+    if (status !== undefined && !allowedOrderStatuses.has(String(status).trim())) {
+      throw new Error("Trạng thái đơn hàng không hợp lệ.");
+    }
+    if (paymentStatus !== undefined && !allowedPaymentStatuses.has(String(paymentStatus).trim())) {
+      throw new Error("Trạng thái thanh toán không hợp lệ.");
+    }
+
     let content;
     try {
       content = await fs.readFile(filePath, "utf8");
@@ -272,9 +297,13 @@ class Database {
   // --- Service Requests (Thuê / Thu mua / Trao đổi sách) ---
   async addServiceRequest(request) {
     await this.init();
+    const serviceType = String(request.service || "").trim();
+    if (!allowedServiceTypes.has(serviceType)) {
+      throw new Error("Loại dịch vụ không hợp lệ.");
+    }
     const entry = {
       id: crypto.randomUUID(),
-      service: request.service,
+      service: serviceType,
       bookTitle: String(request.bookTitle).trim(),
       condition: request.condition,
       name: String(request.name).trim(),
@@ -309,6 +338,9 @@ class Database {
 
   async updateServiceRequestStatus(id, status) {
     await this.init();
+    if (status !== undefined && !allowedServiceStatuses.has(String(status).trim())) {
+      throw new Error("Trạng thái yêu cầu dịch vụ không hợp lệ.");
+    }
     let content;
     try {
       content = await fs.readFile(this.servicesPath, "utf8");

@@ -62,6 +62,37 @@ const allowedServiceStatuses = new Set([
   "completed",
   "cancelled",
 ]);
+const rolePermissions = {
+  admin: [
+    "read:dashboard",
+    "read:orders",
+    "write:orders",
+    "read:services",
+    "write:services",
+    "read:books",
+    "write:books",
+    "read:users",
+    "read:customers",
+    "write:customers",
+    "delete:customers",
+  ],
+  sales: [
+    "read:dashboard",
+    "read:orders",
+    "write:orders",
+    "read:services",
+    "write:services",
+    "read:customers",
+    "write:customers",
+  ],
+  support: [
+    "read:services",
+    "write:services",
+    "read:customers",
+    "write:customers",
+  ],
+  user: [],
+};
 const coupons = new Map([
   ["BOOKNEST10", { rate: 0.1, label: "Ưu đãi BookNest" }],
   ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
@@ -394,12 +425,24 @@ function createServer({
     return sessionStore.getSession(token);
   }
 
-  function requireAdmin(request) {
+  function requireRole(request, permission) {
     const user = getAuthUser(request);
-    if (!user || user.role !== "admin") {
-      throw new RequestError(403, "Yêu cầu quyền quản trị viên.");
+    if (!user) {
+      throw new RequestError(401, "Chưa đăng nhập.");
+    }
+    const role = String(user.role || "user").trim().toLowerCase();
+    const allowedPermissions = rolePermissions[role] || [];
+    if (!allowedPermissions.includes(permission)) {
+      throw new RequestError(
+        403,
+        "Bạn không có quyền thực hiện hành động này.",
+      );
     }
     return user;
+  }
+
+  function requireAdmin(request) {
+    return requireRole(request, "read:dashboard");
   }
 
   async function handleRequest(request, response) {
@@ -515,6 +558,7 @@ function createServer({
       const updatedUser = await db.updateCustomerInfo(
         session.userId,
         customerInfo,
+        session.email || session.name || "self-service",
       );
       if (!updatedUser)
         throw new RequestError(404, "Không tìm thấy tài khoản.");
@@ -596,7 +640,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/stats" &&
       request.method === "GET"
     ) {
-      requireAdmin(request);
+      requireRole(request, "read:dashboard");
       const stats = await db.getStats(ordersPath, books.length);
       sendJson(response, 200, stats);
       return;
@@ -607,7 +651,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/orders" &&
       request.method === "GET"
     ) {
-      requireAdmin(request);
+      requireRole(request, "read:orders");
       const orders = await db.getAllOrders(ordersPath);
       sendJson(response, 200, orders);
       return;
@@ -620,7 +664,7 @@ function createServer({
       adminOrderMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
-      requireAdmin(request);
+      requireRole(request, "write:orders");
       const payload = await readJson(request);
       if (payload && typeof payload === "object") {
         if (
@@ -653,7 +697,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/services" &&
       request.method === "GET"
     ) {
-      requireAdmin(request);
+      requireRole(request, "read:services");
       const list = await db.getServiceRequests();
       sendJson(response, 200, list);
       return;
@@ -666,7 +710,7 @@ function createServer({
       adminServiceMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
-      requireAdmin(request);
+      requireRole(request, "write:services");
       const payload = await readJson(request);
       const status =
         payload && typeof payload === "object" ? payload.status : undefined;
@@ -692,7 +736,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/books" &&
       request.method === "POST"
     ) {
-      requireAdmin(request);
+      requireRole(request, "write:books");
       const payload = await readJson(request);
       if (!payload.title || !payload.author || !payload.price) {
         throw new RequestError(400, "Vui lòng nhập tên sách, tác giả và giá.");
@@ -710,7 +754,7 @@ function createServer({
       adminBookMatch &&
       (request.method === "PUT" || request.method === "PATCH")
     ) {
-      requireAdmin(request);
+      requireRole(request, "write:books");
       const payload = await readJson(request);
       const updated = await db.updateCustomBook(adminBookMatch[1], payload);
       if (!updated) {
@@ -722,7 +766,7 @@ function createServer({
     }
 
     if (adminBookMatch && request.method === "DELETE") {
-      requireAdmin(request);
+      requireRole(request, "write:books");
       const deleted = await db.deleteCustomBook(adminBookMatch[1]);
       sendJson(response, 200, { success: deleted });
       return;
@@ -733,7 +777,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/users" &&
       request.method === "GET"
     ) {
-      requireAdmin(request);
+      requireRole(request, "read:users");
       const users = await db.getUsers();
       const safeUsers = users.map((u) => ({
         id: u.id,

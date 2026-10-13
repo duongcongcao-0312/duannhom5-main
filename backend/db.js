@@ -68,15 +68,18 @@ class Database {
     return users.find((u) => u.id === id) || null;
   }
 
-  async updateCustomerInfo(id, customerInfo) {
+  async updateCustomerInfo(id, customerInfo, actorName = "system") {
     await this.init();
     const users = await this.getUsers();
     const userIndex = users.findIndex((user) => user.id === id);
     if (userIndex < 0) return null;
+    const normalizedActor = String(actorName || "system").trim() || "system";
     users[userIndex].customerInfo = {
       ...(users[userIndex].customerInfo || {}),
       ...customerInfo,
     };
+    users[userIndex].updatedBy = normalizedActor;
+    users[userIndex].updatedAt = new Date().toISOString();
     await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
     return users[userIndex];
   }
@@ -89,16 +92,28 @@ class Database {
       throw new Error("Email này đã được đăng ký trên hệ thống.");
     }
 
+    const normalizedRole = String(data.role || "user").trim().toLowerCase();
+    const allowedRoles = new Set(["user", "admin", "sales", "support"]);
+    if (!allowedRoles.has(normalizedRole)) {
+      throw new Error("Vai trò người dùng không hợp lệ.");
+    }
+
+    const actorName = String(data.createdBy || data.updatedBy || "system").trim() || "system";
+    const now = new Date().toISOString();
+
     const newUser = {
       id: crypto.randomUUID(),
       name: String(data.name).trim(),
       email: cleanEmail,
       password: hashPassword(data.password),
-      role: data.role || "user",
+      role: normalizedRole,
       studentType: data.studentType || "other",
       studentId: String(data.studentId || "").trim(),
       customerInfo: {},
-      createdAt: new Date().toISOString()
+      createdBy: actorName,
+      updatedBy: actorName,
+      createdAt: now,
+      updatedAt: now
     };
 
     users.push(newUser);

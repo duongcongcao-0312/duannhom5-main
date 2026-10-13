@@ -315,7 +315,9 @@ cải thiện trước khi vận hành thực tế:
 - Quản lý phiên: token hoặc session nên có thời gian sống, có chữ ký và được
   lưu an toàn; không nên để token ở dạng dễ khai thác trên client.
 - Xác thực và phân quyền: API quản trị chỉ được truy cập bởi người dùng có role
-  quản trị; các route quan trọng phải kiểm tra quyền trước khi thực thi.
+  phù hợp; hệ thống nên phân quyền theo vai trò như `admin`, `sales` và
+  `support` với phạm vi xem/sửa khác nhau, đồng thời ghi lại người tạo/cập nhật
+  trong audit log.
 - Kiểm tra đầu vào: dữ liệu từ form, URL và request body cần được validate để
   tránh lỗi, tấn công injection hoặc payload bất thường.
 - Giới hạn truy cập: nên ánh xạ `HOST` và `PORT`, đóng service trên localhost khi
@@ -324,6 +326,13 @@ cải thiện trước khi vận hành thực tế:
 - Bảo vệ dữ liệu nhạy cảm: không lưu dữ liệu thật, mật khẩu, thông tin giao
   nhận hoặc token vào repository; các file JSON nên giữ riêng trong môi trường
   triển khai có phân quyền.
+- Mã hóa và masking: email, số điện thoại, mã học sinh/sinh viên và dữ liệu
+  tương tự cần được mã hóa hoặc mask ở tầng lưu trữ và khi ghi log để tránh rò
+  rỉ trong báo cáo hoặc nhật ký hệ thống.
+- Consent và lưu giữ dữ liệu: mỗi hồ sơ khách hàng nên có trường consent,
+  nguồn thu thập (`dataSource`), thời hạn lưu giữ và quy trình xóa dữ liệu theo
+  yêu cầu; dữ liệu không còn cần thiết phải được xóa hoặc ẩn danh trong vòng 30
+  ngày, ngoại trừ bản ghi đơn hàng bắt buộc theo pháp luật hoặc kế toán.
 - HTTPS và bảo mật truyền tải: khi triển khai thực tế, bắt buộc dùng HTTPS để
   mã hoá dữ liệu giữa browser và server.
 - Sao lưu và phục hồi: dữ liệu người dùng, đơn hàng và sách cần có sao lưu định

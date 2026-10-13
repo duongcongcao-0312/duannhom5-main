@@ -130,3 +130,70 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.ok(stats.totalOrders >= 1);
   assert.ok(stats.totalUsers >= 2);
 });
+
+test("backend rejects invalid service and status payloads", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-invalid-payloads-"));
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const server = createServer({ ordersPath, usersPath, servicesPath });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const invalidServiceRes = await fetch(`${baseUrl}/api/services`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      service: "unknown",
+      bookTitle: "Đắc Nhân Tâm",
+      condition: "new",
+      name: "Lê Hoàng",
+      phone: "0987654321",
+      note: "Thuê trong 2 tuần"
+    })
+  });
+  assert.equal(invalidServiceRes.status, 400);
+
+  const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" })
+  });
+  assert.equal(adminLoginRes.status, 200);
+  const adminToken = (await adminLoginRes.json()).token;
+
+  const orderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn A",
+      address: "12 Đường Sách, Quận 1",
+      phone: "0901234567",
+      paymentMethod: "cod",
+      discountRate: 0.05,
+      items: [{ title: "Nhà giả kim", quantity: 1 }]
+    })
+  });
+  assert.equal(orderRes.status, 201);
+  const order = await orderRes.json();
+
+  const invalidStatusRes = await fetch(`${baseUrl}/api/admin/orders/${order.orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`
+    },
+    body: JSON.stringify({ status: "not-a-real-status", paymentStatus: "paid" })
+  });
+  assert.equal(invalidStatusRes.status, 400);
+});

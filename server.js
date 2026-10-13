@@ -42,6 +42,10 @@ const publicRootFiles = new Set([
 ]);
 const bookCatalog = new Map(books.map((book) => [book.title, book]));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
+const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
+const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
+const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
+const allowedServiceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
 const coupons = new Map([
   ["BOOKNEST10", { rate: 0.1, label: "Ưu đãi BookNest" }],
   ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
@@ -488,6 +492,9 @@ function createServer({
       if (!payload.bookTitle || !payload.name || !payload.phone || !payload.service) {
         throw new RequestError(400, "Vui lòng nhập đầy đủ thông tin dịch vụ.");
       }
+      if (!allowedServiceTypes.has(String(payload.service).trim())) {
+        throw new RequestError(400, "Loại dịch vụ không hợp lệ.");
+      }
       const entry = await db.addServiceRequest(payload);
       sendJson(response, 201, { message: "Đã gửi yêu cầu thành công.", request: entry });
       return;
@@ -521,6 +528,14 @@ function createServer({
     if (adminOrderMatch && (request.method === "PATCH" || request.method === "PUT")) {
       requireAdmin(request);
       const payload = await readJson(request);
+      if (payload && typeof payload === "object") {
+        if (payload.status !== undefined && !allowedOrderStatuses.has(String(payload.status).trim())) {
+          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
+        }
+        if (payload.paymentStatus !== undefined && !allowedPaymentStatuses.has(String(payload.paymentStatus).trim())) {
+          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
+        }
+      }
       const updated = await db.updateOrderStatus(adminOrderMatch[1], payload, ordersPath);
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
@@ -541,7 +556,11 @@ function createServer({
     if (adminServiceMatch && (request.method === "PATCH" || request.method === "PUT")) {
       requireAdmin(request);
       const payload = await readJson(request);
-      const updated = await db.updateServiceRequestStatus(adminServiceMatch[1], payload.status);
+      const status = payload && typeof payload === "object" ? payload.status : undefined;
+      if (status !== undefined && !allowedServiceStatuses.has(String(status).trim())) {
+        throw new RequestError(400, "Trạng thái yêu cầu dịch vụ không hợp lệ.");
+      }
+      const updated = await db.updateServiceRequestStatus(adminServiceMatch[1], status);
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy yêu cầu.");
       }

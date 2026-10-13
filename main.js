@@ -20,6 +20,7 @@ const DEFAULT_BOOK_STOCK = 12;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
+const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
 const serviceDetails = {
 	rent: {
 		title: 'Thuê sách theo nhu cầu',
@@ -54,6 +55,59 @@ function loadCurrentUser() {
 		return JSON.parse(localStorage.getItem(CURRENT_USER_STORAGE_KEY) || 'null');
 	} catch (error) {
 		return null;
+	}
+}
+
+function loadCustomerInfo() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(CUSTOMER_INFO_STORAGE_KEY) || '{}');
+		return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+	} catch (error) {
+		return {};
+	}
+}
+
+function saveCustomerInfo(info) {
+	try {
+		localStorage.setItem(CUSTOMER_INFO_STORAGE_KEY, JSON.stringify(info));
+	} catch (error) {
+		throw new Error('Không thể lưu thông tin khách hàng trên thiết bị này.');
+	}
+}
+
+async function saveCustomerInfoToAccount(info) {
+	const token = localStorage.getItem('booknest-auth-token');
+	if (!token) return;
+	const response = await fetch('/api/auth/customer-info', {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify(info)
+	});
+	const result = await response.json().catch(() => ({}));
+	if (!response.ok) throw new Error(result.error || 'Không thể lưu thông tin vào tài khoản.');
+}
+
+function applyAccountCustomerInfo(user) {
+	if (!user || !user.customerInfo) return;
+	saveCustomerInfo({ ...loadCustomerInfo(), ...user.customerInfo });
+}
+
+function fillSavedCustomerInfo() {
+	const saved = loadCustomerInfo();
+	const paymentForm = document.querySelector('#paymentForm');
+	const serviceForm = document.querySelector('#serviceForm');
+	if (paymentForm) {
+		['customerName', 'phone', 'address'].forEach((field) => {
+			if (saved[field]) paymentForm.elements[field].value = saved[field];
+		});
+	}
+	if (serviceForm) {
+		['name', 'phone'].forEach((field) => {
+			if (saved[field]) serviceForm.elements[field].value = saved[field];
+		});
 	}
 }
 
@@ -380,6 +434,9 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		if (customerName.length < 2 || address.length < 10 || !/^[0-9 +()-]{8,}$/.test(phone)) {
 			throw new Error('Vui lòng kiểm tra họ tên, số điện thoại và địa chỉ nhận hàng.');
 		}
+		const customerInfo = { ...loadCustomerInfo(), customerName, address, phone };
+		saveCustomerInfo(customerInfo);
+		await saveCustomerInfoToAccount(customerInfo);
 		const method = form.elements.paymentMethod.value;
 		const submitButton = form.querySelector('[type="submit"]');
 		const originalButtonText = submitButton.textContent;
@@ -424,6 +481,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		alert(message);
 		state.cart = [];
 		form.reset();
+		fillSavedCustomerInfo();
 		document.querySelector('#transferDetails').hidden = false;
 		document.querySelector('#paymentDialog').close();
 		toggleCart(false);
@@ -451,7 +509,7 @@ document.querySelectorAll('.service-button').forEach((button) => button.addEvent
 	serviceDialog.showModal();
 }));
 document.querySelector('#closeService').addEventListener('click', () => serviceDialog.close());
-serviceForm.addEventListener('submit', (event) => {
+serviceForm.addEventListener('submit', async (event) => {
 	event.preventDefault();
 	try {
 		showServiceError('');
@@ -469,6 +527,9 @@ serviceForm.addEventListener('submit', (event) => {
 		if (!serviceDetails[request.service] || request.bookTitle.length < 2 || request.name.length < 2) {
 			throw new Error('Vui lòng kiểm tra lại thông tin đăng ký.');
 		}
+		const customerInfo = { ...loadCustomerInfo(), name: request.name, phone: request.phone };
+		saveCustomerInfo(customerInfo);
+		await saveCustomerInfoToAccount(customerInfo);
 		const savedRequests = JSON.parse(localStorage.getItem(SERVICE_REQUESTS_STORAGE_KEY) || '[]');
 		if (!Array.isArray(savedRequests)) throw new Error('Không thể lưu yêu cầu lúc này.');
 		savedRequests.push(request);
@@ -480,6 +541,7 @@ serviceForm.addEventListener('submit', (event) => {
 		}).catch(() => {});
 		alert(`Đã nhận yêu cầu ${serviceDetails[request.service].title.toLowerCase()} của ${request.name}. BookNest sẽ sớm liên hệ!`);
 		serviceForm.reset();
+		fillSavedCustomerInfo();
 		serviceDialog.close();
 	} catch (error) {
 		showServiceError(error instanceof Error ? error.message : 'Không thể gửi yêu cầu. Vui lòng thử lại.');
@@ -553,6 +615,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 			if (data.token) localStorage.setItem('booknest-auth-token', data.token);
 			if (data.user && data.user.role === 'admin') localStorage.setItem('booknest-admin-token', data.token);
 			state.user = data.user;
+			applyAccountCustomerInfo(data.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
 			renderAccount();
 			renderCart();
@@ -575,6 +638,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 		return;
 	}
 	state.user = user;
+	applyAccountCustomerInfo(user);
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
@@ -607,6 +671,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			const resData = await response.json();
 			if (resData.token) localStorage.setItem('booknest-auth-token', resData.token);
 			state.user = resData.user || user;
+			applyAccountCustomerInfo(state.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
 			const users = readUsers();
 			users.push(user);
@@ -636,6 +701,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 	localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	state.user = user;
+	applyAccountCustomerInfo(user);
 	renderAccount();
 	renderCart();
 	setAccountView('login');
@@ -724,6 +790,7 @@ document.querySelector('#aiForm').addEventListener('submit', (event) => {
 });
 document.querySelectorAll('[data-ai-question]').forEach((button) => button.addEventListener('click', () => askAi(button.dataset.aiQuestion)));
 renderAccount();
+fillSavedCustomerInfo();
 if (hasCatalogShell) {
 	renderCategories();
 	renderBooks();

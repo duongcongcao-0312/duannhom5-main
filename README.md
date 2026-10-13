@@ -56,6 +56,9 @@ hổng dependency khi có push lên nhánh `main` hoặc pull request.
 
 ## Đơn hàng và API
 
+Thiết kế lưu trữ hồ sơ khách hàng, schema CRM, quyền truy cập, bảo mật và lộ
+trình migration được ghi tại [docs/crm-design.md](docs/crm-design.md).
+
 Máy chủ lưu mỗi đơn thành một dòng JSON trong `data/orders.jsonl`. Tệp này có
 thông tin giao nhận của khách hàng, đã được thêm vào `.gitignore` để không bị
 đẩy lên Git. Hãy bảo vệ và sao lưu tệp nếu cần giữ dữ liệu đơn hàng; không dùng

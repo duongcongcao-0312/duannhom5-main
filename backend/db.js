@@ -63,6 +63,19 @@ class Database {
     return users.find((u) => u.id === id) || null;
   }
 
+  async updateCustomerInfo(id, customerInfo) {
+    await this.init();
+    const users = await this.getUsers();
+    const userIndex = users.findIndex((user) => user.id === id);
+    if (userIndex < 0) return null;
+    users[userIndex].customerInfo = {
+      ...(users[userIndex].customerInfo || {}),
+      ...customerInfo,
+    };
+    await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+    return users[userIndex];
+  }
+
   async createUser(data) {
     await this.init();
     const users = await this.getUsers();
@@ -79,6 +92,7 @@ class Database {
       role: data.role || "user",
       studentType: data.studentType || "other",
       studentId: String(data.studentId || "").trim(),
+      customerInfo: {},
       createdAt: new Date().toISOString()
     };
 
@@ -289,4 +303,3 @@ class Database {
 }
 
 module.exports = { Database };
-

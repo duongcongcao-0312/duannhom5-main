@@ -67,7 +67,22 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const meData = await meRes.json();
   assert.equal(meData.user.email, "tranminh@example.com");
 
-  // 5. Place an order
+  // 5. Save customer information to the account
+  const customerInfoRes = await fetch(`${baseUrl}/api/auth/customer-info`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${regData.token}`
+    },
+    body: JSON.stringify({
+      customerName: "Trần Minh",
+      phone: "0912345678",
+      address: "123 Phố Sách Hà Nội"
+    })
+  });
+  assert.equal(customerInfoRes.status, 200);
+
+  // 6. Place an order
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -83,7 +98,14 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.equal(orderRes.status, 201);
   const orderData = await orderRes.json();
 
-  // 6. Admin: View orders
+  // 7. Profile includes saved customer information
+  const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${regData.token}` }
+  });
+  const updatedMe = await updatedMeRes.json();
+  assert.equal(updatedMe.user.customerInfo.address, "123 Phố Sách Hà Nội");
+
+  // 8. Admin: View orders
   const adminOrdersRes = await fetch(`${baseUrl}/api/admin/orders`, {
     headers: { Authorization: `Bearer ${adminToken}` }
   });
@@ -92,7 +114,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.ok(adminOrders.length >= 1);
   assert.equal(adminOrders[0].orderId, orderData.orderId);
 
-  // 7. Admin: Update order status to 'processing'
+  // 9. Admin: Update order status to 'processing'
   const patchOrderRes = await fetch(`${baseUrl}/api/admin/orders/${orderData.orderId}`, {
     method: "PATCH",
     headers: {
@@ -106,7 +128,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.equal(patchedOrder.status, "processing");
   assert.equal(patchedOrder.paymentStatus, "paid");
 
-  // 8. Service request API
+  // 10. Service request API
   const serviceRes = await fetch(`${baseUrl}/api/services`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -121,7 +143,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   });
   assert.equal(serviceRes.status, 201);
 
-  // 9. Admin Stats API
+  // 11. Admin Stats API
   const statsRes = await fetch(`${baseUrl}/api/admin/stats`, {
     headers: { Authorization: `Bearer ${adminToken}` }
   });

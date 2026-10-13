@@ -66,6 +66,18 @@ function sendJson(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function publicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    studentType: user.studentType,
+    studentId: user.studentId,
+    customerInfo: user.customerInfo || {},
+  };
+}
+
 async function sendHtmlError(response, status, pageName) {
   const errorPagePath = path.join(root, `${pageName}.html`);
   try {
@@ -402,14 +414,7 @@ function createServer({
         const session = sessionStore.createSession(user);
         sendJson(response, 201, {
           token: session.token,
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            studentType: user.studentType,
-            studentId: user.studentId,
-          },
+          user: publicUser(user),
         });
       } catch (err) {
         throw new RequestError(400, err.message);
@@ -426,14 +431,7 @@ function createServer({
       const session = sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          studentType: user.studentType,
-          studentId: user.studentId,
-        },
+        user: publicUser(user),
       });
       return;
     }
@@ -443,7 +441,28 @@ function createServer({
       if (!user) {
         throw new RequestError(401, "Chưa đăng nhập.");
       }
-      sendJson(response, 200, { user });
+      const storedUser = await db.findUserById(user.userId);
+      sendJson(response, 200, { user: publicUser(storedUser || user) });
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/auth/customer-info" && request.method === "PATCH") {
+      const session = getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      const payload = await readJson(request);
+      const customerInfo = {};
+      for (const field of ["customerName", "name", "phone", "address"]) {
+        if (payload[field] !== undefined) {
+          if (typeof payload[field] !== "string" || payload[field].trim().length > 300) {
+            throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
+          }
+          customerInfo[field] = payload[field].trim();
+        }
+      }
+      const updatedUser = await db.updateCustomerInfo(session.userId, customerInfo);
+      if (!updatedUser) throw new RequestError(404, "Không tìm thấy tài khoản.");
+      session.customerInfo = updatedUser.customerInfo;
+      sendJson(response, 200, { customerInfo: updatedUser.customerInfo });
       return;
     }
 

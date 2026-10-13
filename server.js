@@ -3,7 +3,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const books = require("./books-data");
-const { Database } = require("./backend/db");
+const { CustomerError, Database, validateCustomerData } = require("./backend/db");
 const { SessionStore, verifyPassword } = require("./backend/auth");
 
 const root = __dirname;
@@ -317,11 +317,19 @@ function createServer({
   ordersPath = defaultOrdersPath,
   staticRoot = root,
   usersPath,
+  customersPath,
   servicesPath,
   booksPath,
 } = {}) {
   let persistenceQueue = Promise.resolve();
-  const db = new Database({ root, ordersPath, usersPath, servicesPath, booksPath });
+  const db = new Database({
+    root,
+    ordersPath,
+    usersPath,
+    customersPath,
+    servicesPath,
+    booksPath,
+  });
   const sessionStore = new SessionStore();
 
   // Load custom books into catalog cache
@@ -452,6 +460,49 @@ function createServer({
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
       sessionStore.destroySession(token);
       sendJson(response, 200, { message: "Đã đăng xuất thành công." });
+      return;
+    }
+
+    // --- Admin API: CRM Customers ---
+    if (requestUrl.pathname === "/api/admin/customers" && request.method === "GET") {
+      requireAdmin(request);
+      sendJson(response, 200, await db.getCustomers());
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/admin/customers" && request.method === "POST") {
+      requireAdmin(request);
+      const customer = await db.createCustomer(
+        validateCustomerData(await readJson(request)),
+      );
+      sendJson(response, 201, customer);
+      return;
+    }
+
+    const adminCustomerMatch = requestUrl.pathname.match(
+      /^\/api\/admin\/customers\/([0-9a-f-]{36})$/i,
+    );
+    if (adminCustomerMatch && request.method === "PATCH") {
+      requireAdmin(request);
+      const payload = await readJson(request);
+      const updated = await db.updateCustomerStatus(
+        adminCustomerMatch[1],
+        payload && payload.status,
+      );
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy khách hàng.");
+      }
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    if (adminCustomerMatch && request.method === "DELETE") {
+      requireAdmin(request);
+      const deleted = await db.softDeleteCustomer(adminCustomerMatch[1]);
+      if (!deleted) {
+        throw new RequestError(404, "Không tìm thấy khách hàng.");
+      }
+      sendJson(response, 200, { success: true });
       return;
     }
 
@@ -616,7 +667,7 @@ function createServer({
 
   return http.createServer((request, response) => {
     void handleRequest(request, response).catch((error) => {
-      if (error instanceof RequestError) {
+      if (error instanceof RequestError || error instanceof CustomerError) {
         sendJson(response, error.status, { error: error.message });
         return;
       }

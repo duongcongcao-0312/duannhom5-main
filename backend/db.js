@@ -3,11 +3,56 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
 
+const customerStatuses = ["new", "lead", "customer"];
+const nextCustomerStatus = new Map([
+  ["new", "lead"],
+  ["lead", "customer"],
+]);
+
+class CustomerError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function validateCustomerData(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new CustomerError(400, "Dữ liệu khách hàng không hợp lệ.");
+  }
+
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : "";
+  const phone = typeof data.phone === "string" ? data.phone.trim() : "";
+  const phoneDigits = phone.replace(/\D/g, "");
+
+  if (name.length < 2 || name.length > 120) {
+    throw new CustomerError(400, "Vui lòng nhập họ tên từ 2 đến 120 ký tự.");
+  }
+  if (
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    throw new CustomerError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
+  }
+  if (
+    phone.length > 20 ||
+    !/^\+?(?:\d+|\(\d+\))(?:[ -]?(?:\d+|\(\d+\)))*$/.test(phone) ||
+    phoneDigits.length < 8 ||
+    phoneDigits.length > 15
+  ) {
+    throw new CustomerError(400, "Vui lòng nhập số điện thoại hợp lệ.");
+  }
+
+  return { name, email, phone };
+}
+
 class Database {
   constructor(options = {}) {
     const root = options.root || path.resolve(__dirname, "..");
     const dataDir = options.dataDir || path.join(root, "data");
     this.usersPath = options.usersPath || path.join(dataDir, "users.json");
+    this.customersPath = options.customersPath || path.join(dataDir, "customers.json");
     this.servicesPath = options.servicesPath || path.join(dataDir, "service-requests.jsonl");
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
@@ -85,6 +130,89 @@ class Database {
     users.push(newUser);
     await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
     return newUser;
+  }
+
+  // --- CRM Customers ---
+  async readCustomers() {
+    try {
+      const content = await fs.readFile(this.customersPath, "utf8");
+      const customers = JSON.parse(content);
+      if (!Array.isArray(customers)) {
+        throw new Error("Tệp khách hàng phải chứa một danh sách.");
+      }
+      return customers;
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  async writeCustomers(customers) {
+    await fs.mkdir(path.dirname(this.customersPath), { recursive: true });
+    await fs.writeFile(this.customersPath, JSON.stringify(customers, null, 2), "utf8");
+  }
+
+  async getCustomers() {
+    return (await this.readCustomers()).filter((customer) => !customer.deletedAt);
+  }
+
+  async createCustomer(data) {
+    const customerData = validateCustomerData(data);
+    const customers = await this.readCustomers();
+    const phoneDigits = customerData.phone.replace(/\D/g, "");
+    const duplicate = customers.some((customer) => (
+      !customer.deletedAt &&
+      (
+        customer.email.toLowerCase() === customerData.email ||
+        customer.phone.replace(/\D/g, "") === phoneDigits
+      )
+    ));
+    if (duplicate) {
+      throw new CustomerError(409, "Email hoặc số điện thoại đã thuộc về khách hàng khác.");
+    }
+
+    const customer = {
+      id: crypto.randomUUID(),
+      ...customerData,
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+    customers.push(customer);
+    await this.writeCustomers(customers);
+    return customer;
+  }
+
+  async updateCustomerStatus(id, status) {
+    if (!customerStatuses.includes(status)) {
+      throw new CustomerError(400, "Trạng thái khách hàng không hợp lệ.");
+    }
+
+    const customers = await this.readCustomers();
+    const customer = customers.find((item) => item.id === id && !item.deletedAt);
+    if (!customer) return null;
+    if (nextCustomerStatus.get(customer.status) !== status) {
+      throw new CustomerError(
+        409,
+        "Trạng thái chỉ có thể chuyển lần lượt từ mới sang tiềm năng rồi thành khách hàng.",
+      );
+    }
+
+    customer.status = status;
+    customer.updatedAt = new Date().toISOString();
+    await this.writeCustomers(customers);
+    return customer;
+  }
+
+  async softDeleteCustomer(id) {
+    const customers = await this.readCustomers();
+    const customer = customers.find((item) => item.id === id && !item.deletedAt);
+    if (!customer) return false;
+
+    const deletedAt = new Date().toISOString();
+    customer.deletedAt = deletedAt;
+    customer.updatedAt = deletedAt;
+    await this.writeCustomers(customers);
+    return true;
   }
 
   // --- Orders ---
@@ -288,5 +416,4 @@ class Database {
   }
 }
 
-module.exports = { Database };
-
+module.exports = { CustomerError, Database, validateCustomerData };

@@ -32,7 +32,8 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - Đặt hàng bằng chuyển khoản qua mã QR hoặc thanh toán khi nhận hàng (COD);
   máy chủ kiểm tra giá, lưu đơn và cấp mã để tra cứu.
 - Đăng ký thuê, thu mua hoặc trao đổi sách; đăng ký tài khoản và đăng nhập.
-- Quản lý đơn hàng, kho sách, yêu cầu dịch vụ và thành viên qua cổng quản trị.
+- Quản lý đơn hàng, kho sách, yêu cầu dịch vụ, thành viên và khách hàng qua API
+  quản trị.
 - Giao diện tương thích với máy tính và điện thoại; có trang chi tiết sách,
   chính sách, điều khoản và trang lỗi.
 
@@ -117,10 +118,22 @@ lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào 
 | `GET` | `/api/admin/services` | Quản trị | Xem yêu cầu dịch vụ |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật trạng thái yêu cầu dịch vụ |
 | `GET` | `/api/admin/users` | Quản trị | Xem danh sách thành viên |
+| `GET` | `/api/admin/customers` | Quản trị | Xem khách hàng chưa bị xoá |
+| `POST` | `/api/admin/customers` | Quản trị | Tạo khách hàng mới |
+| `PATCH` | `/api/admin/customers/:id` | Quản trị | Chuyển trạng thái mới → tiềm năng → khách hàng |
+| `DELETE` | `/api/admin/customers/:id` | Quản trị | Xoá mềm khách hàng |
+
+Khách hàng cần có họ tên, email hợp lệ và số điện thoại từ 8 đến 15 chữ số.
+Email và số điện thoại không được trùng với khách hàng đang hoạt động. Xoá
+khách hàng chỉ đặt `deletedAt`, giữ nguyên dữ liệu trong kho lưu trữ và ẩn
+khách hàng khỏi danh sách; thông tin đã xoá không còn giữ chỗ email hoặc số
+điện thoại. Trạng thái chỉ được chuyển tiến từng bước, không thể bỏ qua hoặc
+quay lui.
 
 ## Dữ liệu và lưu trữ
 
-Máy chủ lưu người dùng trong `data/users.json`, yêu cầu dịch vụ trong
+Máy chủ lưu người dùng trong `data/users.json`, khách hàng CRM trong
+`data/customers.json`, yêu cầu dịch vụ trong
 `data/service-requests.jsonl`, sách quản trị thêm trong `data/books.json` và
 đơn hàng trong `data/orders.jsonl`. Một số trạng thái giao diện như giỏ hàng,
 sách yêu thích và phiên đăng nhập cũng được lưu trong `localStorage` của trình
@@ -138,7 +151,7 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 ├── backend/
 │   ├── auth.js              # Mã hoá mật khẩu và quản lý phiên
 │   └── db.js                # Đọc và ghi dữ liệu JSON/JSONL
-├── data/                    # Dữ liệu người dùng, sách và yêu cầu dịch vụ
+├── data/                    # Dữ liệu người dùng, khách hàng, sách và dịch vụ
 ├── tests/                   # Kiểm thử giao diện và API
 ├── .github/workflows/       # Quy trình CI
 ├── admin.html               # Giao diện cổng quản trị
@@ -197,6 +210,7 @@ flowchart TB
     subgraph DATA["03 · LỚP DỮ LIỆU"]
         direction LR
         USERS[("users.json<br/>tài khoản")]
+        CUSTOMERS[("customers.json<br/>khách hàng CRM")]
         BOOKS[("books.json<br/>sách do quản trị thêm")]
         ORDERS[("orders.jsonl<br/>đơn hàng")]
         SERVICES[("service-requests.jsonl<br/>yêu cầu dịch vụ")]
@@ -219,6 +233,7 @@ flowchart TB
     DETAIL <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
     ADMIN_UI <-->|"HTTP · HTTPS qua reverse proxy"| SERVER
     REPOSITORY --> USERS
+    REPOSITORY --> CUSTOMERS
     REPOSITORY --> BOOKS
     REPOSITORY --> ORDERS
     REPOSITORY --> SERVICES

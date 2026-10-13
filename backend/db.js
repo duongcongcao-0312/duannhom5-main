@@ -340,7 +340,12 @@ class Database {
     }
   }
 
-  async updateOrderStatus(orderId, { status, paymentStatus }, ordersPathOverride) {
+  async updateOrderStatus(orderId, payload, ordersPathOverride) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("Dữ liệu cập nhật đơn hàng không hợp lệ.");
+    }
+
+    const { status, paymentStatus } = payload;
     const filePath = ordersPathOverride || this.ordersPath;
     if (status !== undefined && !allowedOrderStatuses.has(String(status).trim())) {
       throw new Error("Trạng thái đơn hàng không hợp lệ.");

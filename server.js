@@ -180,6 +180,13 @@ async function readJson(request) {
   }
 }
 
+function requireJsonObject(payload, message = "Dữ liệu yêu cầu không hợp lệ.") {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new RequestError(400, message);
+  }
+  return payload;
+}
+
 function createOrder(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
@@ -436,6 +443,20 @@ function createServer({
     return sessionStore.getSession(token);
   }
 
+  function requireCustomerPermission(request, permission) {
+    const user = getAuthUser(request);
+    if (!user || !customerRolePermissions[user.role]?.has(permission)) {
+      const messages = {
+        view: "Bạn không có quyền xem dữ liệu khách hàng.",
+        create: "Bạn không có quyền tạo khách hàng.",
+        update: "Bạn không có quyền cập nhật khách hàng.",
+        delete: "Bạn không có quyền xoá khách hàng.",
+      };
+      throw new RequestError(403, messages[permission]);
+    }
+    return user;
+  }
+
   function requireRole(request, permission) {
     const user = getAuthUser(request);
     if (!user) {
@@ -456,6 +477,29 @@ function createServer({
 
   function requireAdmin(request) {
     return requireRole(request, "read:dashboard");
+  }
+
+  function applyCustomerFilters(customers, { search = "", status = "", page = 1, limit = 20 } = {}) {
+    const normalizedSearch = String(search || "").trim().toLowerCase();
+    const normalizedStatus = String(status || "").trim();
+    const normalizedPage = Number.isFinite(Number(page)) ? Math.max(1, Number(page)) : 1;
+    const normalizedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 20;
+
+    let filtered = [...customers];
+    if (normalizedStatus) {
+      filtered = filtered.filter((customer) => customer.status === normalizedStatus);
+    }
+    if (normalizedSearch) {
+      filtered = filtered.filter((customer) => {
+        const haystack = [customer.name, customer.email, customer.phone]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(normalizedSearch);
+      });
+    }
+
+    const start = (normalizedPage - 1) * normalizedLimit;
+    return filtered.slice(start, start + normalizedLimit);
   }
 
   async function handleRequest(request, response) {
@@ -493,7 +537,10 @@ function createServer({
       requestUrl.pathname === "/api/auth/register" &&
       request.method === "POST"
     ) {
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
+      );
       if (!payload.email || !payload.password || !payload.name) {
         throw new RequestError(
           400,
@@ -526,7 +573,10 @@ function createServer({
       requestUrl.pathname === "/api/auth/login" &&
       request.method === "POST"
     ) {
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu đăng nhập không hợp lệ.",
+      );
       const user = await db.findUserByEmail(payload.email);
       if (!user || !verifyPassword(payload.password, user.password)) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
@@ -556,16 +606,18 @@ function createServer({
       const session = getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const payload = await readJson(request);
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
+      }
+
       const customerInfo = {};
       for (const field of ["customerName", "name", "phone", "address"]) {
-        if (payload[field] !== undefined) {
-          if (
-            typeof payload[field] !== "string" ||
-            payload[field].trim().length > 300
-          ) {
+        if (Object.prototype.hasOwnProperty.call(payload, field)) {
+          const rawValue = payload[field];
+          if (typeof rawValue !== "string" || rawValue.trim().length > 300) {
             throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
           }
-          customerInfo[field] = payload[field].trim();
+          customerInfo[field] = rawValue.trim();
         }
       }
       const updatedUser = await db.updateCustomerInfo(
@@ -594,25 +646,14 @@ function createServer({
     // --- Customer CRM API (public and admin variants) ---
     if (requestUrl.pathname === "/api/customers" && request.method === "GET") {
       requireCustomerPermission(request, "view");
-      const search = (requestUrl.searchParams.get("search") || "").trim().toLowerCase();
-      const status = (requestUrl.searchParams.get("status") || "").trim();
-      const page = Number.parseInt(requestUrl.searchParams.get("page") || "1", 10) || 1;
-      const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10) || 20;
-      let customers = await db.getCustomers();
-
-      if (status) {
-        customers = customers.filter((customer) => customer.status === status);
-      }
-      if (search) {
-        customers = customers.filter((customer) => {
-          const haystack = [customer.name, customer.email, customer.phone].join(" ").toLowerCase();
-          return haystack.includes(search);
-        });
-      }
-
-      const start = (page - 1) * limit;
-      const paged = customers.slice(start, start + limit);
-      sendJson(response, 200, paged);
+      const customers = await db.getCustomers();
+      const pagedCustomers = applyCustomerFilters(customers, {
+        search: requestUrl.searchParams.get("search"),
+        status: requestUrl.searchParams.get("status"),
+        page: requestUrl.searchParams.get("page"),
+        limit: requestUrl.searchParams.get("limit"),
+      });
+      sendJson(response, 200, pagedCustomers);
       return;
     }
 
@@ -627,17 +668,19 @@ function createServer({
       return;
     }
 
-    // --- Admin API: CRM Customers ---
     if (
       requestUrl.pathname === "/api/admin/customers" &&
       request.method === "GET"
     ) {
       requireCustomerPermission(request, "view");
-      sendJson(response, 200, await db.getCustomers());
-      return;
-    }
-      requireCustomerPermission(request, "view");
-      sendJson(response, 200, await db.getCustomers());
+      const customers = await db.getCustomers();
+      const pagedCustomers = applyCustomerFilters(customers, {
+        search: requestUrl.searchParams.get("search"),
+        status: requestUrl.searchParams.get("status"),
+        page: requestUrl.searchParams.get("page"),
+        limit: requestUrl.searchParams.get("limit"),
+      });
+      sendJson(response, 200, pagedCustomers);
       return;
     }
 
@@ -657,8 +700,13 @@ function createServer({
     const customerMatch = requestUrl.pathname.match(
       /^\/api\/(?:admin\/)?customers\/([0-9a-f-]{36})$/i,
     );
-    if (customerMatch && (request.method === "GET" || request.method === "PATCH" || request.method === "PUT" || request.method === "DELETE")) {
-      const isAdminRoute = requestUrl.pathname.startsWith("/api/admin/");
+    if (
+      customerMatch &&
+      (request.method === "GET" ||
+        request.method === "PATCH" ||
+        request.method === "PUT" ||
+        request.method === "DELETE")
+    ) {
       if (request.method === "GET") {
         requireCustomerPermission(request, "view");
         const customer = await db.getCustomerById(customerMatch[1]);
@@ -681,47 +729,15 @@ function createServer({
 
       const user = requireCustomerPermission(request, "update");
       const payload = await readJson(request);
-      let updated;
-      if (payload && payload.status !== undefined) {
-        updated = await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId);
-      } else {
-        updated = await db.updateCustomer(customerMatch[1], payload, user.userId);
-      }
+      const updated =
+        payload && payload.status !== undefined
+          ? await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId)
+          : await db.updateCustomer(customerMatch[1], payload, user.userId);
+
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy khách hàng.");
       }
       sendJson(response, 200, updated);
-      return;
-    }
-
-    const adminCustomerMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/customers\/([0-9a-f-]{36})$/i,
-    );
-    if (adminCustomerMatch && request.method === "PATCH") {
-      const user = requireCustomerPermission(request, "update");
-      const payload = await readJson(request);
-      const updated = await db.updateCustomerStatus(
-        adminCustomerMatch[1],
-        payload && payload.status,
-        user.userId,
-      );
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy khách hàng.");
-      }
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    if (adminCustomerMatch && request.method === "DELETE") {
-      const user = requireCustomerPermission(request, "delete");
-      const deleted = await db.softDeleteCustomer(
-        adminCustomerMatch[1],
-        user.userId,
-      );
-      if (!deleted) {
-        throw new RequestError(404, "Không tìm thấy khách hàng.");
-      }
-      sendJson(response, 200, { success: true });
       return;
     }
 
@@ -754,7 +770,10 @@ function createServer({
 
     // --- API: Services (Thuê / Thu mua / Trao đổi) ---
     if (requestUrl.pathname === "/api/services" && request.method === "POST") {
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu yêu cầu dịch vụ không hợp lệ.",
+      );
       if (
         !payload.bookTitle ||
         !payload.name ||
@@ -812,20 +831,21 @@ function createServer({
       (request.method === "PATCH" || request.method === "PUT")
     ) {
       requireRole(request, "write:orders");
-      const payload = await readJson(request);
-      if (payload && typeof payload === "object") {
-        if (
-          payload.status !== undefined &&
-          !allowedOrderStatuses.has(String(payload.status).trim())
-        ) {
-          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
-        }
-        if (
-          payload.paymentStatus !== undefined &&
-          !allowedPaymentStatuses.has(String(payload.paymentStatus).trim())
-        ) {
-          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
-        }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật đơn hàng không hợp lệ.",
+      );
+      if (
+        payload.status !== undefined &&
+        !allowedOrderStatuses.has(String(payload.status).trim())
+      ) {
+        throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
+      }
+      if (
+        payload.paymentStatus !== undefined &&
+        !allowedPaymentStatuses.has(String(payload.paymentStatus).trim())
+      ) {
+        throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
       }
       const updated = await db.updateOrderStatus(
         adminOrderMatch[1],
@@ -884,7 +904,10 @@ function createServer({
       request.method === "POST"
     ) {
       requireRole(request, "write:books");
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu sách không hợp lệ.",
+      );
       if (!payload.title || !payload.author || !payload.price) {
         throw new RequestError(400, "Vui lòng nhập tên sách, tác giả và giá.");
       }
@@ -902,7 +925,10 @@ function createServer({
       (request.method === "PUT" || request.method === "PATCH")
     ) {
       requireRole(request, "write:books");
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật sách không hợp lệ.",
+      );
       const updated = await db.updateCustomBook(adminBookMatch[1], payload);
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy sách.");

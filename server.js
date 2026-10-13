@@ -636,10 +636,6 @@ function createServer({
       sendJson(response, 200, await db.getCustomers());
       return;
     }
-      requireCustomerPermission(request, "view");
-      sendJson(response, 200, await db.getCustomers());
-      return;
-    }
 
     if (
       requestUrl.pathname === "/api/admin/customers" &&

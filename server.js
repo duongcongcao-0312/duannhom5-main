@@ -68,6 +68,11 @@ const coupons = new Map([
 ]);
 const maxRequestBytes = 1024 * 1024;
 const defaultBookStock = 12;
+const customerRolePermissions = {
+  admin: new Set(["view", "create", "update", "delete"]),
+  sales: new Set(["view", "create", "update"]),
+  support: new Set(["view"]),
+};
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -404,6 +409,20 @@ function createServer({
     return user;
   }
 
+  function requireCustomerPermission(request, permission) {
+    const user = getAuthUser(request);
+    if (!user || !customerRolePermissions[user.role]?.has(permission)) {
+      const messages = {
+        view: "Bạn không có quyền xem dữ liệu khách hàng.",
+        create: "Bạn không có quyền tạo khách hàng.",
+        update: "Bạn không có quyền cập nhật khách hàng.",
+        delete: "Bạn không có quyền xoá khách hàng.",
+      };
+      throw new RequestError(403, messages[permission]);
+    }
+    return user;
+  }
+
   async function handleRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
 
@@ -538,15 +557,16 @@ function createServer({
 
     // --- Admin API: CRM Customers ---
     if (requestUrl.pathname === "/api/admin/customers" && request.method === "GET") {
-      requireAdmin(request);
+      requireCustomerPermission(request, "view");
       sendJson(response, 200, await db.getCustomers());
       return;
     }
 
     if (requestUrl.pathname === "/api/admin/customers" && request.method === "POST") {
-      requireAdmin(request);
+      const user = requireCustomerPermission(request, "create");
       const customer = await db.createCustomer(
         validateCustomerData(await readJson(request)),
+        user.userId,
       );
       sendJson(response, 201, customer);
       return;
@@ -556,11 +576,12 @@ function createServer({
       /^\/api\/admin\/customers\/([0-9a-f-]{36})$/i,
     );
     if (adminCustomerMatch && request.method === "PATCH") {
-      requireAdmin(request);
+      const user = requireCustomerPermission(request, "update");
       const payload = await readJson(request);
       const updated = await db.updateCustomerStatus(
         adminCustomerMatch[1],
         payload && payload.status,
+        user.userId,
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy khách hàng.");
@@ -570,8 +591,8 @@ function createServer({
     }
 
     if (adminCustomerMatch && request.method === "DELETE") {
-      requireAdmin(request);
-      const deleted = await db.softDeleteCustomer(adminCustomerMatch[1]);
+      const user = requireCustomerPermission(request, "delete");
+      const deleted = await db.softDeleteCustomer(adminCustomerMatch[1], user.userId);
       if (!deleted) {
         throw new RequestError(404, "Không tìm thấy khách hàng.");
       }

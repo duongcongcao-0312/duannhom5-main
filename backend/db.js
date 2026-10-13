@@ -46,6 +46,13 @@ function validateCustomerData(data) {
   return { name, email, phone };
 }
 
+function validateCustomerActor(actorId) {
+  if (typeof actorId !== "string" || !actorId.trim()) {
+    throw new CustomerError(401, "Không xác định được người thực hiện thao tác.");
+  }
+  return actorId.trim();
+}
+
 const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
 const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
 const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
@@ -174,8 +181,9 @@ class Database {
     return (await this.readCustomers()).filter((customer) => !customer.deletedAt);
   }
 
-  async createCustomer(data) {
+  async createCustomer(data, actorId) {
     const customerData = validateCustomerData(data);
+    const actor = validateCustomerActor(actorId);
     const customers = await this.readCustomers();
     const phoneDigits = customerData.phone.replace(/\D/g, "");
     const duplicate = customers.some((customer) => (
@@ -193,6 +201,8 @@ class Database {
       id: crypto.randomUUID(),
       ...customerData,
       status: "new",
+      created_by: actor,
+      updated_by: actor,
       createdAt: new Date().toISOString(),
     };
     customers.push(customer);
@@ -200,10 +210,11 @@ class Database {
     return customer;
   }
 
-  async updateCustomerStatus(id, status) {
+  async updateCustomerStatus(id, status, actorId) {
     if (!customerStatuses.includes(status)) {
       throw new CustomerError(400, "Trạng thái khách hàng không hợp lệ.");
     }
+    const actor = validateCustomerActor(actorId);
 
     const customers = await this.readCustomers();
     const customer = customers.find((item) => item.id === id && !item.deletedAt);
@@ -216,18 +227,21 @@ class Database {
     }
 
     customer.status = status;
+    customer.updated_by = actor;
     customer.updatedAt = new Date().toISOString();
     await this.writeCustomers(customers);
     return customer;
   }
 
-  async softDeleteCustomer(id) {
+  async softDeleteCustomer(id, actorId) {
+    const actor = validateCustomerActor(actorId);
     const customers = await this.readCustomers();
     const customer = customers.find((item) => item.id === id && !item.deletedAt);
     if (!customer) return false;
 
     const deletedAt = new Date().toISOString();
     customer.deletedAt = deletedAt;
+    customer.updated_by = actor;
     customer.updatedAt = deletedAt;
     await this.writeCustomers(customers);
     return true;

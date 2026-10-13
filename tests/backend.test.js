@@ -390,6 +390,124 @@ test("CRM customer API enforces roles, validation, lifecycle rules and audit fie
   assert.deepEqual(await listResponse.json(), []);
 });
 
+test("customer management API exposes CRUD endpoints with validation and permissions", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-customer-api-"));
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const customersPath = path.join(temporaryDirectory, "customers.json");
+  const staff = [
+    { id: "admin-1", name: "Admin", email: "admin@example.com", role: "admin" },
+    { id: "sales-1", name: "Sales", email: "sales@example.com", role: "sales" },
+    { id: "support-1", name: "Support", email: "support@example.com", role: "support" },
+    { id: "user-1", name: "User", email: "user@example.com", role: "user" },
+  ].map((user) => ({
+    ...user,
+    password: hashPassword("password123"),
+    studentType: "other",
+    studentId: "",
+    createdAt: new Date().toISOString(),
+  }));
+  await fsPromises.writeFile(usersPath, JSON.stringify(staff), "utf8");
+
+  const server = createServer({ usersPath, customersPath });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  async function headersFor(role) {
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: `${role}@example.com`, password: "password123" }),
+    });
+    assert.equal(loginResponse.status, 200);
+    const { token } = await loginResponse.json();
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
+  }
+
+  const salesHeaders = await headersFor("sales");
+  const supportHeaders = await headersFor("support");
+  const userHeaders = await headersFor("user");
+
+  const anonymousListResponse = await fetch(`${baseUrl}/api/customers`);
+  assert.equal(anonymousListResponse.status, 403);
+
+  const noAccessResponse = await fetch(`${baseUrl}/api/customers`, {
+    headers: userHeaders,
+  });
+  assert.equal(noAccessResponse.status, 403);
+
+  const invalidResponse = await fetch(`${baseUrl}/api/customers`, {
+    method: "POST",
+    headers: salesHeaders,
+    body: JSON.stringify({ name: "A", email: "bad-email", phone: "0901234567" }),
+  });
+  assert.equal(invalidResponse.status, 400);
+
+  const createdResponse = await fetch(`${baseUrl}/api/customers`, {
+    method: "POST",
+    headers: salesHeaders,
+    body: JSON.stringify({
+      name: "Nguyễn An",
+      email: "nguyen.an@example.com",
+      phone: "+84 901 234 567",
+    }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const customer = await createdResponse.json();
+  assert.equal(customer.email, "nguyen.an@example.com");
+  assert.equal(customer.status, "new");
+
+  const listResponse = await fetch(`${baseUrl}/api/customers?status=new&search=nguyen&page=1&limit=10`, {
+    headers: supportHeaders,
+  });
+  assert.equal(listResponse.status, 200);
+  const listData = await listResponse.json();
+  assert.ok(Array.isArray(listData));
+  assert.ok(listData.some((item) => item.id === customer.id));
+
+  const detailResponse = await fetch(`${baseUrl}/api/customers/${customer.id}`, {
+    headers: supportHeaders,
+  });
+  assert.equal(detailResponse.status, 200);
+  assert.equal((await detailResponse.json()).id, customer.id);
+
+  const updateResponse = await fetch(`${baseUrl}/api/customers/${customer.id}`, {
+    method: "PUT",
+    headers: salesHeaders,
+    body: JSON.stringify({
+      name: "Nguyễn An",
+      email: "nguyen.an@example.com",
+      phone: "0901234567",
+      status: "lead",
+    }),
+  });
+  assert.equal(updateResponse.status, 200);
+  const updated = await updateResponse.json();
+  assert.equal(updated.status, "lead");
+
+  const deleteResponse = await fetch(`${baseUrl}/api/customers/${customer.id}`, {
+    method: "DELETE",
+    headers: supportHeaders,
+  });
+  assert.equal(deleteResponse.status, 403);
+
+  const adminDeleteResponse = await fetch(`${baseUrl}/api/customers/${customer.id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${(await headersFor("admin")).Authorization.replace(/^Bearer\s+/i, "")}` },
+  });
+  assert.equal(adminDeleteResponse.status, 200);
+});
+
 test("backend rejects invalid service and status payloads", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-invalid-payloads-"));
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");

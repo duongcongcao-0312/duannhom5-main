@@ -555,7 +555,42 @@ function createServer({
       return;
     }
 
-    // --- Admin API: CRM Customers ---
+    // --- Customer CRM API (public and admin variants) ---
+    if (requestUrl.pathname === "/api/customers" && request.method === "GET") {
+      requireCustomerPermission(request, "view");
+      const search = (requestUrl.searchParams.get("search") || "").trim().toLowerCase();
+      const status = (requestUrl.searchParams.get("status") || "").trim();
+      const page = Number.parseInt(requestUrl.searchParams.get("page") || "1", 10) || 1;
+      const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10) || 20;
+      let customers = await db.getCustomers();
+
+      if (status) {
+        customers = customers.filter((customer) => customer.status === status);
+      }
+      if (search) {
+        customers = customers.filter((customer) => {
+          const haystack = [customer.name, customer.email, customer.phone].join(" ").toLowerCase();
+          return haystack.includes(search);
+        });
+      }
+
+      const start = (page - 1) * limit;
+      const paged = customers.slice(start, start + limit);
+      sendJson(response, 200, paged);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/customers" && request.method === "POST") {
+      const user = requireCustomerPermission(request, "create");
+      const payload = await readJson(request);
+      const customer = await db.createCustomer(
+        validateCustomerData(payload),
+        user.userId,
+      );
+      sendJson(response, 201, customer);
+      return;
+    }
+
     if (requestUrl.pathname === "/api/admin/customers" && request.method === "GET") {
       requireCustomerPermission(request, "view");
       sendJson(response, 200, await db.getCustomers());
@@ -569,6 +604,46 @@ function createServer({
         user.userId,
       );
       sendJson(response, 201, customer);
+      return;
+    }
+
+    const customerMatch = requestUrl.pathname.match(
+      /^\/api\/(?:admin\/)?customers\/([0-9a-f-]{36})$/i,
+    );
+    if (customerMatch && (request.method === "GET" || request.method === "PATCH" || request.method === "PUT" || request.method === "DELETE")) {
+      const isAdminRoute = requestUrl.pathname.startsWith("/api/admin/");
+      if (request.method === "GET") {
+        requireCustomerPermission(request, "view");
+        const customer = await db.getCustomerById(customerMatch[1]);
+        if (!customer) {
+          throw new RequestError(404, "Không tìm thấy khách hàng.");
+        }
+        sendJson(response, 200, customer);
+        return;
+      }
+
+      if (request.method === "DELETE") {
+        const user = requireCustomerPermission(request, "delete");
+        const deleted = await db.softDeleteCustomer(customerMatch[1], user.userId);
+        if (!deleted) {
+          throw new RequestError(404, "Không tìm thấy khách hàng.");
+        }
+        sendJson(response, 200, { success: true });
+        return;
+      }
+
+      const user = requireCustomerPermission(request, "update");
+      const payload = await readJson(request);
+      let updated;
+      if (payload && payload.status !== undefined) {
+        updated = await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId);
+      } else {
+        updated = await db.updateCustomer(customerMatch[1], payload, user.userId);
+      }
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy khách hàng.");
+      }
+      sendJson(response, 200, updated);
       return;
     }
 

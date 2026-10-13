@@ -181,6 +181,11 @@ class Database {
     return (await this.readCustomers()).filter((customer) => !customer.deletedAt);
   }
 
+  async getCustomerById(id) {
+    const customers = await this.readCustomers();
+    return customers.find((customer) => customer.id === id && !customer.deletedAt) || null;
+  }
+
   async createCustomer(data, actorId) {
     const customerData = validateCustomerData(data);
     const actor = validateCustomerActor(actorId);
@@ -208,6 +213,59 @@ class Database {
     customers.push(customer);
     await this.writeCustomers(customers);
     return customer;
+  }
+
+  async updateCustomer(id, data, actorId) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new CustomerError(400, "Dữ liệu khách hàng không hợp lệ.");
+    }
+    const actor = validateCustomerActor(actorId);
+    const customers = await this.readCustomers();
+    const customerIndex = customers.findIndex((item) => item.id === id && !item.deletedAt);
+    if (customerIndex < 0) return null;
+
+    const existing = customers[customerIndex];
+    const nextData = {
+      name: data.name !== undefined ? String(data.name).trim() : existing.name,
+      email: data.email !== undefined ? String(data.email).trim().toLowerCase() : existing.email,
+      phone: data.phone !== undefined ? String(data.phone).trim() : existing.phone,
+    };
+    const validated = validateCustomerData(nextData);
+    const phoneDigits = validated.phone.replace(/\D/g, "");
+    const duplicate = customers.some((item) => (
+      item.id !== id &&
+      !item.deletedAt &&
+      (
+        item.email.toLowerCase() === validated.email ||
+        item.phone.replace(/\D/g, "") === phoneDigits
+      )
+    ));
+    if (duplicate) {
+      throw new CustomerError(409, "Email hoặc số điện thoại đã thuộc về khách hàng khác.");
+    }
+
+    customers[customerIndex] = {
+      ...existing,
+      ...validated,
+      status: data.status !== undefined ? String(data.status).trim() : existing.status,
+      updated_by: actor,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (data.status !== undefined) {
+      if (!customerStatuses.includes(customers[customerIndex].status)) {
+        throw new CustomerError(400, "Trạng thái khách hàng không hợp lệ.");
+      }
+      if (nextCustomerStatus.get(existing.status) !== customers[customerIndex].status) {
+        throw new CustomerError(
+          409,
+          "Trạng thái chỉ có thể chuyển lần lượt từ mới sang tiềm năng rồi thành khách hàng.",
+        );
+      }
+    }
+
+    await this.writeCustomers(customers);
+    return customers[customerIndex];
   }
 
   async updateCustomerStatus(id, status, actorId) {

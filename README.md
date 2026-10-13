@@ -107,6 +107,11 @@ lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào 
 | `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận token |
 | `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại |
 | `POST` | `/api/auth/logout` | Người dùng | Đăng xuất |
+| `GET` | `/api/customers` | Admin, Sales, Support | Tìm kiếm, lọc và phân trang hồ sơ khách hàng |
+| `POST` | `/api/customers` | Admin, Sales | Tạo hồ sơ khách hàng |
+| `GET` | `/api/customers/:id` | Admin, Sales, Support | Xem hồ sơ khách hàng chi tiết |
+| `PUT` | `/api/customers/:id` | Admin, Sales | Cập nhật thông tin hoặc chuyển trạng thái khách hàng |
+| `DELETE` | `/api/customers/:id` | Admin | Xoá mềm khách hàng |
 | `GET` | `/api/books` | Công khai | Lấy danh mục sách |
 | `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua hoặc trao đổi sách |
 | `GET` | `/api/admin/stats` | Quản trị | Xem thống kê |

@@ -40,7 +40,7 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 ## Công nghệ
 
 - **Giao diện:** HTML, CSS và JavaScript thuần.
-- **Máy chủ:** Node.js, HTTP API và lưu trữ dữ liệu dạng JSON/JSONL.
+- **Máy chủ:** Node.js REST API; PostgreSQL trên cloud hoặc JSON/JSONL local.
 - **Kiểm thử:** Node.js test runner (`node:test`).
 - **Tự động hoá:** GitHub Actions chạy kiểm thử và kiểm tra dependency.
 
@@ -75,10 +75,45 @@ Build Pages chỉ chép danh sách file giao diện cho phép, không xuất b�
 hay mã máy chủ. Để Google/Facebook Auth hoạt động trên Pages, cần thêm
 `duongcongcao-0312.github.io` vào Authorized domains trong Firebase Console.
 
+## Triển khai tách frontend, backend và database
+
+Repository này được chuẩn bị để triển khai theo ba phần:
+
+1. **Frontend:** GitHub Pages.
+2. **Backend:** dịch vụ Node.js trên Render, khai báo tại `render.yaml`.
+3. **Database:** PostgreSQL trên Supabase; backend dùng `DATABASE_URL` và tự
+   tạo bảng `booknest_data` khi khởi động lần đầu.
+
+Các bước cấu hình:
+
+1. Tạo project PostgreSQL trên Supabase và lấy connection string có SSL.
+2. Tạo Web Service trên Render từ repository này, dùng Blueprint (`render.yaml`)
+   hoặc nhập `npm ci` làm lệnh build và `npm start` làm lệnh chạy.
+3. Trong Render, đặt các biến bí mật `DATABASE_URL`, `ADMIN_EMAIL` và
+   `ADMIN_PASSWORD`. Mật khẩu quản trị lần đầu phải dài ít nhất 12 ký tự.
+   Không dùng tài khoản demo `admin@booknest.vn` / `admin123` trên cloud.
+4. Workflow mặc định trỏ frontend tới `https://duannhom5-main.onrender.com`.
+   Nếu backend có URL khác, vào GitHub repository → Settings → Secrets and
+   variables → Actions → Variables, tạo biến `API_BASE_URL` với URL backend
+   (không thêm dấu `/` cuối) để ghi đè giá trị mặc định.
+5. Đảm bảo biến `CORS_ORIGINS` trên Render chứa origin frontend
+   `https://duongcongcao-0312.github.io`. Nếu dùng domain riêng, thêm origin
+   domain đó, không thêm đường dẫn `/duannhom5-main/`.
+6. Chạy workflow **Deploy BookNest to GitHub Pages** hoặc đẩy commit mới để
+   frontend build với URL API vừa cấu hình. Kiểm tra `https://<backend>/api/books`.
+
+Không đưa `DATABASE_URL` hoặc mật khẩu quản trị vào GitHub Variables, mã nguồn
+hay commit; chỉ đặt chúng trong Render Environment. `API_BASE_URL` không phải
+bí mật và được nhúng vào JavaScript frontend lúc build. Dữ liệu JSON/JSONL cũ
+trong thư mục `data/` không được tự động chuyển lên PostgreSQL; cần nhập riêng
+nếu muốn giữ dữ liệu cũ. Bản PostgreSQL này giữ các bộ dữ liệu trong cột JSONB
+để tương thích với backend hiện tại, phù hợp cho demo/đồ án; hệ thống lớn hơn
+nên chuyển dần sang bảng quan hệ có schema và ràng buộc riêng.
+
 ## Cổng quản trị
 
-Mở <http://127.0.0.1:8000/admin.html> để đăng nhập và quản lý cửa hàng. Tài
-khoản demo được khởi tạo khi chưa có tệp người dùng:
+Mở <http://127.0.0.1:8000/admin.html> để đăng nhập và quản lý cửa hàng. Khi
+chạy local bằng lưu trữ file, tài khoản demo được khởi tạo nếu chưa có tệp người dùng:
 
 - **Email:** `admin@booknest.vn`
 - **Mật khẩu:** `admin123`
@@ -140,16 +175,15 @@ chỉ quy trình cấp quyền đáng tin cậy mới được gán vai trò `ad
 
 ## Dữ liệu và lưu trữ
 
-Máy chủ lưu người dùng trong `data/users.json`, khách hàng CRM trong
+Khi chạy local, máy chủ lưu người dùng trong `data/users.json`, khách hàng CRM trong
 `data/customers.json`, yêu cầu dịch vụ trong
 `data/service-requests.jsonl`, sách quản trị thêm trong `data/books.json` và
 đơn hàng trong `data/orders.jsonl`. Một số trạng thái giao diện như giỏ hàng,
 sách yêu thích và phiên đăng nhập cũng được lưu trong `localStorage` của trình
 duyệt.
 
-`data/orders.jsonl` được bỏ qua bởi Git vì có thể chứa thông tin giao nhận.
-Không đưa dữ liệu khách hàng thật hoặc thông tin nhạy cảm vào repository; hãy
-bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triển khai.
+Khi đặt `DATABASE_URL`, backend thay lưu trữ file bằng PostgreSQL. `data/` không
+được đưa vào Pages; không commit dữ liệu khách hàng hoặc thông tin nhạy cảm.
 
 ## Cấu trúc dự án
 
@@ -158,7 +192,9 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 ├── assets/                  # Biểu tượng và tài nguyên tĩnh
 ├── backend/
 │   ├── auth.js              # Mã hoá mật khẩu và quản lý phiên
-│   └── db.js                # Đọc và ghi dữ liệu JSON/JSONL
+│   ├── db.js                # Lưu dữ liệu JSON/JSONL khi phát triển local
+│   ├── postgres-db.js       # PostgreSQL adapter cho cloud
+│   └── schema.sql           # Schema PostgreSQL
 ├── data/                    # Dữ liệu người dùng, khách hàng, sách và dịch vụ
 ├── tests/                   # Kiểm thử giao diện và API
 ├── .github/workflows/       # Quy trình CI
@@ -172,6 +208,7 @@ bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triể
 ├── main.css                 # Kiểu dáng cửa hàng
 ├── main.js                  # Tương tác giao diện cửa hàng
 ├── server.js                # Máy chủ REST API và tệp tĩnh
+├── render.yaml              # Cấu hình deploy backend Render
 └── package.json             # Lệnh dự án
 ```
 
@@ -217,11 +254,11 @@ flowchart TB
 
     subgraph DATA["03 · LỚP DỮ LIỆU"]
         direction LR
-        USERS[("users.json<br/>tài khoản")]
-        CUSTOMERS[("customers.json<br/>khách hàng CRM")]
-        BOOKS[("books.json<br/>sách do quản trị thêm")]
-        ORDERS[("orders.jsonl<br/>đơn hàng")]
-        SERVICES[("service-requests.jsonl<br/>yêu cầu dịch vụ")]
+        USERS[("users<br/>PostgreSQL JSONB / users.json local")]
+        CUSTOMERS[("customers<br/>PostgreSQL JSONB / customers.json local")]
+        BOOKS[("books<br/>PostgreSQL JSONB / books.json local")]
+        ORDERS[("orders<br/>PostgreSQL JSONB / orders.jsonl local")]
+        SERVICES[("services<br/>PostgreSQL JSONB / JSONL local")]
         CATALOG["books-data.js<br/>danh mục mặc định"]
     end
 
@@ -272,8 +309,8 @@ flowchart TB
 | Giao diện | Trang cửa hàng, trang chi tiết sách và cổng quản trị | Hiển thị nội dung, nhận thao tác người dùng và gọi REST API. |
 | Ứng dụng | `server.js` | Chạy HTTP server, phục vụ tệp tĩnh, định tuyến API, kiểm tra dữ liệu và thực hiện các luồng nghiệp vụ. |
 | Xác thực | `backend/auth.js` | Băm/kiểm tra mật khẩu bằng `scrypt`; tạo, xác thực và huỷ phiên đăng nhập. |
-| Truy cập dữ liệu | `backend/db.js` | Đọc và ghi tài khoản, sách quản trị và yêu cầu dịch vụ; dữ liệu đơn hàng được ghi/đọc theo JSONL. |
-| Dữ liệu | Thư mục `data/` và `books-data.js` | Lưu dữ liệu ứng dụng trên máy chủ và cung cấp danh mục sách mặc định. |
+| Truy cập dữ liệu | `backend/db.js`, `backend/postgres-db.js` | Chọn lưu file local hoặc PostgreSQL cloud theo `DATABASE_URL`. |
+| Dữ liệu | `data/`, PostgreSQL và `books-data.js` | Lưu dữ liệu ứng dụng và cung cấp danh mục sách mặc định. |
 | Chất lượng | `tests/`, `.github/workflows/`, `package.json` | Chạy kiểm thử tự động và các bước kiểm tra dependency trong CI. |
 
 ### Luồng xử lý chính
@@ -389,9 +426,9 @@ thể đối chiếu, không phải chức danh chính thức.
 ## Lưu ý bảo mật
 
 BookNest là dự án mẫu, chưa được thiết kế để vận hành với dữ liệu khách hàng
-thật. Tài khoản demo mặc định, lưu trữ JSON trên đĩa, token phiên trong bộ nhớ
-và một số thông tin phía trình duyệt không thay thế cho quy trình bảo mật của
-một dịch vụ thương mại.
+thật. Dùng PostgreSQL trên cloud giúp dữ liệu tồn tại qua lần deploy, nhưng
+token phiên vẫn nằm trong bộ nhớ và sẽ mất khi tiến trình khởi động lại. Các
+biện pháp hiện có chưa thay thế cho quy trình bảo mật của dịch vụ thương mại.
 
 Trước khi triển khai thực tế, cần thay đổi cơ chế quản trị mặc định, dùng cơ
 sở dữ liệu phù hợp có sao lưu, bật HTTPS, rà soát quyền truy cập và bổ sung
@@ -418,10 +455,10 @@ hổng dependency khi có push lên nhánh `main` hoặc pull request.
 Thiết kế lưu trữ hồ sơ khách hàng, schema CRM, quyền truy cập, bảo mật và lộ
 trình migration được ghi tại [docs/crm-design.md](docs/crm-design.md).
 
-Máy chủ lưu mỗi đơn thành một dòng JSON trong `data/orders.jsonl`. Tệp này có
-thông tin giao nhận của khách hàng, đã được thêm vào `.gitignore` để không bị
-đẩy lên Git. Hãy bảo vệ và sao lưu tệp nếu cần giữ dữ liệu đơn hàng; không dùng
-dữ liệu khách thật trong môi trường thử nghiệm.
+Khi không đặt `DATABASE_URL`, local server lưu mỗi đơn thành một dòng JSON
+trong `data/orders.jsonl`. Khi có `DATABASE_URL`, backend sử dụng PostgreSQL.
+Token đăng nhập hiện vẫn giữ trong bộ nhớ backend; restart/đánh thức dịch vụ sẽ
+khiến người dùng phải đăng nhập lại, nhưng không làm mất dữ liệu đã lưu ở database.
 
 Các API hiện có:
 

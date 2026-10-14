@@ -7,6 +7,24 @@ const { hashPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
 const { createServer } = require("../server");
 
+test("Render backend refuses to start without a persistent database URL", () => {
+  const originalRender = process.env.RENDER;
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  process.env.RENDER = "true";
+  delete process.env.DATABASE_URL;
+  try {
+    assert.throws(
+      () => createServer(),
+      /DATABASE_URL phải được cấu hình trên Render/,
+    );
+  } finally {
+    if (originalRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = originalRender;
+    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = originalDatabaseUrl;
+  }
+});
+
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-backend-test-"),
@@ -14,7 +32,12 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
-  const server = createServer({ ordersPath, usersPath, servicesPath });
+  const server = createServer({
+    ordersPath,
+    usersPath,
+    servicesPath,
+    corsOrigins: "https://shop.example",
+  });
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
@@ -27,6 +50,21 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   });
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const preflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://shop.example",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://shop.example");
+  const rejectedPreflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://untrusted.example" },
+  });
+  assert.equal(rejectedPreflight.status, 403);
 
   // 1. Coupon API works
   const couponRes = await fetch(`${baseUrl}/api/coupons/BOOKNEST10`);

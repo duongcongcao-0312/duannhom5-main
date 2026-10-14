@@ -20,6 +20,18 @@ const DEFAULT_BOOK_STOCK = 12;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
+const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
+const firebaseConfig = window.BOOKNEST_FIREBASE_CONFIG;
+const firebaseAuth = (() => {
+	const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
+	if (!window.firebase || !firebaseConfig || requiredFields.some((field) => !firebaseConfig[field])) return null;
+	try {
+		if (!window.firebase.apps.length) window.firebase.initializeApp(firebaseConfig);
+		return window.firebase.auth();
+	} catch (error) {
+		return null;
+	}
+})();
 const serviceDetails = {
 	rent: {
 		title: 'Thuê sách theo nhu cầu',
@@ -54,6 +66,87 @@ function loadCurrentUser() {
 		return JSON.parse(localStorage.getItem(CURRENT_USER_STORAGE_KEY) || 'null');
 	} catch (error) {
 		return null;
+	}
+}
+
+function loadCustomerInfo() {
+	try {
+		const saved = JSON.parse(localStorage.getItem(CUSTOMER_INFO_STORAGE_KEY) || '{}');
+		return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+	} catch (error) {
+		return {};
+	}
+}
+
+function saveCustomerInfo(info) {
+	try {
+		localStorage.setItem(CUSTOMER_INFO_STORAGE_KEY, JSON.stringify(info));
+	} catch (error) {
+		throw new Error('Không thể lưu thông tin khách hàng trên thiết bị này.');
+	}
+}
+
+async function saveCustomerInfoToAccount(info) {
+	const token = localStorage.getItem('booknest-auth-token');
+	if (!token) return;
+	const response = await fetch('/api/auth/customer-info', {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify(info)
+	});
+	const result = await response.json().catch(() => ({}));
+	if (!response.ok) throw new Error(result.error || 'Không thể lưu thông tin vào tài khoản.');
+}
+
+function applyAccountCustomerInfo(user) {
+	if (!user || !user.customerInfo) return;
+	saveCustomerInfo({ ...loadCustomerInfo(), ...user.customerInfo });
+}
+
+async function hydrateAuthenticatedUser() {
+	const token = localStorage.getItem('booknest-auth-token');
+	if (!token) return;
+	try {
+		const response = await fetch('/api/auth/me', {
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (response.status === 401) {
+			localStorage.removeItem('booknest-auth-token');
+			localStorage.removeItem('booknest-admin-token');
+			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+			state.user = null;
+			renderAccount();
+			return;
+		}
+		if (!response.ok) throw new Error('Không thể tải hồ sơ tài khoản.');
+		const data = await response.json();
+		if (!data.user) throw new Error('Máy chủ trả về hồ sơ tài khoản không hợp lệ.');
+		state.user = data.user;
+		applyAccountCustomerInfo(data.user);
+		localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
+		renderAccount();
+		fillSavedCustomerInfo();
+	} catch (error) {
+		console.error('Không thể đồng bộ hồ sơ khách hàng:', error);
+	}
+}
+
+function fillSavedCustomerInfo() {
+	const saved = loadCustomerInfo();
+	const paymentForm = document.querySelector('#paymentForm');
+	const serviceForm = document.querySelector('#serviceForm');
+	if (paymentForm) {
+		['customerName', 'phone', 'address'].forEach((field) => {
+			if (saved[field]) paymentForm.elements[field].value = saved[field];
+		});
+	}
+	if (serviceForm) {
+		['name', 'phone'].forEach((field) => {
+			if (saved[field]) serviceForm.elements[field].value = saved[field];
+		});
 	}
 }
 
@@ -102,7 +195,7 @@ function getDiscountRate() {
 }
 
 function getDiscountLabel() {
-	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi thành viên';
+	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi tài khoản';
 }
 
 function getCouponRate() {
@@ -114,8 +207,8 @@ function getAiAnswer(question) {
 	if (/(thuê|muon|mượn)/.test(normalized)) return 'Bạn có thể thuê sách theo tuần hoặc tháng. Hãy mở mục “Dịch vụ” ở cuối trang và chọn “Đăng ký thuê” để gửi tên sách và thông tin liên hệ.';
 	if (/(thu mua|bán sách|ban sach)/.test(normalized)) return 'BookNest nhận thu mua sách đã qua sử dụng. Chọn “Bán sách cho BookNest” trong mục “Dịch vụ”; đội ngũ sẽ xem tình trạng và phản hồi mức giá dự kiến.';
 	if (/(trao đổi|trao doi|đổi sách|doi sach)/.test(normalized)) return 'Bạn có thể đăng sách muốn trao đổi tại mục “Trao đổi sách”. Hãy ghi tên sách và cuốn bạn đang tìm để BookNest hỗ trợ ghép cặp.';
-	if (/(học sinh|sinh viên|sinh vien|ưu đãi|giam|giảm)/.test(normalized)) return 'Thành viên thông thường được giảm 5%. Học sinh và sinh viên được giảm 10% sau khi chọn đúng loại tài khoản và nhập mã học sinh/sinh viên.';
-	if (/(hội viên|hoi vien|thẻ|the thanh vien|đăng ký|dang ky)/.test(normalized)) return 'Bạn mở nút “Đăng nhập” ở đầu trang, chọn “Đăng ký”. Sau khi tạo tài khoản, BookNest tự cấp thẻ hội viên điện tử và mã thành viên.';
+	if (/(học sinh|sinh viên|sinh vien|ưu đãi|giam|giảm)/.test(normalized)) return 'Tài khoản thông thường được giảm 5%. Học sinh và sinh viên được giảm 10% sau khi chọn đúng loại tài khoản và nhập mã học sinh/sinh viên.';
+	if (/(hội viên|hoi vien|thẻ|the thanh vien|đăng ký|dang ky)/.test(normalized)) return 'Bạn mở nút “Đăng nhập” ở đầu trang, chọn “Đăng ký” để tạo tài khoản và nhận ưu đãi.';
 	const category = categories.find((item) => normalized.includes(item.label.toLowerCase()) || normalized.includes(item.value));
 	if (category) {
 		const recommendations = books.filter((book) => book.category === category.value).slice(0, 3);
@@ -123,7 +216,7 @@ function getAiAnswer(question) {
 	}
 	if (/(gợi ý|goi y|sách|sach|đọc gì|doc gi)/.test(normalized)) return 'Bạn có thể thử “Nhà giả kim”, “Mắt biếc” hoặc “Đi tìm lẽ sống”. Hãy cho mình biết thể loại bạn yêu thích để nhận gợi ý sát hơn nhé.';
 	if (/(thanh toán|thanh toan|cod|chuyển khoản|chuyen khoan)/.test(normalized)) return 'BookNest hỗ trợ chuyển khoản qua mã QR và thanh toán khi nhận hàng (COD). Bạn chọn phương thức ở bước thanh toán trong giỏ hàng.';
-	return 'Mình có thể hỗ trợ về gợi ý sách, thuê sách, thu mua, trao đổi, tài khoản hội viên và ưu đãi học sinh/sinh viên. Bạn thử hỏi cụ thể hơn nhé!';
+	return 'Mình có thể hỗ trợ về gợi ý sách, thuê sách, thu mua, trao đổi, tài khoản và ưu đãi học sinh/sinh viên. Bạn thử hỏi cụ thể hơn nhé!';
 }
 
 function getBookImage(book) {
@@ -380,6 +473,8 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		if (customerName.length < 2 || address.length < 10 || !/^[0-9 +()-]{8,}$/.test(phone)) {
 			throw new Error('Vui lòng kiểm tra họ tên, số điện thoại và địa chỉ nhận hàng.');
 		}
+		const customerInfo = { ...loadCustomerInfo(), customerName, address, phone };
+		saveCustomerInfo(customerInfo);
 		const method = form.elements.paymentMethod.value;
 		const submitButton = form.querySelector('[type="submit"]');
 		const originalButtonText = submitButton.textContent;
@@ -409,6 +504,11 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			if (!result.orderId || !Number.isFinite(result.total)) {
 				throw new Error('Máy chủ trả về xác nhận đơn hàng không hợp lệ.');
 			}
+			try {
+				await saveCustomerInfoToAccount(customerInfo);
+			} catch (profileError) {
+				console.error('Không thể đồng bộ thông tin khách hàng:', profileError);
+			}
 		} catch (error) {
 			throw new Error(error instanceof TypeError
 				? 'Không thể kết nối máy chủ. Đơn hàng chưa được lưu; giỏ hàng vẫn được giữ lại.'
@@ -424,6 +524,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		alert(message);
 		state.cart = [];
 		form.reset();
+		fillSavedCustomerInfo();
 		document.querySelector('#transferDetails').hidden = false;
 		document.querySelector('#paymentDialog').close();
 		toggleCart(false);
@@ -451,7 +552,7 @@ document.querySelectorAll('.service-button').forEach((button) => button.addEvent
 	serviceDialog.showModal();
 }));
 document.querySelector('#closeService').addEventListener('click', () => serviceDialog.close());
-serviceForm.addEventListener('submit', (event) => {
+serviceForm.addEventListener('submit', async (event) => {
 	event.preventDefault();
 	try {
 		showServiceError('');
@@ -469,12 +570,25 @@ serviceForm.addEventListener('submit', (event) => {
 		if (!serviceDetails[request.service] || request.bookTitle.length < 2 || request.name.length < 2) {
 			throw new Error('Vui lòng kiểm tra lại thông tin đăng ký.');
 		}
+		const customerInfo = { ...loadCustomerInfo(), name: request.name, phone: request.phone };
+		saveCustomerInfo(customerInfo);
 		const savedRequests = JSON.parse(localStorage.getItem(SERVICE_REQUESTS_STORAGE_KEY) || '[]');
 		if (!Array.isArray(savedRequests)) throw new Error('Không thể lưu yêu cầu lúc này.');
 		savedRequests.push(request);
 		localStorage.setItem(SERVICE_REQUESTS_STORAGE_KEY, JSON.stringify(savedRequests));
+		fetch('/api/services', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(request)
+		}).catch((error) => console.error('Không thể lưu yêu cầu dịch vụ:', error));
+		try {
+			await saveCustomerInfoToAccount(customerInfo);
+		} catch (profileError) {
+			console.error('Không thể đồng bộ thông tin khách hàng:', profileError);
+		}
 		alert(`Đã nhận yêu cầu ${serviceDetails[request.service].title.toLowerCase()} của ${request.name}. BookNest sẽ sớm liên hệ!`);
 		serviceForm.reset();
+		fillSavedCustomerInfo();
 		serviceDialog.close();
 	} catch (error) {
 		showServiceError(error instanceof Error ? error.message : 'Không thể gửi yêu cầu. Vui lòng thử lại.');
@@ -485,8 +599,7 @@ const accountButton = document.querySelector('#accountButton');
 const trackOrderDialog = document.querySelector('#trackOrderDialog');
 const accountViews = {
 	login: document.querySelector('#loginForm'),
-	register: document.querySelector('#registerForm'),
-	member: document.querySelector('#memberPanel')
+	register: document.querySelector('#registerForm')
 };
 
 function readUsers() {
@@ -499,24 +612,22 @@ function readUsers() {
 }
 
 function setAccountView(view) {
-	Object.entries(accountViews).forEach(([name, element]) => { element.hidden = name !== view; });
+	const loginForm = document.querySelector('#loginForm');
+	const registerForm = document.querySelector('#registerForm');
+
+	if (loginForm) loginForm.hidden = view !== 'login';
+	if (registerForm) registerForm.hidden = view !== 'register';
+
 	document.querySelectorAll('.account-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.accountView === view));
 }
 
 function renderAccount() {
+	const logoutButton = document.querySelector('#logoutButton');
 	if (state.user) {
 		accountButton.textContent = state.user.name;
-		document.querySelector('#memberName').textContent = state.user.name;
-		document.querySelector('#memberNumber').textContent = `Mã hội viên: ${state.user.memberNumber}`;
-		document.querySelector('#memberBenefit').textContent = getDiscountRate() === 0.1 ? 'Giảm 10% cho học sinh / sinh viên' : 'Giảm 5% cho thành viên';
-		document.querySelector('#memberStatus').textContent = 'Thẻ hội viên điện tử đang hoạt động trên tài khoản này.';
 		document.querySelector('#logoutButton').hidden = false;
 	} else {
 		accountButton.textContent = 'Đăng nhập';
-		document.querySelector('#memberName').textContent = 'Bạn chưa đăng nhập';
-		document.querySelector('#memberNumber').textContent = 'Đăng ký để nhận mã hội viên';
-		document.querySelector('#memberBenefit').textContent = 'Giảm 5% cho thành viên';
-		document.querySelector('#memberStatus').textContent = 'Đăng ký tài khoản để sở hữu thẻ hội viên điện tử.';
 		document.querySelector('#logoutButton').hidden = true;
 	}
 }
@@ -527,9 +638,34 @@ function showAccountError(id, message) {
 	error.hidden = !message;
 }
 
+function saveFederatedAccount(firebaseUser) {
+	const previousUser = state.user?.firebaseUid === firebaseUser.uid ? state.user : null;
+	const user = {
+		name: firebaseUser.displayName || firebaseUser.email || 'Thành viên BookNest',
+		email: firebaseUser.email || '',
+		firebaseUid: firebaseUser.uid,
+		authProvider: firebaseUser.providerData[0]?.providerId || 'federated',
+		studentType: previousUser?.studentType || 'other',
+		studentId: previousUser?.studentId || ''
+	};
+	state.user = user;
+	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+	renderAccount();
+	renderCart();
+	accountDialog.close();
+}
+
+function getSocialAuthError(error) {
+	if (error.code === 'auth/popup-closed-by-user') return 'Cửa sổ đăng nhập đã được đóng.';
+	if (error.code === 'auth/unauthorized-domain') return 'Domain này chưa được cho phép trong Firebase Authentication.';
+	if (error.code === 'auth/operation-not-allowed') return 'Phương thức đăng nhập này chưa được bật trong Firebase.';
+	if (error.code === 'auth/account-exists-with-different-credential') return 'Email này đã được đăng ký bằng một phương thức khác.';
+	return 'Không thể đăng nhập lúc này. Vui lòng thử lại.';
+}
+
 accountButton.addEventListener('click', () => {
 	renderAccount();
-	setAccountView(state.user ? 'member' : 'login');
+	setAccountView('login');
 	accountDialog.showModal();
 });
 document.querySelector('#closeAccount').addEventListener('click', () => accountDialog.close());
@@ -537,54 +673,174 @@ document.querySelectorAll('.account-tab').forEach((tab) => tab.addEventListener(
 document.querySelector('#registerForm select[name="studentType"]').addEventListener('change', (event) => {
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
-document.querySelector('#loginForm').addEventListener('submit', (event) => {
+document.querySelectorAll('[data-social-provider]').forEach((button) => button.addEventListener('click', async () => {
+	showAccountError('#registerError', '');
+	if (!firebaseAuth) {
+		showAccountError('#registerError', 'Chưa cấu hình Firebase Auth. Vui lòng kiểm tra assets/firebase-config.js.');
+		return;
+	}
+
+	const provider = button.dataset.socialProvider === 'google'
+		? new window.firebase.auth.GoogleAuthProvider()
+		: new window.firebase.auth.FacebookAuthProvider();
+	if (button.dataset.socialProvider === 'facebook') provider.addScope('email');
+	const socialButtons = [...document.querySelectorAll('[data-social-provider]')];
+	socialButtons.forEach((socialButton) => { socialButton.disabled = true; });
+	try {
+		const result = await firebaseAuth.signInWithPopup(provider);
+		saveFederatedAccount(result.user);
+	} catch (error) {
+		showAccountError('#registerError', getSocialAuthError(error));
+	} finally {
+		socialButtons.forEach((socialButton) => { socialButton.disabled = false; });
+	}
+}));
+if (firebaseAuth) {
+	firebaseAuth.onAuthStateChanged((firebaseUser) => {
+		if (firebaseUser) {
+			saveFederatedAccount(firebaseUser);
+		} else if (state.user?.firebaseUid) {
+			state.user = null;
+			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+			renderAccount();
+			renderCart();
+		}
+	});
+}
+document.querySelector('#loginForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
 	showAccountError('#loginError', '');
 	if (!event.currentTarget.reportValidity()) return;
-	const formData = new FormData(event.currentTarget);
-	const user = readUsers().find((item) => item.email === formData.get('email') && item.password === formData.get('password'));
+	const form = event.currentTarget;
+	const formData = new FormData(form);
+	const email = String(formData.get('email') || '').trim().toLowerCase();
+	const password = String(formData.get('password') || '');
+
+	try {
+		const response = await fetch('/api/auth/login', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password })
+		});
+		if (response.ok) {
+			const data = await response.json();
+			if (data.token) localStorage.setItem('booknest-auth-token', data.token);
+			if (data.user && data.user.role === 'admin') localStorage.setItem('booknest-admin-token', data.token);
+			state.user = data.user;
+			applyAccountCustomerInfo(data.user);
+			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
+			renderAccount();
+			renderCart();
+			setAccountView('login');
+			accountDialog.close();
+			form.reset();
+			return;
+		} else if (response.status === 401) {
+			const errorData = await response.json().catch(() => ({}));
+			showAccountError('#loginError', errorData.error || 'Email hoặc mật khẩu chưa đúng.');
+			return;
+		}
+	} catch {
+		// Server offline fallback
+	}
+
+	const user = readUsers().find((item) => item.email === email && item.password === password);
 	if (!user) {
 		showAccountError('#loginError', 'Email hoặc mật khẩu chưa đúng.');
 		return;
 	}
 	state.user = user;
+	applyAccountCustomerInfo(user);
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
-	setAccountView('member');
-	event.currentTarget.reset();
+	setAccountView('login');
+	accountDialog.close();
+	form.reset();
 });
-document.querySelector('#registerForm').addEventListener('submit', (event) => {
+document.querySelector('#registerForm').addEventListener('submit', async (event) => {
 	event.preventDefault();
 	showAccountError('#registerError', '');
 	const form = event.currentTarget;
 	if (!form.reportValidity()) return;
 	const data = new FormData(form);
-	const users = readUsers();
 	const email = String(data.get('email')).trim().toLowerCase();
-	if (users.some((item) => item.email === email)) {
-		showAccountError('#registerError', 'Email này đã được đăng ký.');
-		return;
-	}
 	const user = {
 		name: String(data.get('name')).trim(),
 		email,
 		password: data.get('password'),
 		studentType: data.get('studentType'),
-		studentId: String(data.get('studentId') || '').trim(),
-		memberNumber: `BN${Date.now().toString().slice(-8)}`
+		studentId: String(data.get('studentId') || '').trim()
 	};
+
+	try {
+		const response = await fetch('/api/auth/register', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(user)
+		});
+		if (response.ok) {
+			const resData = await response.json();
+			if (resData.token) localStorage.setItem('booknest-auth-token', resData.token);
+			state.user = resData.user || user;
+			applyAccountCustomerInfo(state.user);
+			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
+			const users = readUsers();
+			users.push(user);
+			localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+			renderAccount();
+			renderCart();
+			setAccountView('login');
+			accountDialog.close();
+			form.reset();
+			document.querySelector('.student-id-field').hidden = true;
+			return;
+		} else {
+			const errorData = await response.json().catch(() => ({}));
+			showAccountError('#registerError', errorData.error || 'Email này đã được đăng ký.');
+			return;
+		}
+	} catch {
+		// Server offline fallback
+	}
+
+	const users = readUsers();
+	if (users.some((item) => item.email === email)) {
+		showAccountError('#registerError', 'Email này đã được đăng ký.');
+		return;
+	}
 	users.push(user);
 	localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	state.user = user;
+	applyAccountCustomerInfo(user);
 	renderAccount();
 	renderCart();
-	setAccountView('member');
+	setAccountView('login');
+	accountDialog.close();
 	form.reset();
 	document.querySelector('.student-id-field').hidden = true;
 });
-document.querySelector('#logoutButton').addEventListener('click', () => {
+document.querySelector('#logoutButton').addEventListener('click', async () => {
+	if (state.user?.firebaseUid && firebaseAuth) {
+		try {
+			await firebaseAuth.signOut();
+		} catch (error) {
+			showAccountError('#registerError', 'Không thể đăng xuất khỏi Firebase lúc này.');
+			return;
+		}
+	}
+	try {
+		const token = localStorage.getItem('booknest-auth-token');
+		if (token) {
+			await fetch('/api/auth/logout', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}` }
+			});
+		}
+	} catch {}
+	localStorage.removeItem('booknest-auth-token');
+	localStorage.removeItem('booknest-admin-token');
 	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
 	renderAccount();
@@ -654,6 +910,8 @@ document.querySelector('#aiForm').addEventListener('submit', (event) => {
 });
 document.querySelectorAll('[data-ai-question]').forEach((button) => button.addEventListener('click', () => askAi(button.dataset.aiQuestion)));
 renderAccount();
+fillSavedCustomerInfo();
+hydrateAuthenticatedUser();
 if (hasCatalogShell) {
 	renderCategories();
 	renderBooks();

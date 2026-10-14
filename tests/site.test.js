@@ -41,6 +41,22 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
+test('customer contact information persists for purchases and book services after logout', () => {
+	const script = read('main.js');
+	assert.match(script, /const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info'/);
+	assert.match(script, /function loadCustomerInfo/);
+	assert.match(script, /function saveCustomerInfo/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), customerName, address, phone \}/);
+	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), name: request\.name, phone: request\.phone \}/);
+	assert.match(script, /function fillSavedCustomerInfo/);
+	assert.match(script, /fillSavedCustomerInfo\(\);/);
+	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
+	assert.match(script, /saveCustomerInfoToAccount/);
+	assert.match(script, /api\/auth\/customer-info/);
+	assert.match(script, /hydrateAuthenticatedUser/);
+	assert.match(script, /api\/auth\/me/);
+});
+
 test('cart groups duplicate books and provides quantity controls', () => {
 	const script = read('main.js');
 	const css = read('main.css');
@@ -131,15 +147,24 @@ test('book details support previous and next book navigation', () => {
 	assert.match(css, /\.detail-navigation/);
 });
 
-test('account, membership discount and AI assistant are wired', () => {
+test('account discounts and AI assistant are wired without membership cards', () => {
 	const html = read('index.html');
 	const script = read('main.js');
+	const css = read('main.css');
+	const firebaseConfig = read('assets/firebase-config.js');
 	assert.match(html, /id="accountButton"/);
 	assert.match(html, /id="registerForm"/);
-	assert.match(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /id="memberPanel"/);
+	assert.doesNotMatch(html, /data-account-view="member"/);
+	assert.match(html, /data-social-provider="google"/);
+	assert.match(html, /data-social-provider="facebook"/);
+	assert.match(css, /\.account-form\[hidden\]\s*\{\s*display:\s*none;/);
 	assert.match(html, /id="aiChat"/);
+	assert.match(script, /signInWithPopup\(provider\)/);
+	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
 	assert.match(script, /getDiscountRate/);
 	assert.match(script, /getAiAnswer/);
+	assert.doesNotMatch(script, /memberNumber/);
 });
 
 test('catalog supports sorting, favorites, coupons and order tracking', () => {
@@ -253,6 +278,20 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(privateDataResponse.status, 404);
 	const serverSourceResponse = await fetch(`${baseUrl}/server.js`);
 	assert.equal(serverSourceResponse.status, 404);
+});
+
+test('customer schema is documented with required tables, keys and indexes', () => {
+	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
+	assert.ok(fs.existsSync(schemaPath));
+	const schema = fs.readFileSync(schemaPath, 'utf8');
+	assert.match(schema, /CREATE TABLE customers/);
+	assert.match(schema, /CREATE TABLE customer_interactions/);
+	assert.match(schema, /CREATE TABLE customer_orders/);
+	assert.match(schema, /UNIQUE \(email\)/);
+	assert.match(schema, /UNIQUE \(phone\)/);
+	assert.match(schema, /CREATE INDEX idx_customers_phone/);
+	assert.match(schema, /CREATE INDEX idx_customers_email/);
+	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
 });
 
 test('invalid books are rejected without saving an order', async (t) => {

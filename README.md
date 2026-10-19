@@ -14,6 +14,7 @@ BookNest là storefront sách trực tuyến của Việt Nam, với catalog, gi
 - [Kiểm thử](#kiểm-thử)
 - [Phát hành và triển khai production](#phát-hành-và-triển-khai-production)
 - [API](#api)
+- [Quản lý khách hàng](#quản-lý-khách-hàng)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Kiến trúc phần mềm](#kiến-trúc-phần-mềm)
@@ -84,6 +85,21 @@ Trong môi trường local, dữ liệu khách hàng, đơn hàng và yêu cầu
 
 Lưu ý: `data/orders.jsonl` và các file có thông tin nhạy cảm nên được giữ ngoài repo hoặc cấu hình quyền truy cập phù hợp trong production.
 
+  ### Migration và seed CRM
+
+  Migration PostgreSQL tạo các bảng `customers`, `customer_interactions` và
+  `customer_orders` theo cách idempotent. Cần đặt `DATABASE_URL`, sau đó chạy:
+
+  ```powershell
+  npm run migrate
+  npm run seed:customers
+  ```
+
+  Seed tạo 12 khách hàng mẫu và một tương tác mẫu cho mỗi khách. Nếu không có
+  `DATABASE_URL`, `npm run seed:customers` sẽ seed idempotent vào
+  `data/customers.json` để kiểm tra API file-backed local. Dữ liệu mẫu chỉ dành
+  cho development; không chạy seed trên production có dữ liệu thật.
+
 ## 5. API chính
 
 ### 5.1 Tạo đơn hàng
@@ -121,7 +137,7 @@ Hoặc chạy trực tiếp:
 node --test tests/site.test.js tests/backend.test.js
 ```
 
-Phát hành và triển khai production
+## Phát hành và triển khai production
 
 Thay đổi phát hành được ghi trong [CHANGELOG.md](CHANGELOG.md). Trước khi tạo
 tag, maintainer cần chạy đầy đủ các lệnh kiểm tra:
@@ -148,6 +164,13 @@ tra cứu đơn hàng; theo dõi log ít nhất 30 phút đầu.
 trước khi mở traffic.
 
 ## API
+
+## Quản lý khách hàng
+
+Hướng dẫn schema, API, phân quyền, seed/migration, ví dụ request/response,
+privacy và checklist kiểm thử nằm tại
+[docs/CUSTOMER_MANAGEMENT.md](docs/CUSTOMER_MANAGEMENT.md). Thiết kế schema
+quan hệ chi tiết được ghi tại [docs/crm-design.md](docs/crm-design.md).
 
 ## 7. Lưu ý production
 
@@ -177,7 +200,7 @@ trước khi mở traffic.
 
 ## 9. Tham khảo
 
-- [CUSTOMER_MANAGEMENT.md](./CUSTOMER_MANAGEMENT.md)
+- [docs/CUSTOMER_MANAGEMENT.md](docs/CUSTOMER_MANAGEMENT.md)
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ## 10. Triển khai cloud

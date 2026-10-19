@@ -1,16 +1,37 @@
 # Changelog
 
-Các thay đổi đáng chú ý của BookNest được ghi tại đây.
+Tất cả thay đổi đáng chú ý của BookNest được ghi lại trong tệp này.
 
-## [0.1.0] - Planned
+## [0.1.0] - 2026-10-19
 
-- Phát hành website nhà sách với tìm kiếm, lọc danh mục, chi tiết sách, giỏ hàng,
-  mã ưu đãi và tra cứu đơn.
-- Thêm đăng ký, đăng nhập, hồ sơ người dùng và cổng quản trị cho đơn hàng, sách,
-  dịch vụ, thành viên và khách hàng CRM.
-- Bổ sung REST API, đặc tả OpenAPI, kiểm thử tự động và CI kiểm tra dependency.
-- Bổ sung hướng dẫn chạy local/production và Docker image cho triển khai.
-- Chưa ghi nhận breaking changes cho bản phát hành đầu tiên.
+Bản phát hành công khai đầu tiên của BookNest.
 
-Ngày phát hành dự kiến theo issue #21: 2027-01-01. Mục này chỉ được xem là đã
-phát hành sau khi tag và GitHub Release được tạo.
+### Tính năng
+
+- Danh mục 80 đầu sách thuộc 10 thể loại, tìm kiếm, lọc và sắp xếp.
+- Trang chi tiết sách, sách liên quan và danh sách yêu thích.
+- Giỏ hàng có điều chỉnh số lượng, kiểm tra tồn kho và mã ưu đãi.
+- Đặt hàng bằng chuyển khoản QR hoặc thanh toán khi nhận hàng (COD), kèm mã
+  tra cứu đơn hàng.
+- Đăng ký, đăng nhập, đăng xuất và ưu đãi theo loại tài khoản.
+- Đăng ký dịch vụ thuê, thu mua và trao đổi sách.
+- Cổng quản trị cho thống kê, đơn hàng, sách, tồn kho, dịch vụ và thành viên.
+- Giao diện responsive, hỗ trợ SEO, trang chính sách và triển khai GitHub Pages.
+
+### Sửa lỗi
+
+- Hoàn tất phần hợp nhất xác thực Firebase và lưu thông tin khách hàng.
+- Khôi phục header Bearer cho các request đồng bộ hồ sơ và đăng xuất.
+- Bổ sung bước build trang tĩnh vào quy trình kiểm tra CI.
+
+### Tương thích và nâng cấp
+
+- Không có breaking change từ phiên bản trước.
+- Cần Node.js 20 trở lên. Dữ liệu JSON/JSONL hiện có được giữ nguyên; sao lưu
+  thư mục `data/` trước khi triển khai.
+
+### Kiểm thử
+
+- `npm test`
+- `npm run build:pages`
+- `npm audit --omit=dev`

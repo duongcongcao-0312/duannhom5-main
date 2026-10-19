@@ -340,6 +340,17 @@ class Database {
     }
   }
 
+  async addOrder(order, ordersPathOverride) {
+    const filePath = ordersPathOverride || this.ordersPath;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.appendFile(filePath, `${JSON.stringify(order)}\n`, "utf8");
+  }
+
+  async findOrderById(orderId, ordersPathOverride) {
+    const orders = await this.getAllOrders(ordersPathOverride);
+    return orders.find((order) => order.orderId === orderId) || null;
+  }
+
   async updateOrderStatus(orderId, payload, ordersPathOverride) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       throw new Error("Dữ liệu cập nhật đơn hàng không hợp lệ.");

@@ -26,5 +26,7 @@ jobs:
         run: npm run check
       - name: Run tests with coverage
         run: npm run test:coverage
+      - name: Build GitHub Pages
+        run: npm run build:pages
       - name: Audit dependencies
         run: npm audit --omit=dev

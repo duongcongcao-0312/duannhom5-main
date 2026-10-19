@@ -8,6 +8,7 @@ const {
   Database,
   validateCustomerData,
 } = require("./backend/db");
+const { PostgresDatabase } = require("./backend/postgres-db");
 const { SessionStore, verifyPassword } = require("./backend/auth");
 
 const root = __dirname;
@@ -314,28 +315,6 @@ function publicOrder(order) {
   };
 }
 
-async function findOrder(ordersPath, orderId) {
-  let contents;
-  try {
-    contents = await fs.readFile(ordersPath, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    try {
-      const order = JSON.parse(line);
-      if (order && order.orderId === orderId) return order;
-    } catch {
-      // Ignore malformed entries so broken or partial log lines do not crash the API.
-      continue;
-    }
-  }
-  return null;
-}
-
 function staticFilePath(pathname, staticRoot) {
   let decodedPath;
   try {
@@ -404,6 +383,12 @@ function createServer({
   customersPath,
   servicesPath,
   booksPath,
+  database,
+  corsOrigins = process.env.CORS_ORIGINS || (
+    process.env.RENDER
+      ? "https://duongcongcao-0312.github.io"
+      : "http://127.0.0.1:8000,http://localhost:8000"
+  ),
 } = {}) {
   if (process.env.NODE_ENV === "production") {
     const adminEmail = String(process.env.ADMIN_EMAIL || "").trim();
@@ -415,16 +400,28 @@ function createServer({
     }
   }
 
+  if (process.env.RENDER && !database && !process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL phải được cấu hình trên Render trước khi chạy backend.");
+  }
+
   let persistenceQueue = Promise.resolve();
-  const db = new Database({
-    root,
-    ordersPath,
-    usersPath,
-    customersPath,
-    servicesPath,
-    booksPath,
-  });
+  const db = database || (process.env.DATABASE_URL
+    ? new PostgresDatabase()
+    : new Database({
+      root,
+      ordersPath,
+      usersPath,
+      customersPath,
+      servicesPath,
+      booksPath,
+    }));
   const sessionStore = new SessionStore();
+  const allowedOrigins = new Set(
+    corsOrigins
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
 
   // Load custom books into catalog cache
   db.getCustomBooks()
@@ -433,18 +430,12 @@ function createServer({
         if (b && b.title) bookCatalog.set(b.title, b);
       }
     })
-    .catch(() => {});
+    .catch((error) => {
+      console.error("Không thể tải sách quản trị:", error);
+    });
 
   async function persistOrder(order) {
-    await fs.mkdir(path.dirname(ordersPath), { recursive: true });
-    const write = persistenceQueue.then(() =>
-      fs.appendFile(ordersPath, `${JSON.stringify(order)}\n`, "utf8"),
-    );
-    persistenceQueue = write.then(
-      () => undefined,
-      () => undefined,
-    );
-    await write;
+    await db.addOrder(order, ordersPath);
   }
 
   function getAuthUser(request) {
@@ -514,12 +505,16 @@ function createServer({
 
   async function handleRequest(request, response) {
     const requestUrl = new URL(request.url, "http://localhost");
+    const origin = request.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      response.setHeader("Access-Control-Allow-Origin", origin);
+      response.setHeader("Vary", "Origin");
+      response.setHeader("Access-Control-Allow-Credentials", "true");
+    }
 
     if (request.method === "OPTIONS") {
-      response.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods":
-          "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+      response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
       });
       response.end();
@@ -769,7 +764,7 @@ function createServer({
       /^\/api\/orders\/([0-9a-f-]+)$/i,
     );
     if (orderMatch && request.method === "GET") {
-      const order = await findOrder(ordersPath, orderMatch[1]);
+      const order = await db.findOrderById(orderMatch[1], ordersPath);
       if (!order) {
         sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
         return;
@@ -1008,7 +1003,7 @@ function createServer({
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 8000);
-  const host = process.env.HOST || "127.0.0.1";
+  const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
   createServer().listen(port, host, () => {
     console.log(`BookNest đang chạy tại http://${host}:${port}`);
   });

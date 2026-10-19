@@ -16,6 +16,8 @@ test("production server requires explicit admin credentials", () => {
       cwd: path.resolve(__dirname, ".."),
       env: {
         ...process.env,
+        RENDER: "",
+        DATABASE_URL: "",
         ADMIN_EMAIL: "",
         ADMIN_PASSWORD: "",
         NODE_ENV: "production",
@@ -28,6 +30,26 @@ test("production server requires explicit admin credentials", () => {
   assert.match(result.stderr, /Production requires a valid ADMIN_EMAIL/);
 });
 
+test("Render backend refuses to start without a persistent database URL", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        RENDER: "true",
+        DATABASE_URL: "",
+        NODE_ENV: "development",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /DATABASE_URL phải được cấu hình trên Render/);
+});
+
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-backend-test-"),
@@ -35,7 +57,12 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
-  const server = createServer({ ordersPath, usersPath, servicesPath });
+  const server = createServer({
+    ordersPath,
+    usersPath,
+    servicesPath,
+    corsOrigins: "https://shop.example",
+  });
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
@@ -48,6 +75,21 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   });
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const preflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://shop.example",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://shop.example");
+  const rejectedPreflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://untrusted.example" },
+  });
+  assert.equal(rejectedPreflight.status, 403);
 
   // 1. Coupon API works
   const couponRes = await fetch(`${baseUrl}/api/coupons/BOOKNEST10`);

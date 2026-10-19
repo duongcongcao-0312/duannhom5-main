@@ -3,14 +3,41 @@ const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { hashPassword } = require("../backend/auth");
+const { Database } = require("../backend/db");
 const { createServer } = require("../server");
 
+test("Render backend refuses to start without a persistent database URL", () => {
+  const originalRender = process.env.RENDER;
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+  process.env.RENDER = "true";
+  delete process.env.DATABASE_URL;
+  try {
+    assert.throws(
+      () => createServer(),
+      /DATABASE_URL phải được cấu hình trên Render/,
+    );
+  } finally {
+    if (originalRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = originalRender;
+    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = originalDatabaseUrl;
+  }
+});
+
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
-  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-backend-test-"));
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-backend-test-"),
+  );
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
-  const server = createServer({ ordersPath, usersPath, servicesPath });
+  const server = createServer({
+    ordersPath,
+    usersPath,
+    servicesPath,
+    corsOrigins: "https://shop.example",
+  });
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
@@ -24,6 +51,21 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
+  const preflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://shop.example",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://shop.example");
+  const rejectedPreflight = await fetch(`${baseUrl}/api/orders`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://untrusted.example" },
+  });
+  assert.equal(rejectedPreflight.status, 403);
+
   // 1. Coupon API works
   const couponRes = await fetch(`${baseUrl}/api/coupons/BOOKNEST10`);
   assert.equal(couponRes.status, 200);
@@ -34,7 +76,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" })
+    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
   });
   assert.equal(adminLoginRes.status, 200);
   const adminData = await adminLoginRes.json();
@@ -52,8 +94,8 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
       email: "tranminh@example.com",
       password: "password123",
       studentType: "student",
-      studentId: "HS-9988"
-    })
+      studentId: "HS-9988",
+    }),
   });
   assert.equal(registerRes.status, 201);
   const regData = await registerRes.json();
@@ -61,7 +103,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
 
   // 4. Auth: Profile lookup via token
   const meRes = await fetch(`${baseUrl}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${regData.token}` }
+    headers: { Authorization: `Bearer ${regData.token}` },
   });
   assert.equal(meRes.status, 200);
   const meData = await meRes.json();
@@ -72,13 +114,13 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${regData.token}`
+      Authorization: `Bearer ${regData.token}`,
     },
     body: JSON.stringify({
       customerName: "Trần Minh",
       phone: "0912345678",
-      address: "123 Phố Sách Hà Nội"
-    })
+      address: "123 Phố Sách Hà Nội",
+    }),
   });
   assert.equal(customerInfoRes.status, 200);
 
@@ -92,22 +134,22 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
       phone: "0912345678",
       paymentMethod: "transfer",
       discountRate: 0.1,
-      items: [{ title: "Nhà giả kim", quantity: 1 }]
-    })
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
   });
   assert.equal(orderRes.status, 201);
   const orderData = await orderRes.json();
 
   // 7. Profile includes saved customer information
   const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${regData.token}` }
+    headers: { Authorization: `Bearer ${regData.token}` },
   });
   const updatedMe = await updatedMeRes.json();
   assert.equal(updatedMe.user.customerInfo.address, "123 Phố Sách Hà Nội");
 
   // 8. Admin: View orders
   const adminOrdersRes = await fetch(`${baseUrl}/api/admin/orders`, {
-    headers: { Authorization: `Bearer ${adminToken}` }
+    headers: { Authorization: `Bearer ${adminToken}` },
   });
   assert.equal(adminOrdersRes.status, 200);
   const adminOrders = await adminOrdersRes.json();
@@ -115,14 +157,17 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.equal(adminOrders[0].orderId, orderData.orderId);
 
   // 9. Admin: Update order status to 'processing'
-  const patchOrderRes = await fetch(`${baseUrl}/api/admin/orders/${orderData.orderId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${adminToken}`
+  const patchOrderRes = await fetch(
+    `${baseUrl}/api/admin/orders/${orderData.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
     },
-    body: JSON.stringify({ status: "processing", paymentStatus: "paid" })
-  });
+  );
   assert.equal(patchOrderRes.status, 200);
   const patchedOrder = await patchOrderRes.json();
   assert.equal(patchedOrder.status, "processing");
@@ -138,14 +183,14 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
       condition: "new",
       name: "Lê Hoàng",
       phone: "0987654321",
-      note: "Thuê trong 2 tuần"
-    })
+      note: "Thuê trong 2 tuần",
+    }),
   });
   assert.equal(serviceRes.status, 201);
 
   // 11. Admin Stats API
   const statsRes = await fetch(`${baseUrl}/api/admin/stats`, {
-    headers: { Authorization: `Bearer ${adminToken}` }
+    headers: { Authorization: `Bearer ${adminToken}` },
   });
   assert.equal(statsRes.status, 200);
   const stats = await statsRes.json();
@@ -153,8 +198,65 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.ok(stats.totalUsers >= 2);
 });
 
-test("backend rejects invalid service and status payloads", async (t) => {
-  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-invalid-payloads-"));
+test("auth customer-info rejects null or malformed payloads without crashing", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-customer-info-test-"),
+  );
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const server = createServer({ ordersPath, usersPath, servicesPath });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const user = {
+    name: "Test User",
+    email: "test-user@example.com",
+    password: "password123",
+    role: "user",
+  };
+
+  await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(user),
+  });
+
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: user.email, password: user.password }),
+  });
+  assert.equal(loginRes.status, 200);
+  const token = (await loginRes.json()).token;
+
+  const badPayloadRes = await fetch(`${baseUrl}/api/auth/customer-info`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: "null",
+  });
+
+  assert.equal(badPayloadRes.status, 400);
+  const badPayloadBody = await badPayloadRes.json();
+  assert.match(String(badPayloadBody.error || badPayloadBody.message || ""), /không hợp lệ|invalid|dữ liệu/i);
+});
+
+test("admin order updates reject null payloads without crashing", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-order-null-test-"),
+  );
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
@@ -172,6 +274,187 @@ test("backend rejects invalid service and status payloads", async (t) => {
 
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
+  const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
+  });
+  assert.equal(adminLoginRes.status, 200);
+  const adminToken = (await adminLoginRes.json()).token;
+
+  await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn A",
+      address: "123 Đường Sách Hà Nội",
+      phone: "0912345678",
+      paymentMethod: "transfer",
+      discountRate: 0,
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+
+  const orderId = (await (await fetch(`${baseUrl}/api/admin/orders`, { headers: { Authorization: `Bearer ${adminToken}` } })).json())[0].orderId;
+
+  const badStatusRes = await fetch(`${baseUrl}/api/admin/orders/${orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: "null",
+  });
+
+  assert.equal(badStatusRes.status, 400);
+  const badStatusBody = await badStatusRes.json();
+  assert.match(String(badStatusBody.error || badStatusBody.message || ""), /không hợp lệ|invalid|dữ liệu/i);
+});
+
+test("customer management access is role-scoped and audit fields are recorded", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-rbac-test-"),
+  );
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const server = createServer({ ordersPath, usersPath, servicesPath });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const db = new Database({ usersPath, servicesPath, ordersPath });
+  await db.createUser({
+    name: "Nhân viên sales",
+    email: "sales@example.com",
+    password: "password123",
+    role: "sales",
+    createdBy: "admin@booknest.vn",
+  });
+  await db.createUser({
+    name: "Khách hàng thường",
+    email: "member@example.com",
+    password: "password123",
+    role: "user",
+  });
+
+  const salesLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "sales@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(salesLoginRes.status, 200);
+  const salesToken = (await salesLoginRes.json()).token;
+
+  const salesOrdersRes = await fetch(`${baseUrl}/api/admin/orders`, {
+    headers: { Authorization: `Bearer ${salesToken}` },
+  });
+  assert.equal(salesOrdersRes.status, 200);
+
+  const salesUsersRes = await fetch(`${baseUrl}/api/admin/users`, {
+    headers: { Authorization: `Bearer ${salesToken}` },
+  });
+  assert.equal(salesUsersRes.status, 403);
+
+  const userLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "member@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(userLoginRes.status, 200);
+  const memberToken = (await userLoginRes.json()).token;
+
+  const memberStatsRes = await fetch(`${baseUrl}/api/admin/stats`, {
+    headers: { Authorization: `Bearer ${memberToken}` },
+  });
+  assert.equal(memberStatsRes.status, 403);
+
+  const salesRecord = await db.findUserByEmail("sales@example.com");
+  assert.equal(salesRecord.role, "sales");
+  assert.equal(salesRecord.createdBy, "admin@booknest.vn");
+  assert.ok(salesRecord.updatedAt);
+});
+
+test("customer management validation rejects invalid roles and duplicate users", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-user-validation-"),
+  );
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const db = new Database({ usersPath, servicesPath, ordersPath });
+
+  t.after(async () => {
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    () =>
+      db.createUser({
+        name: "Bad role",
+        email: "bad-role@example.com",
+        password: "password123",
+        role: "boss",
+      }),
+    /Vai trò người dùng không hợp lệ/,
+  );
+
+  await db.createUser({
+    name: "Nguyễn Anh",
+    email: "anh@example.com",
+    password: "password123",
+    role: "user",
+  });
+
+  await assert.rejects(
+    () =>
+      db.createUser({
+        name: "Nguyễn Anh Lặp",
+        email: "anh@example.com",
+        password: "password456",
+        role: "user",
+      }),
+    /Email này đã được đăng ký/,
+  );
+
+  const savedUser = await db.findUserByEmail("anh@example.com");
+  assert.equal(savedUser.role, "user");
+  assert.ok(savedUser.createdAt);
+  assert.ok(savedUser.updatedAt);
+});
+
+test("backend rejects invalid service and status payloads", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-invalid-payloads-"),
+  );
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const server = createServer({ ordersPath, usersPath, servicesPath });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
   const invalidServiceRes = await fetch(`${baseUrl}/api/services`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -181,15 +464,15 @@ test("backend rejects invalid service and status payloads", async (t) => {
       condition: "new",
       name: "Lê Hoàng",
       phone: "0987654321",
-      note: "Thuê trong 2 tuần"
-    })
+      note: "Thuê trong 2 tuần",
+    }),
   });
   assert.equal(invalidServiceRes.status, 400);
 
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" })
+    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
   });
   assert.equal(adminLoginRes.status, 200);
   const adminToken = (await adminLoginRes.json()).token;
@@ -203,19 +486,25 @@ test("backend rejects invalid service and status payloads", async (t) => {
       phone: "0901234567",
       paymentMethod: "cod",
       discountRate: 0.05,
-      items: [{ title: "Nhà giả kim", quantity: 1 }]
-    })
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
   });
   assert.equal(orderRes.status, 201);
   const order = await orderRes.json();
 
-  const invalidStatusRes = await fetch(`${baseUrl}/api/admin/orders/${order.orderId}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${adminToken}`
+  const invalidStatusRes = await fetch(
+    `${baseUrl}/api/admin/orders/${order.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({
+        status: "not-a-real-status",
+        paymentStatus: "paid",
+      }),
     },
-    body: JSON.stringify({ status: "not-a-real-status", paymentStatus: "paid" })
-  });
+  );
   assert.equal(invalidStatusRes.status, 400);
 });

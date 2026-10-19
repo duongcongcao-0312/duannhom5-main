@@ -89,7 +89,7 @@ function saveCustomerInfo(info) {
 async function saveCustomerInfoToAccount(info) {
 	const token = localStorage.getItem('booknest-auth-token');
 	if (!token) return;
-	const response = await fetch('/api/auth/customer-info', {
+	const response = await fetch(window.booknestApiUrl('/api/auth/customer-info'), {
 		method: 'PATCH',
 		headers: {
 			'Content-Type': 'application/json',
@@ -110,7 +110,7 @@ async function hydrateAuthenticatedUser() {
 	const token = localStorage.getItem('booknest-auth-token');
 	if (!token) return;
 	try {
-		const response = await fetch('/api/auth/me', {
+		const response = await fetch(window.booknestApiUrl('/api/auth/me'), {
 			headers: { Authorization: `Bearer ${token}` }
 		});
 		if (response.status === 401) {
@@ -252,7 +252,7 @@ function createFallbackCover(title, author) {
 async function findBookCover(image) {
 	try {
 		const query = `https://openlibrary.org/search.json?title=${encodeURIComponent(image.dataset.bookTitle)}&author=${encodeURIComponent(image.dataset.bookAuthor)}&limit=1&fields=cover_i`;
-		const response = await fetch(query);
+		const response = await fetch(window.booknestApiUrl(query));
 		if (!response.ok) throw new Error('Không tìm thấy dữ liệu bìa sách.');
 		const result = await response.json();
 		const coverId = result.docs?.[0]?.cover_i;
@@ -435,7 +435,7 @@ document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
 	const code = input.value.trim().toUpperCase();
 	if (!code) { message.textContent = 'Vui lòng nhập mã ưu đãi.'; return; }
 	try {
-		const response = await fetch(`/api/coupons/${encodeURIComponent(code)}`);
+		const response = await fetch(window.booknestApiUrl(`/api/coupons/${encodeURIComponent(code)}`));
 		const result = await response.json();
 		if (!response.ok) throw new Error(result.error || 'Mã ưu đãi không hợp lệ.');
 		state.coupon = code;
@@ -486,7 +486,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		}, new Map())].map(([title, quantity]) => ({ title, quantity }));
 		let result;
 		try {
-			const response = await fetch('/api/orders', {
+			const response = await fetch(window.booknestApiUrl('/api/orders'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -576,7 +576,7 @@ serviceForm.addEventListener('submit', async (event) => {
 		if (!Array.isArray(savedRequests)) throw new Error('Không thể lưu yêu cầu lúc này.');
 		savedRequests.push(request);
 		localStorage.setItem(SERVICE_REQUESTS_STORAGE_KEY, JSON.stringify(savedRequests));
-		fetch('/api/services', {
+		fetch(window.booknestApiUrl('/api/services'), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(request)
@@ -717,7 +717,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 	const password = String(formData.get('password') || '');
 
 	try {
-		const response = await fetch('/api/auth/login', {
+		const response = await fetch(window.booknestApiUrl('/api/auth/login'), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ email, password })
@@ -774,7 +774,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 	};
 
 	try {
-		const response = await fetch('/api/auth/register', {
+		const response = await fetch(window.booknestApiUrl('/api/auth/register'), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(user)
@@ -833,7 +833,7 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 	try {
 		const token = localStorage.getItem('booknest-auth-token');
 		if (token) {
-			await fetch('/api/auth/logout', {
+			await fetch(window.booknestApiUrl('/api/auth/logout'), {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` }
 			});
@@ -863,7 +863,7 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 	if (!form.reportValidity()) return;
 	try {
 		const orderId = String(new FormData(form).get('orderId')).trim();
-		const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`);
+		const response = await fetch(window.booknestApiUrl(`/api/orders/${encodeURIComponent(orderId)}`));
 		const order = await response.json();
 		if (!response.ok) throw new Error(order.error || 'Không tìm thấy đơn hàng.');
 		result.innerHTML = `<h3>Đơn hàng ${escapeHtml(order.orderId)}</h3><p>Trạng thái: <strong>${escapeHtml(order.status)}</strong></p><p>Tổng tiền: <strong>${formatPrice(order.total)}</strong></p><ul>${order.items.map((item) => `<li>${escapeHtml(item.title)} × ${item.quantity}</li>`).join('')}</ul>`;

@@ -45,7 +45,7 @@ customers 1──N consent_records
 | `id` | UUID | PK | Định danh tài khoản |
 | `email` | VARCHAR(254) | UNIQUE, NOT NULL | Email chuẩn hóa chữ thường |
 | `password_hash` | TEXT | NOT NULL | Hash scrypt/Argon2; không lưu mật khẩu gốc |
-| `role` | VARCHAR(20) | NOT NULL, `user`/`admin` | Quyền hệ thống |
+| `role` | VARCHAR(20) | NOT NULL, `user`/`admin`/`sales`/`support` | Quyền hệ thống |
 | `created_at` | TIMESTAMP | NOT NULL | Thời điểm tạo |
 | `updated_at` | TIMESTAMP | NOT NULL | Lần cập nhật cuối |
 | `last_login_at` | TIMESTAMP | NULL | Lần đăng nhập gần nhất |
@@ -64,6 +64,8 @@ Index: unique `lower(email)`, `role`.
 | `student_type` | VARCHAR(20) | NOT NULL, mặc định `other` | `student`, `university`, `other` |
 | `student_id` | VARCHAR(80) | NULL | Mã học sinh/sinh viên; chỉ lưu khi có đồng ý |
 | `notes` | TEXT | NULL | Ghi chú chăm sóc, không lưu dữ liệu nhạy cảm |
+| `created_by` | UUID | FK `users.id`, NOT NULL | Người tạo hồ sơ |
+| `updated_by` | UUID | FK `users.id`, NOT NULL | Người cập nhật/xoá gần nhất |
 | `created_at` | TIMESTAMP | NOT NULL | Thời điểm tạo hồ sơ |
 | `updated_at` | TIMESTAMP | NOT NULL | Lần cập nhật cuối |
 
@@ -148,22 +150,31 @@ Index: `customer_id, created_at DESC`, `status`.
 | `id` | UUID | PK | Định danh bản ghi |
 | `customer_id` | UUID | FK `customers.id`, NOT NULL | Khách hàng |
 | `purpose` | VARCHAR(40) | NOT NULL | `order`, `service`, `marketing` |
-| `granted` | BOOLEAN | NOT NULL | Khách đã đồng ý hay chưa |
+| `consent` | BOOLEAN | NOT NULL | Khách đồng ý lưu trữ và xử lý dữ liệu cho mục đích này |
 | `policy_version` | VARCHAR(20) | NOT NULL | Phiên bản chính sách |
-| `source` | VARCHAR(20) | NOT NULL | `web`, `admin`, `api` |
+| `data_source` | VARCHAR(20) | NOT NULL | Nguồn thu thập dữ liệu: `web`, `admin`, `api` |
+| `retention_days` | INTEGER | NOT NULL, >= 0 | Thời hạn lưu giữ theo chính sách |
 | `created_at` | TIMESTAMP | NOT NULL | Thời điểm ghi nhận |
 | `revoked_at` | TIMESTAMP | NULL | Thời điểm rút lại đồng ý |
 
 Index: `customer_id, purpose, created_at DESC`.
 
+Bản ghi `consent_records` phải giữ đủ thông tin để chứng minh khách hàng đã đồng ý, từ đâu, cho mục đích gì và thời hạn lưu giữ; nếu `consent=false` hoặc `revoked_at IS NOT NULL`, hệ thống không sử dụng dữ liệu cho mục đích đó nữa và phải triển khai quy trình xóa/ẩn danh trong vòng 30 ngày.
+
 ## Quyền truy cập và bảo mật
 
-| Vai trò | Được xem | Được sửa |
-| --- | --- | --- |
-| Khách chưa đăng nhập | Dữ liệu trong phiên hiện tại | Dữ liệu tạm trong phiên |
-| Khách đã đăng nhập | Hồ sơ, địa chỉ và đơn của chính mình | Hồ sơ và địa chỉ của chính mình |
-| Nhân viên CSKH | Hồ sơ, đơn và yêu cầu được phân công | Trạng thái yêu cầu, ghi chú nghiệp vụ |
-| Admin | Toàn bộ CRM và audit log | Toàn bộ dữ liệu nghiệp vụ |
+| Vai trò | Xem CRM | Tạo hồ sơ | Cập nhật trạng thái | Xoá mềm |
+| --- | --- | --- | --- | --- |
+| `admin` | Có | Có | Có | Có |
+| `sales` | Có | Có | Có | Không |
+| `support` | Có | Không | Không | Không |
+| `user` / chưa đăng nhập | Không | Không | Không | Không |
+
+Các quyền này được thực thi cho API CRM hiện tại tại `/api/admin/customers`.
+Vai trò không được lấy từ payload đăng ký công khai; chỉ quy trình cấp quyền
+đáng tin cậy mới gán vai trò nhân viên. Tạo hồ sơ lưu `created_by` và
+`updated_by`; mọi cập nhật và xoá mềm thay `updated_by` bằng ID người dùng đã
+xác thực thực hiện thao tác.
 
 - Mọi endpoint CRM phải xác thực Bearer token; kiểm tra quyền sở hữu ở tầng
   service, không chỉ dựa vào ID từ request.
@@ -173,12 +184,32 @@ Index: `customer_id, purpose, created_at DESC`.
   trường, không commit vào repository.
 - Mật khẩu tiếp tục dùng hash một chiều; token phiên không lưu trong CRM.
 - `phone`, `student_id`, ghi chú và dữ liệu xuất CRM phải được mã hóa ở tầng
-  lưu trữ khi chuyển sang database hỗ trợ encryption-at-rest. Không ghi các
-  trường này vào log.
+  lưu trữ khi chuyển sang database hỗ trợ encryption-at-rest, hoặc được mask
+  trước khi log/giám sát. Không ghi các trường này vào log hoặc báo cáo phát
+  triển.
+- Mỗi khách hàng cần có bản ghi consent với `consent`, `data_source`,
+  `policy_version`, `retention_days`; dữ liệu không được sử dụng nếu consent
+  rút lại hoặc không được xác thực.
 - Giới hạn tốc độ đăng nhập và endpoint dữ liệu cá nhân; validate độ dài,
   định dạng và chống injection ở server.
 - Thực hiện xóa/anonymize theo yêu cầu khách hàng, nhưng giữ bản chụp tối
-  thiểu của đơn hàng khi pháp luật/kế toán yêu cầu.
+  thiểu của đơn hàng khi pháp luật/kế toán yêu cầu. Kế hoạch mặc định: xóa
+  hồ sơ cá nhân trong 30 ngày, giữ đơn hàng đã chốt trong tối đa 36 tháng nếu
+  bắt buộc hoặc theo chính sách kế toán.
+
+## Xác thực và phân quyền cho CRM
+
+| Vai trò | Quyền xem | Quyền ghi | Ghi chú |
+| --- | --- | --- | --- |
+| `admin` | Toàn bộ hồ sơ, đơn, dịch vụ, thống kê | Tạo/sửa/xóa hồ sơ và nhân sự | Kiểm soát toàn bộ hệ thống |
+| `sales` | Hồ sơ khách hàng, đơn hàng, yêu cầu dịch vụ liên quan | Cập nhật trạng thái đơn hàng, ghi chú nghiệp vụ | Không xem danh sách người dùng hoặc quyền quản trị |
+| `support` | Hồ sơ khách hàng và yêu cầu dịch vụ được phân công | Cập nhật trạng thái hỗ trợ, ghi chú | Không sửa dữ liệu kế toán hoặc quyền hệ thống |
+| `user` | Cá nhân | Chỉ hồ sơ của chính mình | Không truy cập CRM nội bộ |
+
+- Mỗi bảng cần có `created_by` và `updated_by` để lưu người tạo, người cập nhật và thời gian thay đổi; `created_by`/`updated_by` phải là user ID hoặc email đã xác thực, không lưu chuỗi tùy ý từ client.
+- Kiểm tra quyền phải thực hiện ở tầng service/API, không chỉ ở front-end; `user.role` được lấy từ session có thời hạn và phải được đối chiếu với quyền quy định ở server.
+- Các endpoint tạo/sửa/xóa phải trả về `403` với lỗi rõ nghĩa khi user không đủ quyền; không leak dữ liệu khách hàng cho người không được phép.
+- Audit log nên lưu `actor_id`, `action`, `entity_type`, `entity_id`, `timestamp` và `before/after` snapshot khi có thay đổi quan trọng.
 
 ## API dự kiến
 

@@ -1,13 +1,11 @@
-# BookNest
+﻿# BookNest
 
-[![BookNest CI](https://github.com/duongcongcao-0312/duannhom5-main/actions/workflows/ci.yml/badge.svg)](https://github.com/duongcongcao-0312/duannhom5-main/actions/workflows/ci.yml)
-[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+BookNest là storefront sách trực tuyến của Việt Nam, với catalog, giỏ hàng, thanh toán, tra cứu đơn và luồng khách hàng. Dự án hiện chạy ở chế độ demo local/static, nhưng có cấu trúc dữ liệu và REST API đủ để mở rộng thành hệ thống thương mại điện tử hoặc CRM thực tế.
 
-BookNest là website nhà sách trực tuyến bằng tiếng Việt, xây dựng với HTML,
-CSS, JavaScript thuần và máy chủ REST API chạy trên Node.js. Dự án minh hoạ
-quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách trực tuyến.
+## 1. Yêu cầu
 
-## Mục lục
+- Node.js 20+
+- npm (đi kèm với Node.js)
 
 - [Tính năng](#tính-năng)
 - [Công nghệ](#công-nghệ)
@@ -24,79 +22,106 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - [Thành viên và đóng góp](#thành-viên-và-đóng-góp)
 - [Lưu ý bảo mật](#lưu-ý-bảo-mật)
 
-## Tính năng
+## 2. Khởi chạy nhanh
 
-- Duyệt danh mục 80 đầu sách thuộc 10 thể loại; tìm theo tên hoặc tác giả,
-  lọc thể loại và sắp xếp theo giá hoặc tên.
-- Xem chi tiết sách, sách liên quan và đánh dấu sách yêu thích.
-- Thêm sách vào giỏ, cập nhật số lượng, áp dụng mã ưu đãi và xem tổng tiền.
-- Đặt hàng bằng chuyển khoản qua mã QR hoặc thanh toán khi nhận hàng (COD);
-  máy chủ kiểm tra giá, lưu đơn và cấp mã để tra cứu.
-- Đăng ký thuê, thu mua hoặc trao đổi sách; đăng ký tài khoản và đăng nhập.
-- Quản lý đơn hàng, kho sách, yêu cầu dịch vụ và thành viên qua cổng quản trị.
-- Giao diện tương thích với máy tính và điện thoại; có trang chi tiết sách,
-  chính sách, điều khoản và trang lỗi.
-
-## Công nghệ
-
-- **Giao diện:** HTML, CSS và JavaScript thuần.
-- **Máy chủ:** Node.js, HTTP API và lưu trữ dữ liệu dạng JSON/JSONL.
-- **Kiểm thử:** Node.js test runner (`node:test`).
-- **Tự động hoá:** GitHub Actions chạy kiểm thử và kiểm tra dependency.
-
-## Cài đặt và chạy
-
-Cần cài [Node.js 20 trở lên](https://nodejs.org/). Từ thư mục dự án, chạy:
+Từ thư mục dự án:
 
 ```sh
-npm ci
+npm install
 npm start
 ```
 
-Mở <http://127.0.0.1:8000>. Máy chủ mặc định chỉ lắng nghe trên máy hiện tại.
-Có thể cấu hình `PORT` và `HOST` nếu cần. Ví dụ trong PowerShell:
+Mở http://127.0.0.1:8000
+
+### 2.1 Cấu hình môi trường
+
+Sao chép file mẫu và chỉnh sửa nếu cần:
+
+```sh
+copy .env.example .env
+```
+
+File `.env.example` có nội dung mặc định:
+
+```env
+PORT=8000
+HOST=127.0.0.1
+NODE_ENV=development
+```
+
+Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:
 
 ```powershell
-$env:PORT = "8000"
-$env:HOST = "127.0.0.1"
+Set-ExecutionPolicy -Scope Process Bypass
 npm start
 ```
 
-## Xuất bản GitHub Pages
+## 3. Tính năng chính
 
-Workflow `Deploy BookNest to GitHub Pages` tự động xuất bản giao diện khi có
-thay đổi trên nhánh `main`. URL mặc định của dự án là
-<https://duongcongcao-0312.github.io/duannhom5-main/>. Nếu GitHub yêu cầu,
-hãy đặt Settings > Pages > Build and deployment > Source thành GitHub Actions.
+- Duyệt danh mục sách theo thể loại, tìm kiếm và sắp xếp
+- Xem chi tiết sách, sách liên quan và yêu thích
+- Thêm vào giỏ hàng, quản lý số lượng và áp dụng mã ưu đãi
+- Đặt hàng với COD hoặc chuyển khoản QR
+- Đăng ký/đăng nhập tài khoản người dùng
+- Quản lý đơn hàng, khách hàng, dịch vụ và thống kê qua admin API
+- Giao diện responsive cho desktop và mobile
 
-GitHub Pages chỉ phục vụ giao diện tĩnh; API Node.js không chạy trên Pages nên
-đăng ký tài khoản qua API, đặt hàng và quản trị cần máy chủ backend riêng.
-Build Pages chỉ chép danh sách file giao diện cho phép, không xuất bản `data/`
-hay mã máy chủ. Để Google/Facebook Auth hoạt động trên Pages, cần thêm
-`duongcongcao-0312.github.io` vào Authorized domains trong Firebase Console.
+## 4. Cấu trúc dữ liệu demo
 
-## Cổng quản trị
+Trong môi trường local, dữ liệu khách hàng, đơn hàng và yêu cầu dịch vụ được lưu theo cách an toàn và phù hợp cho demo:
 
-Mở <http://127.0.0.1:8000/admin.html> để đăng nhập và quản lý cửa hàng. Tài
-khoản demo được khởi tạo khi chưa có tệp người dùng:
+- `localStorage` trên browser:
+  - `booknest-users`
+  - `booknest-current-user`
+  - `booknest-cart`
+  - `booknest-favorites`
+  - `booknest-coupon`
+  - `booknest-service-requests`
+- File-backed storage:
+  - `data/orders.jsonl` lưu đơn hàng thực tế
+  - `data/customers.json` lưu thông tin khách hàng quản lý bằng CRM
+  - `data/users.json` lưu tài khoản và admin
 
-- **Email:** `admin@booknest.vn`
-- **Mật khẩu:** `admin123`
+Lưu ý: `data/orders.jsonl` và các file có thông tin nhạy cảm nên được giữ ngoài repo hoặc cấu hình quyền truy cập phù hợp trong production.
 
-Đây là thông tin đăng nhập dành riêng cho môi trường phát triển cục bộ; không
-đưa máy chủ ra mạng công cộng khi còn sử dụng tài khoản mặc định.
+## 5. API chính
 
-## Kiểm thử
+### 5.1 Tạo đơn hàng
+
+- Method: `POST`
+- Path: `/api/orders`
+
+### 5.2 Tra cứu đơn hàng
+
+- Method: `GET`
+- Path: `/api/orders/:orderId`
+
+### 5.3 Kiểm tra mã ưu đãi
+
+- Method: `GET`
+- Path: `/api/coupons/:code`
+
+### 5.4 Auth
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `PATCH /api/auth/customer-info`
+- `POST /api/auth/logout`
+
+## 6. Kiểm thử
 
 ```sh
 npm test
-npm audit --omit=dev
 ```
 
-GitHub Actions tự động cài dependency theo lockfile, chạy kiểm thử và kiểm tra
-lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào `main`.
+Hoặc chạy trực tiếp:
 
-## Phát hành và triển khai production
+```sh
+node --test tests/site.test.js tests/backend.test.js
+```
+
+Phát hành và triển khai production
 
 Thay đổi phát hành được ghi trong [CHANGELOG.md](CHANGELOG.md). Trước khi tạo
 tag, maintainer cần chạy đầy đủ các lệnh kiểm tra:
@@ -124,102 +149,54 @@ trước khi mở traffic.
 
 ## API
 
-| Phương thức | Đường dẫn | Quyền hạn | Mô tả |
-| --- | --- | --- | --- |
-| `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi |
-| `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng |
-| `GET` | `/api/orders/:id` | Công khai | Tra cứu trạng thái và chi tiết cơ bản của đơn |
-| `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản |
-| `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận token |
-| `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại |
-| `POST` | `/api/auth/logout` | Người dùng | Đăng xuất |
-| `GET` | `/api/books` | Công khai | Lấy danh mục sách |
-| `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua hoặc trao đổi sách |
-| `GET` | `/api/admin/stats` | Quản trị | Xem thống kê |
-| `GET` | `/api/admin/orders` | Quản trị | Xem danh sách đơn hàng |
-| `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn và thanh toán |
-| `POST` | `/api/admin/books` | Quản trị | Thêm sách |
-| `PUT` | `/api/admin/books/:id` | Quản trị | Cập nhật sách và tồn kho |
-| `DELETE` | `/api/admin/books/:id` | Quản trị | Xoá sách |
-| `GET` | `/api/admin/services` | Quản trị | Xem yêu cầu dịch vụ |
-| `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật trạng thái yêu cầu dịch vụ |
-| `GET` | `/api/admin/users` | Quản trị | Xem danh sách thành viên |
+## 7. Lưu ý production
 
-## Dữ liệu và lưu trữ
+- Không dùng `localStorage` như backend nguồn sự thật cho production
+- Cần HTTPS, rate limiting, auth/session rõ ràng
+- Chuyển từ JSONL sang database (PostgreSQL/MySQL) nếu mở rộng hệ thống
+- Mã hóa mật khẩu bằng bcrypt/argon2 và không lưu dữ liệu nhạy cảm dạng plaintext
 
-Máy chủ lưu người dùng trong `data/users.json`, yêu cầu dịch vụ trong
-`data/service-requests.jsonl`, sách quản trị thêm trong `data/books.json` và
-đơn hàng trong `data/orders.jsonl`. Một số trạng thái giao diện như giỏ hàng,
-sách yêu thích và phiên đăng nhập cũng được lưu trong `localStorage` của trình
-duyệt.
-
-`data/orders.jsonl` được bỏ qua bởi Git vì có thể chứa thông tin giao nhận.
-Không đưa dữ liệu khách hàng thật hoặc thông tin nhạy cảm vào repository; hãy
-bảo vệ và sao lưu các tệp dữ liệu phù hợp với nhu cầu triển khai.
-
-## Cấu trúc dự án
+## 8. Cấu trúc dự án
 
 ```text
 .
-├── assets/                  # Biểu tượng và tài nguyên tĩnh
+├── assets/
 ├── backend/
-│   ├── auth.js              # Mã hoá mật khẩu và quản lý phiên
-│   └── db.js                # Đọc và ghi dữ liệu JSON/JSONL
-├── data/                    # Dữ liệu người dùng, sách và yêu cầu dịch vụ
-├── tests/                   # Kiểm thử giao diện và API
-├── .github/workflows/       # Quy trình CI
-├── admin.html               # Giao diện cổng quản trị
-├── admin.css                # Kiểu dáng cổng quản trị
-├── admin.js                 # Tương tác và gọi API quản trị
-├── book.html                # Trang chi tiết sách
-├── book-detail.js           # Tương tác trang chi tiết
-├── books-data.js            # Danh mục sách mặc định
-├── index.html               # Trang chủ cửa hàng
-├── main.css                 # Kiểu dáng cửa hàng
-├── main.js                  # Tương tác giao diện cửa hàng
-├── server.js                # Máy chủ REST API và tệp tĩnh
-└── package.json             # Lệnh dự án
+├── data/
+├── scripts/
+├── tests/
+├── .env.example
+├── .github/
+├── index.html
+├── main.js
+├── main.css
+├── server.js
+├── README.md
+└── package.json
 ```
 
-## Kiến trúc phần mềm
+## 9. Tham khảo
 
-BookNest sử dụng kiến trúc **client–server** theo các lớp trình bày, ứng dụng
-và lưu trữ. Sơ đồ dưới đây mô tả cả thành phần đang chạy lẫn quy trình kiểm thử;
-các nhóm trong sơ đồ là cách phân loại logic, không hàm ý rằng dự án đã có
-những service độc lập.
+- [CUSTOMER_MANAGEMENT.md](./CUSTOMER_MANAGEMENT.md)
+- [ARCHITECTURE.md](./ARCHITECTURE.md)
 
-```mermaid
-flowchart TB
-    subgraph USER["NGƯỜI DÙNG"]
-        CUSTOMER["Khách hàng"]
-        ADMIN["Quản trị viên"]
-    end
+## 10. Triển khai cloud
 
-    subgraph CLIENT["01 · LỚP GIAO DIỆN — TRÌNH DUYỆT"]
-        direction LR
-        STORE["Cửa hàng<br/>index.html · main.js · main.css"]
-        DETAIL["Chi tiết sách<br/>book.html · book-detail.js"]
-        ADMIN_UI["Cổng quản trị<br/>admin.html · admin.js · admin.css"]
-        BROWSER_DATA[("localStorage<br/>giỏ hàng · yêu thích · token")]
-        STORE <--> BROWSER_DATA
-        DETAIL <--> BROWSER_DATA
-        ADMIN_UI <--> BROWSER_DATA
-    end
+Mô hình triển khai gồm GitHub Pages (frontend), Render (Node.js API) và
+Supabase PostgreSQL (database). Cấu hình Render nằm trong `render.yaml`;
+backend sẽ dùng PostgreSQL khi có `DATABASE_URL` và tự tạo bảng JSONB
+`booknest_data` khi khởi động. Nếu chạy local không có `DATABASE_URL`, dữ liệu
+tiếp tục được lưu bằng các file JSON/JSONL.
 
-    subgraph APP["02 · LỚP ỨNG DỤNG — MỘT TIẾN TRÌNH NODE.JS"]
-        direction LR
-        SERVER["HTTP server<br/>server.js"]
-        STATIC["Phục vụ tệp tĩnh"]
-        API["REST API<br/>định tuyến · kiểm tra đầu vào<br/>nghiệp vụ cửa hàng/quản trị"]
-        AUTH["Xác thực<br/>backend/auth.js"]
-        SESSION[("Phiên trong bộ nhớ<br/>hạn dùng 7 ngày")]
-        REPOSITORY["Đọc/ghi dữ liệu<br/>backend/db.js"]
-        SERVER --> STATIC
-        SERVER --> API
-        API -->|"API cần đăng nhập"| AUTH
-        AUTH <--> SESSION
-        API --> REPOSITORY
-    end
+1. Trong Render, cấu hình bí mật `DATABASE_URL`, `ADMIN_EMAIL` và
+   `ADMIN_PASSWORD` (ít nhất 12 ký tự). Không dùng mật khẩu Supabase làm mật
+   khẩu quản trị BookNest.
+2. Đặt `CORS_ORIGINS=https://duongcongcao-0312.github.io` trên Render. Nếu dùng
+   domain khác thì thay bằng origin chính xác, không gồm đường dẫn trang.
+3. Workflow Pages mặc định trỏ tới `https://duannhom5-main.onrender.com`. Nếu
+   backend có URL khác, đặt GitHub Actions Variable `API_BASE_URL`.
+4. Đẩy thay đổi lên `main` để GitHub Actions triển khai frontend và Render tự
+   build backend. Kiểm tra `https://<backend>/api/books`.
 
     subgraph DATA["03 · LỚP DỮ LIỆU"]
         direction LR
@@ -495,3 +472,9 @@ Enable Google and Facebook under Firebase Authentication > Sign-in method, add
 OAuth app with Firebase's redirect URI shown in its provider settings. Serve the
 site over HTTPS (or localhost while developing). The Facebook App ID and secret
 belong only in Firebase Console.
+
+Chỉ dùng file `.env` local để thử nghiệm; không commit connection string hay
+mật khẩu. Giá trị nhạy cảm từng bị ghi vào `.env.example` đã phải được thay
+đổi/thu hồi trước khi dùng dịch vụ. Các file dữ liệu JSON/JSONL cũ không tự
+được import vào PostgreSQL. Phiên đăng nhập hiện lưu trong bộ nhớ backend nên
+bị xóa khi tiến trình Render khởi động lại.

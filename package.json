@@ -7,6 +7,11 @@
     "start": "node server.js",
     "build:pages": "node scripts/build-pages.js",
     "test": "node --test tests/site.test.js tests/backend.test.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/site.test.js tests/backend.test.js",
     "audit": "npm audit --omit=dev"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.7",
+    "pg": "^8.13.1"
   }
 }

@@ -4,6 +4,7 @@ const fsPromises = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 const { createServer } = require('../server');
 
 const root = path.resolve(__dirname, '..');
@@ -106,6 +107,14 @@ test('SEO, legal and deployment assets exist', () => {
 	assert.ok(fs.existsSync(path.join(root, '.github', 'workflows', 'ci.yml')));
 	assert.match(read('index.html'), /property="og:title"/);
 	assert.match(read('index.html'), /class="skip-link"/);
+});
+
+test('frontend API client targets the configured backend origin', () => {
+	const context = { window: { BOOKNEST_API_BASE_URL: 'https://api.example.com/' } };
+	vm.runInNewContext(read('assets/api-client.js'), context);
+	assert.equal(context.window.booknestApiUrl('/api/books'), 'https://api.example.com/api/books');
+	assert.match(read('index.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*main\.js/);
+	assert.match(read('admin.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*admin\.js/);
 });
 
 test('each book category contains eight titles', () => {
@@ -278,6 +287,20 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(privateDataResponse.status, 404);
 	const serverSourceResponse = await fetch(`${baseUrl}/server.js`);
 	assert.equal(serverSourceResponse.status, 404);
+});
+
+test('customer schema is documented with required tables, keys and indexes', () => {
+	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
+	assert.ok(fs.existsSync(schemaPath));
+	const schema = fs.readFileSync(schemaPath, 'utf8');
+	assert.match(schema, /CREATE TABLE customers/);
+	assert.match(schema, /CREATE TABLE customer_interactions/);
+	assert.match(schema, /CREATE TABLE customer_orders/);
+	assert.match(schema, /UNIQUE \(email\)/);
+	assert.match(schema, /UNIQUE \(phone\)/);
+	assert.match(schema, /CREATE INDEX idx_customers_phone/);
+	assert.match(schema, /CREATE INDEX idx_customers_email/);
+	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
 });
 
 test('invalid books are rejected without saving an order', async (t) => {

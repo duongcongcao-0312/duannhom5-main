@@ -294,6 +294,20 @@ test('customer schema is documented with required tables, keys and indexes', () 
 	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
 });
 
+test('OpenAPI documents the current core API routes and CRM statuses', () => {
+	const spec = JSON.parse(read('docs/openapi.json'));
+	assert.equal(spec.openapi, '3.1.0');
+	assert.ok(spec.paths['/api/auth/register']);
+	assert.ok(spec.paths['/api/orders']);
+	assert.ok(spec.paths['/api/customers/{id}']);
+	assert.ok(spec.paths['/api/admin/customers']);
+	assert.ok(spec.paths['/api/admin/customers/{id}']);
+	assert.deepEqual(
+		spec.paths['/api/customers/{id}'].patch.requestBody.content['application/json'].schema.properties.status.enum,
+		['new', 'lead', 'customer']
+	);
+});
+
 test('invalid books are rejected without saving an order', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-order-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');

@@ -12,9 +12,11 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - [Tính năng](#tính-năng)
 - [Công nghệ](#công-nghệ)
 - [Cài đặt và chạy](#cài-đặt-và-chạy)
+- [Triển khai production](#triển-khai-production)
 - [Cổng quản trị](#cổng-quản-trị)
 - [Kiểm thử](#kiểm-thử)
 - [API](#api)
+- [Tài liệu API](#tài-liệu-api)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Kiến trúc phần mềm](#kiến-trúc-phần-mềm)
@@ -61,6 +63,23 @@ $env:PORT = "8000"
 $env:HOST = "127.0.0.1"
 npm start
 ```
+
+Máy chủ đọc trực tiếp `HOST` và `PORT` từ môi trường; Node.js không tự nạp
+`.env`. Mẫu cấu hình local nằm trong `.env.example`.
+
+## Triển khai production
+
+Hướng dẫn chạy bằng Docker, lưu trữ dữ liệu bền vững, sao lưu và smoke-test có
+trong [docs/deployment.md](docs/deployment.md). Container image được build và
+đẩy lên GitHub Container Registry khi push tag phiên bản `v*`; workflow không
+tự tạo tag hay triển khai lên máy chủ.
+
+Production cần `ADMIN_EMAIL` hợp lệ và `ADMIN_PASSWORD` tối thiểu 12 ký tự được
+cấp qua secret manager; server từ chối chạy production nếu thiếu credentials.
+
+Trước khi phát hành, chạy `npm ci`, `npm run check`, `npm test`,
+`npm run build:pages` và `npm audit --omit=dev`. CI chạy syntax check, tests
+có coverage và dependency audit trên Node.js 20.
 
 ## Xuất bản GitHub Pages
 
@@ -128,12 +147,17 @@ lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào 
 | `PATCH` | `/api/admin/customers/:id` | Admin, Sales | Chuyển trạng thái mới → tiềm năng → khách hàng |
 | `DELETE` | `/api/admin/customers/:id` | Admin | Xoá mềm khách hàng |
 
+### Tài liệu API
+
+Đặc tả OpenAPI 3.1 dùng được với Swagger UI/Editor nằm tại
+[docs/openapi.json](docs/openapi.json).
+
 Khách hàng cần có họ tên, email hợp lệ và số điện thoại từ 8 đến 15 chữ số.
 Email và số điện thoại không được trùng với khách hàng đang hoạt động. Xoá
 khách hàng chỉ đặt `deletedAt`, giữ nguyên dữ liệu trong kho lưu trữ và ẩn
 khách hàng khỏi danh sách; thông tin đã xoá không còn giữ chỗ email hoặc số
-điện thoại. Trạng thái chỉ được chuyển tiến từng bước, không thể bỏ qua hoặc
-quay lui. Các thao tác tạo/cập nhật/xoá ghi `created_by` và `updated_by` theo
+điện thoại. Trạng thái `new → lead → customer` chỉ được chuyển tiến từng bước,
+không thể bỏ qua hoặc quay lui. Các thao tác tạo/cập nhật/xoá ghi `created_by` và `updated_by` theo
 ID người dùng của phiên xác thực. Đăng ký công khai luôn tạo tài khoản `user`;
 chỉ quy trình cấp quyền đáng tin cậy mới được gán vai trò `admin`, `sales` hoặc
 `support`.

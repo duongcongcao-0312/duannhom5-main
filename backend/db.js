@@ -80,9 +80,9 @@ class Database {
     } catch {
       const defaultAdmin = {
         id: "admin-master",
-        name: "Quản trị viên BookNest",
-        email: "admin@booknest.vn",
-        password: hashPassword("admin123"),
+        name: process.env.ADMIN_NAME?.trim() || "Quản trị viên BookNest",
+        email: process.env.ADMIN_EMAIL?.trim().toLowerCase() || "admin@booknest.vn",
+        password: hashPassword(process.env.ADMIN_PASSWORD || "admin123"),
         role: "admin",
         studentType: "other",
         studentId: "",

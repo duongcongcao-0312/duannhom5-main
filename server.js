@@ -405,6 +405,16 @@ function createServer({
   servicesPath,
   booksPath,
 } = {}) {
+  if (process.env.NODE_ENV === "production") {
+    const adminEmail = String(process.env.ADMIN_EMAIL || "").trim();
+    const adminPassword = String(process.env.ADMIN_PASSWORD || "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) || adminPassword.length < 12) {
+      throw new Error(
+        "Production requires a valid ADMIN_EMAIL and an ADMIN_PASSWORD of at least 12 characters.",
+      );
+    }
+  }
+
   let persistenceQueue = Promise.resolve();
   const db = new Database({
     root,

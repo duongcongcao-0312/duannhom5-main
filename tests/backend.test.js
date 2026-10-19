@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -6,6 +7,26 @@ const test = require("node:test");
 const { hashPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
 const { createServer } = require("../server");
+
+test("production server requires explicit admin credentials", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        ADMIN_EMAIL: "",
+        ADMIN_PASSWORD: "",
+        NODE_ENV: "production",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Production requires a valid ADMIN_EMAIL/);
+});
 
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(

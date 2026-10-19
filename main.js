@@ -20,9 +20,7 @@ const DEFAULT_BOOK_STOCK = 12;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
-<<<<<<< HEAD
 const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
-=======
 const firebaseConfig = window.BOOKNEST_FIREBASE_CONFIG;
 const firebaseAuth = (() => {
 	const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
@@ -34,7 +32,6 @@ const firebaseAuth = (() => {
 		return null;
 	}
 })();
->>>>>>> fb4f29f950f2224e2cac07494429e202aa26494e
 const serviceDetails = {
 	rent: {
 		title: 'Thuê sách theo nhu cầu',

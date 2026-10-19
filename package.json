@@ -1,7 +1,7 @@
 {
   "name": "booknest-static",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "BookNest static bookstore website",
   "scripts": {
     "start": "node server.js",

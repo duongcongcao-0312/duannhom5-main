@@ -14,6 +14,7 @@ quy trình duyệt sách, đặt hàng và vận hành một cửa hàng sách t
 - [Cài đặt và chạy](#cài-đặt-và-chạy)
 - [Cổng quản trị](#cổng-quản-trị)
 - [Kiểm thử](#kiểm-thử)
+- [Phát hành và triển khai production](#phát-hành-và-triển-khai-production)
 - [API](#api)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
@@ -94,6 +95,32 @@ npm audit --omit=dev
 
 GitHub Actions tự động cài dependency theo lockfile, chạy kiểm thử và kiểm tra
 lỗ hổng dependency khi có push lên nhánh `main` hoặc pull request vào `main`.
+
+## Phát hành và triển khai production
+
+Thay đổi phát hành được ghi trong [CHANGELOG.md](CHANGELOG.md). Trước khi tạo
+tag, maintainer cần chạy đầy đủ các lệnh kiểm tra:
+
+```sh
+npm ci
+npm test
+npm run build:pages
+npm audit --omit=dev
+```
+
+`npm run build:pages` tạo thư mục `dist/` chỉ gồm các tệp giao diện được phép
+đưa lên GitHub Pages. Workflow Pages sẽ tự động build và deploy thư mục này
+trên nhánh `main`; backend Node.js cần được triển khai trên một máy chủ riêng.
+
+Khi triển khai backend, đặt `NODE_ENV=production`, cấu hình `HOST` và `PORT`,
+sao lưu thư mục `data/`, rồi khởi động bằng `npm start`. Không dùng tài khoản
+admin mặc định hoặc thông tin thanh toán mẫu trên môi trường công khai. Sau
+khi deploy, smoke-test trang chủ, `GET /api/books`, đăng nhập, tạo đơn COD và
+tra cứu đơn hàng; theo dõi log ít nhất 30 phút đầu.
+
+Để rollback, dừng service, khôi phục tag ổn định gần nhất và bản sao lưu
+`data/`, chạy lại `npm ci` rồi `npm start`. Kiểm tra lại các endpoint chính
+trước khi mở traffic.
 
 ## API
 
@@ -373,7 +400,6 @@ Facebook. Set the Firebase web app values in `assets/firebase-config.js` from
 Firebase Console > Project settings > Your apps. These browser configuration
 values are public; never put a provider client secret in this file.
 
-<<<<<<< HEAD
 ```sh
 npm test
 npm audit --omit=dev
@@ -464,10 +490,8 @@ thông tin khách hàng thật.
 lưu, HTTPS, kiểm soát quyền truy cập đơn hàng và cơ chế bảo vệ dữ liệu cá nhân.
 Ứng dụng cần môi trường lưu được dữ liệu lâu dài để giữ đơn hàng; GitHub Pages
 chỉ lưu trữ tệp tĩnh nên không chạy được API Node.js.
-=======
 Enable Google and Facebook under Firebase Authentication > Sign-in method, add
 `sachlatrithuc.com` under Authorized domains, and configure each provider's
 OAuth app with Firebase's redirect URI shown in its provider settings. Serve the
 site over HTTPS (or localhost while developing). The Facebook App ID and secret
 belong only in Firebase Console.
->>>>>>> fb4f29f950f2224e2cac07494429e202aa26494e

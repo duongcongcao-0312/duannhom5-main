@@ -6,11 +6,8 @@ const path = require("node:path");
 const test = require("node:test");
 const { hashPassword, verifyPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
-<<<<<<< HEAD
-const { PostgresDatabase } = require("../backend/postgres-db");
-=======
 const { createEmailMailer } = require("../backend/email");
->>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
+const { PostgresDatabase } = require("../backend/postgres-db");
 const { createServer } = require("../server");
 
 test("email delivery uses the HTTPS provider and exposes provider errors", async () => {

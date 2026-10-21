@@ -89,7 +89,6 @@ class Database {
 
     let users;
     try {
-<<<<<<< HEAD
       users = JSON.parse(await fs.readFile(this.usersPath, "utf8"));
       if (!Array.isArray(users)) {
         throw new Error("Tệp tài khoản phải chứa một danh sách.");
@@ -99,6 +98,10 @@ class Database {
       users = [];
     }
 
+    const defaultAdminEmail = "admin@booknest.vn";
+    const defaultAdminPassword = "admin123";
+    const configuredAdminName = String(process.env.ADMIN_NAME || "").trim() || "Quản trị viên BookNest";
+
     if (hasAdminConfig) {
       let admin = users.find(
         (user) => String(user.email || "").trim().toLowerCase() === configuredEmail,
@@ -106,49 +109,42 @@ class Database {
       if (!admin) {
         admin = {
           id: "admin-master",
-          name: "Quản trị viên BookNest",
+          name: configuredAdminName,
           email: configuredEmail,
+          role: "admin",
           studentType: "other",
           studentId: "",
           createdAt: new Date().toISOString(),
         };
         users.push(admin);
       }
-      admin.password = hashPassword(configuredPassword);
+      admin.name = admin.name || configuredAdminName;
+      admin.email = configuredEmail;
       admin.role = "admin";
-      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+      admin.password = hashPassword(configuredPassword);
+      admin.studentType = admin.studentType || "other";
+      admin.studentId = String(admin.studentId || "").trim();
+      admin.updatedAt = new Date().toISOString();
     } else {
-      try {
-        await fs.access(this.usersPath);
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-        const defaultAdmin = {
+      const adminUser = users.find(
+        (user) => user.role === "admin" || String(user.email || "").trim().toLowerCase() === defaultAdminEmail,
+      );
+      if (!adminUser) {
+        users.push({
           id: "admin-master",
-          name: "Quản trị viên BookNest",
-          email: "admin@booknest.vn",
-          password: hashPassword("admin123"),
+          name: configuredAdminName,
+          email: defaultAdminEmail,
+          password: hashPassword(defaultAdminPassword),
           role: "admin",
           studentType: "other",
           studentId: "",
-          createdAt: new Date().toISOString()
-        };
-        await fs.writeFile(this.usersPath, JSON.stringify([defaultAdmin], null, 2), "utf8");
+          createdAt: new Date().toISOString(),
+        });
       }
-=======
-      await fs.access(this.usersPath);
-    } catch {
-      const defaultAdmin = {
-        id: "admin-master",
-        name: process.env.ADMIN_NAME?.trim() || "Quản trị viên BookNest",
-        email: process.env.ADMIN_EMAIL?.trim().toLowerCase() || "admin@booknest.vn",
-        password: hashPassword(process.env.ADMIN_PASSWORD || "admin123"),
-        role: "admin",
-        studentType: "other",
-        studentId: "",
-        createdAt: new Date().toISOString()
-      };
-      await fs.writeFile(this.usersPath, JSON.stringify([defaultAdmin], null, 2), "utf8");
->>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
+    }
+
+    if (users.length > 0) {
+      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
     }
 
     this.initialized = true;

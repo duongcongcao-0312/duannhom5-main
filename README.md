@@ -65,7 +65,6 @@ npm start
 
 Mở storefront tại <http://127.0.0.1:8000>. Cổng quản trị nằm tại <http://127.0.0.1:8000/admin.html>.
 
-<<<<<<< HEAD
 ### 2.1 Cấu hình môi trường
 
 Sao chép file mẫu và chỉnh sửa nếu cần:
@@ -76,8 +75,9 @@ copy .env.example .env
 
 Để dùng tài khoản quản trị của riêng bạn, đặt `ADMIN_EMAIL` và
 `ADMIN_PASSWORD` (ít nhất 12 ký tự) trong `.env`. Backend sẽ tạo hoặc khôi phục
-quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Khi dùng PostgreSQL,
-cũng cần đặt `DATABASE_URL`. Không dùng thông tin mẫu làm thông tin thật.
+quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Nếu không đặt biến này,
+backend sẽ tự tạo tài khoản mặc định `admin@booknest.vn` với mật khẩu `admin123`
+cho môi trường local/demo. Không dùng thông tin mẫu làm thông tin thật.
 
 ```env
 PORT=8000
@@ -87,9 +87,6 @@ ADMIN_PASSWORD=your-unique-password-at-least-12-characters
 ```
 
 Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:
-=======
-Trên Windows PowerShell, nếu chính sách thực thi script chặn npm, có thể chạy trong phiên hiện tại:
->>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass

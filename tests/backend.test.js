@@ -217,10 +217,21 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   // 2. Auth: Admin login with seeded default account
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://shop.example",
+    },
     body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
   });
   assert.equal(adminLoginRes.status, 200);
+  assert.equal(
+    adminLoginRes.headers.get("access-control-allow-origin"),
+    "https://shop.example",
+  );
+  assert.equal(
+    adminLoginRes.headers.get("access-control-allow-credentials"),
+    "true",
+  );
   const adminData = await adminLoginRes.json();
   assert.ok(adminData.token);
   assert.equal(adminData.user.role, "admin");

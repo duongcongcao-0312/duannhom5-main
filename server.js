@@ -125,7 +125,6 @@ class RequestError extends Error {
 
 function sendJson(response, status, value) {
   response.writeHead(status, {
-    "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",

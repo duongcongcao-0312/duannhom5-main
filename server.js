@@ -646,13 +646,16 @@ function createServer({
         await readJson(request),
         "Yêu cầu đặt lại mật khẩu không hợp lệ.",
       );
-      const token = typeof payload.token === "string" ? payload.token : "";
+      const token = typeof payload.token === "string" ? payload.token.trim() : "";
       const password = typeof payload.password === "string" ? payload.password : "";
       if (!/^[a-f0-9]{64}$/i.test(token)) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }
-      if (password.length < 6 || password.length > 128) {
+      if (password.trim().length < 6 || password.trim().length > 128) {
         throw new RequestError(400, "Mật khẩu mới phải có từ 6 đến 128 ký tự.");
+      }
+      if (!password.trim()) {
+        throw new RequestError(400, "Mật khẩu mới không được để trống.");
       }
       const userId = await db.resetPassword(hashPasswordResetToken(token), password);
       if (!userId) {

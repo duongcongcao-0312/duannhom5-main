@@ -725,6 +725,10 @@ document.querySelector('#passwordResetConfirmForm').addEventListener('submit', a
 		showAccountError('#passwordResetConfirmError', 'Mật khẩu nhập lại không khớp.');
 		return;
 	}
+	if (password.trim().length < 6 || password.trim().length > 128 || !password.trim()) {
+		showAccountError('#passwordResetConfirmError', 'Mật khẩu mới phải có từ 6 đến 128 ký tự và không được trống.');
+		return;
+	}
 	const submitButton = form.querySelector('[type="submit"]');
 	showAccountError('#passwordResetConfirmError', '');
 	submitButton.disabled = true;

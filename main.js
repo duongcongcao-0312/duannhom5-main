@@ -601,7 +601,8 @@ const accountViews = {
 	login: document.querySelector('#loginForm'),
 	register: document.querySelector('#registerForm'),
 	'reset-request': document.querySelector('#passwordResetRequestForm'),
-	'reset-confirm': document.querySelector('#passwordResetConfirmForm')
+	'reset-confirm': document.querySelector('#passwordResetConfirmForm'),
+	social: document.querySelector('#socialAuthForm')
 };
 
 function readUsers() {
@@ -620,9 +621,16 @@ function setAccountView(view) {
 	const isAccountTabView = view === 'login' || view === 'register';
 	document.querySelector('.account-tabs').hidden = !isAccountTabView;
 	document.querySelectorAll('.account-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.accountView === view));
-	document.querySelector('#accountTitle').textContent = isAccountTabView
-		? 'Tài khoản BookNest'
-		: 'Khôi phục mật khẩu';
+	if (view === 'social') {
+		const prov = document.querySelector('#socialCustomProvider')?.value || 'google.com';
+		document.querySelector('#accountTitle').textContent = prov.includes('facebook')
+			? 'Đăng nhập Facebook'
+			: 'Đăng nhập Google';
+	} else if (isAccountTabView) {
+		document.querySelector('#accountTitle').textContent = 'Tài khoản BookNest';
+	} else {
+		document.querySelector('#accountTitle').textContent = 'Khôi phục mật khẩu';
+	}
 }
 
 function renderAccount() {
@@ -694,13 +702,11 @@ async function saveFederatedAccount(socialUser) {
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
+	setAccountView('login');
 	if (!new URLSearchParams(window.location.hash.slice(1)).has('resetToken')) {
 		accountDialog.close();
 	}
-	const socialDialog = document.querySelector('#socialAuthDialog');
-	if (socialDialog && typeof socialDialog.close === 'function' && socialDialog.open) {
-		socialDialog.close();
-	}
+}
 }
 
 function getSocialAuthError(error) {
@@ -713,7 +719,13 @@ function getSocialAuthError(error) {
 
 accountButton.addEventListener('click', () => {
 	renderAccount();
-	document.querySelector('#loginMessage').hidden = true;
+	if (state.user) {
+		const msg = document.querySelector('#loginMessage');
+		msg.textContent = `Bạn đang đăng nhập với tài khoản: ${state.user.name} (${state.user.email})`;
+		msg.hidden = false;
+	} else {
+		document.querySelector('#loginMessage').hidden = true;
+	}
 	setAccountView('login');
 	accountDialog.showModal();
 });
@@ -807,6 +819,13 @@ if (resetTokenFromUrl) {
 document.querySelector('#registerForm select[name="studentType"]').addEventListener('change', (event) => {
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
+async function signInWithFirebase(provider) {
+	if (firebaseAuth && window.firebase && window.firebase.auth) {
+		return await firebaseAuth.signInWithPopup(provider);
+	}
+	return null;
+}
+
 function openSocialAuthModal(provider) {
 	const isGoogle = provider === 'google' || provider === 'google.com';
 	const titleEl = document.querySelector('#socialAuthTitle');
@@ -816,7 +835,12 @@ function openSocialAuthModal(provider) {
 	const emailInput = document.querySelector('#socialCustomEmail');
 	const submitBtn = document.querySelector('#socialCustomSubmitBtn');
 	const errEl = document.querySelector('#socialCustomError');
+	const headerMark = document.querySelector('#socialHeaderMark');
 
+	if (headerMark) {
+		headerMark.textContent = isGoogle ? 'G' : 'f';
+		headerMark.className = isGoogle ? 'social-mark google-mark' : 'social-mark facebook-mark';
+	}
 	if (titleEl) titleEl.textContent = isGoogle ? 'Đăng nhập nhanh với Google' : 'Đăng nhập nhanh với Facebook';
 	if (descEl) {
 		descEl.textContent = isGoogle
@@ -838,18 +862,7 @@ function openSocialAuthModal(provider) {
 		card.style.display = isMatch ? 'flex' : 'none';
 	});
 
-	const dialog = document.querySelector('#socialAuthDialog');
-	if (dialog && typeof dialog.showModal === 'function') {
-		dialog.showModal();
-	}
-}
-
-const closeSocialAuthBtn = document.querySelector('#closeSocialAuth');
-if (closeSocialAuthBtn) {
-	closeSocialAuthBtn.addEventListener('click', () => {
-		const dialog = document.querySelector('#socialAuthDialog');
-		if (dialog) dialog.close();
-	});
+	setAccountView('social');
 }
 
 document.querySelectorAll('.social-quick-card').forEach((card) => {
@@ -861,9 +874,9 @@ document.querySelectorAll('.social-quick-card').forEach((card) => {
 	});
 });
 
-const socialCustomForm = document.querySelector('#socialCustomForm');
-if (socialCustomForm) {
-	socialCustomForm.addEventListener('submit', async (event) => {
+const socialAuthForm = document.querySelector('#socialAuthForm');
+if (socialAuthForm) {
+	socialAuthForm.addEventListener('submit', async (event) => {
 		event.preventDefault();
 		const nameInput = document.querySelector('#socialCustomName');
 		const emailInput = document.querySelector('#socialCustomEmail');
@@ -875,7 +888,7 @@ if (socialCustomForm) {
 		const email = emailInput ? emailInput.value.trim().toLowerCase() : '';
 		const provider = provInput ? provInput.value : 'google.com';
 
-		if (!email || !/^[^s@]+@[^s@]+.[^s@]+$/.test(email)) {
+		if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
 			if (errEl) {
 				errEl.textContent = 'Vui lòng cung cấp email hợp lệ.';
 				errEl.hidden = false;
@@ -887,34 +900,11 @@ if (socialCustomForm) {
 	});
 }
 
-document.querySelectorAll('[data-social-provider]').forEach((button) => button.addEventListener('click', async () => {
+document.querySelectorAll('[data-social-provider]').forEach((button) => button.addEventListener('click', () => {
 	showAccountError('#registerError', '');
 	showAccountError('#loginError', '');
 	const providerName = button.dataset.socialProvider;
-
-	if (firebaseAuth && window.firebase && window.firebase.auth) {
-		const provider = providerName === 'google'
-			? new window.firebase.auth.GoogleAuthProvider()
-			: new window.firebase.auth.FacebookAuthProvider();
-		if (providerName === 'facebook') provider.addScope('email');
-		const socialButtons = [...document.querySelectorAll('[data-social-provider]')];
-		socialButtons.forEach((socialButton) => { socialButton.disabled = true; });
-		try {
-			const result = await firebaseAuth.signInWithPopup(provider);
-			if (result && result.user) {
-				await saveFederatedAccount(result.user);
-				return;
-			}
-		} catch (error) {
-			console.warn('Firebase popup unavailable or encountered error:', error?.code || error?.message);
-			openSocialAuthModal(providerName);
-			return;
-		} finally {
-			socialButtons.forEach((socialButton) => { socialButton.disabled = false; });
-		}
-	} else {
-		openSocialAuthModal(providerName);
-	}
+	openSocialAuthModal(providerName);
 }));
 
 if (firebaseAuth) {

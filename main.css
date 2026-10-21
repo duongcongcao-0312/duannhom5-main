@@ -212,3 +212,18 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
 .social-badge { border-radius: 12px; font-size: 0.72rem; font-weight: 700; padding: 3px 8px; flex-shrink: 0; }
 .google-badge { background: #fce8e6; color: #c5221f; }
 .fb-badge { background: #e7f0ff; color: #1877f2; }
+
+
+.social-view-header {
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 12px;
+    margin-bottom: 4px;
+    padding-bottom: 8px;
+}
+.social-view-header strong, .social-view-header h3 {
+    color: var(--ink);
+    font-size: 1.05rem;
+    margin: 0;
+}

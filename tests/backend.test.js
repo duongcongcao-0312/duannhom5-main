@@ -1,29 +1,92 @@
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { hashPassword, verifyPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
+<<<<<<< HEAD
 const { PostgresDatabase } = require("../backend/postgres-db");
+=======
+const { createEmailMailer } = require("../backend/email");
+>>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
 const { createServer } = require("../server");
 
+test("email delivery uses the HTTPS provider and exposes provider errors", async () => {
+  const requests = [];
+  const mailer = createEmailMailer(
+    { RESEND_API_KEY: "test-api-key", RESEND_FROM: "BookNest <no-reply@example.com>" },
+    async (...args) => {
+      requests.push(args);
+      return new Response("", { status: 202 });
+    },
+  );
+  await mailer.sendPasswordReset({
+    to: "reader@example.com",
+    name: "BookNest Reader",
+    url: "https://example.com/#resetToken=token",
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0][0], "https://api.resend.com/emails");
+  assert.equal(requests[0][1].headers.Authorization, "Bearer test-api-key");
+  assert.deepEqual(JSON.parse(requests[0][1].body), {
+    from: "BookNest <no-reply@example.com>",
+    to: ["reader@example.com"],
+    subject: "Khôi phục mật khẩu BookNest",
+    text: "Xin chào BookNest Reader,\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\nhttps://example.com/#resetToken=token\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.",
+  });
+
+  const failingMailer = createEmailMailer(
+    { RESEND_API_KEY: "test-api-key", RESEND_FROM: "no-reply@example.com" },
+    async () => new Response("domain is not verified", { status: 403 }),
+  );
+  await assert.rejects(
+    failingMailer.sendPasswordReset({ to: "reader@example.com", name: "Reader", url: "https://example.com/" }),
+    /Resend trả về HTTP 403: domain is not verified/,
+  );
+});
+
+test("production server requires explicit admin credentials", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        RENDER: "",
+        DATABASE_URL: "",
+        ADMIN_EMAIL: "",
+        ADMIN_PASSWORD: "",
+        NODE_ENV: "production",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Production requires a valid ADMIN_EMAIL/);
+});
+
 test("Render backend refuses to start without a persistent database URL", () => {
-  const originalRender = process.env.RENDER;
-  const originalDatabaseUrl = process.env.DATABASE_URL;
-  process.env.RENDER = "true";
-  delete process.env.DATABASE_URL;
-  try {
-    assert.throws(
-      () => createServer(),
-      /DATABASE_URL phải được cấu hình trên Render/,
-    );
-  } finally {
-    if (originalRender === undefined) delete process.env.RENDER;
-    else process.env.RENDER = originalRender;
-    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = originalDatabaseUrl;
-  }
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        RENDER: "true",
+        DATABASE_URL: "",
+        NODE_ENV: "development",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /DATABASE_URL phải được cấu hình trên Render/);
 });
 
 test("configured admin credentials restore the admin account in file storage", async (t) => {
@@ -183,6 +246,18 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const regData = await registerRes.json();
   assert.equal(regData.user.name, "Trần Minh");
 
+  const duplicateRegisterRes = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Tên khác",
+      email: " TRANMINH@example.com ",
+      password: "password456",
+    }),
+  });
+  assert.equal(duplicateRegisterRes.status, 409);
+  assert.match((await duplicateRegisterRes.json()).error, /đã được đăng ký/i);
+
   // 4. Auth: Profile lookup via token
   const meRes = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { Authorization: `Bearer ${regData.token}` },
@@ -278,6 +353,172 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const stats = await statsRes.json();
   assert.ok(stats.totalOrders >= 1);
   assert.ok(stats.totalUsers >= 2);
+});
+
+test("registration returns a JSON service error when user persistence is unavailable", async (t) => {
+  const server = createServer({
+    database: {
+      async getCustomBooks() {
+        return [];
+      },
+      async createUser() {
+        throw new Error("database connection unavailable");
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "New Reader",
+      email: "new-reader@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(response.status, 503);
+  assert.match(response.headers.get("content-type"), /application\/json/);
+  assert.match((await response.json()).error, /không thể lưu tài khoản/i);
+});
+
+test("password reset emails a single-use link and replaces the account password", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-password-reset-test-"),
+  );
+  const sentEmails = [];
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    appBaseUrl: "https://shop.example/booknest/",
+    passwordResetMailer: {
+      async sendPasswordReset(email) {
+        sentEmails.push(email);
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Reset User",
+      email: "reset@example.com",
+      password: "original-password",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const originalSession = (await registerResponse.json()).token;
+
+  const requestReset = async (email) => fetch(`${baseUrl}/api/auth/password-reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const missingEmailResponse = await requestReset("missing@example.com");
+  const resetResponse = await requestReset("reset@example.com");
+  assert.equal(resetResponse.status, 200);
+  assert.deepEqual(await resetResponse.json(), await missingEmailResponse.json());
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, "reset@example.com");
+
+  const resetUrl = new URL(sentEmails[0].url);
+  assert.equal(resetUrl.origin, "https://shop.example");
+  assert.equal(resetUrl.pathname, "/booknest/");
+  assert.equal(resetUrl.search, "");
+  const token = new URLSearchParams(resetUrl.hash.slice(1)).get("resetToken");
+  assert.match(token, /^[a-f0-9]{64}$/);
+  const storedUser = JSON.parse(
+    await fsPromises.readFile(path.join(temporaryDirectory, "users.json"), "utf8"),
+  ).find((user) => user.email === "reset@example.com");
+  assert.notEqual(storedUser.passwordReset.tokenHash, token);
+
+  const confirmResponse = await fetch(`${baseUrl}/api/auth/password-reset/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password: "new-password-123" }),
+  });
+  assert.equal(confirmResponse.status, 200);
+
+  const invalidatedSession = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${originalSession}` },
+  });
+  assert.equal(invalidatedSession.status, 401);
+
+  const oldPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "reset@example.com", password: "original-password" }),
+  });
+  assert.equal(oldPasswordLogin.status, 401);
+
+  const newPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "reset@example.com", password: "new-password-123" }),
+  });
+  assert.equal(newPasswordLogin.status, 200);
+
+  const reusedTokenResponse = await fetch(`${baseUrl}/api/auth/password-reset/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password: "another-password-123" }),
+  });
+  assert.equal(reusedTokenResponse.status, 400);
+});
+
+test("password reset reports missing email configuration instead of accepting the request", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-password-reset-config-test-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    appBaseUrl: "https://shop.example/",
+    passwordResetMailer: null,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/password-reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "user@example.com" }),
+  });
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /chưa được cấu hình email/i);
+  assert.deepEqual(JSON.parse(
+    await fsPromises.readFile(path.join(temporaryDirectory, "users.json"), "utf8"),
+  )[0].passwordReset, undefined);
 });
 
 test("auth customer-info rejects null or malformed payloads without crashing", async (t) => {

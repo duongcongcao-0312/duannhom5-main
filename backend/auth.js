@@ -27,6 +27,10 @@ function verifyPassword(password, stored) {
   }
 }
 
+function hashPasswordResetToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 /**
  * In-memory session store with token expiration
  */
@@ -68,10 +72,17 @@ class SessionStore {
     if (!token) return;
     this.sessions.delete(token);
   }
+
+  destroyUserSessions(userId) {
+    for (const [token, session] of this.sessions) {
+      if (session.userId === userId) this.sessions.delete(token);
+    }
+  }
 }
 
 module.exports = {
   hashPassword,
+  hashPasswordResetToken,
   verifyPassword,
   SessionStore
 };

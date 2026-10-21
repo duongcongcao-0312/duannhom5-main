@@ -215,7 +215,26 @@
             <label class="service-field">Mật khẩu<input name="password" type="password" minlength="6" required></label>
             <p class="form-error" id="loginError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Đăng nhập</button>
+            <button class="text-button" id="forgotPasswordButton" type="button">Quên mật khẩu?</button>
         </form>
+        <form id="passwordResetRequestForm" class="account-form" hidden>
+            <p class="account-note">Nhập email đã đăng ký. Nếu email có tài khoản, BookNest sẽ gửi liên kết khôi phục có hiệu lực trong 1 giờ.</p>
+            <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" autocomplete="email" required></label>
+            <p class="form-error" id="passwordResetRequestError" role="alert" hidden></p>
+            <p class="form-success" id="passwordResetRequestMessage" role="status" hidden></p>
+            <button class="primary-button payment-submit" type="submit">Gửi liên kết khôi phục</button>
+            <button class="text-button" data-account-back="login" type="button">Quay lại đăng nhập</button>
+        </form>
+        <form id="passwordResetConfirmForm" class="account-form" hidden>
+            <p class="account-note">Tạo mật khẩu mới cho tài khoản của bạn.</p>
+            <input name="token" type="hidden">
+            <label class="service-field">Mật khẩu mới<input name="password" type="password" minlength="6" maxlength="128" autocomplete="new-password" required></label>
+            <label class="service-field">Nhập lại mật khẩu<input name="confirmPassword" type="password" minlength="6" maxlength="128" autocomplete="new-password" required></label>
+            <p class="form-error" id="passwordResetConfirmError" role="alert" hidden></p>
+            <button class="primary-button payment-submit" type="submit">Cập nhật mật khẩu</button>
+            <button class="text-button" data-account-back="login" type="button">Quay lại đăng nhập</button>
+        </form>
+        <p class="form-success" id="loginMessage" role="status" hidden></p>
         <form id="registerForm" class="account-form" hidden>
             <p class="account-note">Tạo tài khoản miễn phí để lưu thông tin và nhận ưu đãi.</p>
             <label class="service-field">Họ và tên<input name="name" type="text" placeholder="Nguyễn Văn A" required></label>

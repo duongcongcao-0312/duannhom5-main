@@ -1,0 +1,240 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "BookNest API",
+    "version": "0.1.0",
+    "description": "REST API cho cửa hàng sách BookNest. Payload và lỗi được trả về dưới dạng JSON; các endpoint quản trị yêu cầu Bearer token và role phù hợp."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8000",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    { "name": "Auth" },
+    { "name": "Store" },
+    { "name": "Customers" },
+    { "name": "Admin" }
+  ],
+  "paths": {
+    "/api/coupons/{code}": {
+      "get": {
+        "tags": ["Store"],
+        "summary": "Kiểm tra mã ưu đãi",
+        "parameters": [{ "$ref": "#/components/parameters/CouponCode" }],
+        "responses": {
+          "200": { "description": "Mã hợp lệ", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Coupon" } } } },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/books": {
+      "get": {
+        "tags": ["Store"],
+        "summary": "Danh sách sách mặc định và sách do quản trị thêm",
+        "responses": { "200": { "description": "Danh sách sách", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } } } } } }
+      }
+    },
+    "/api/orders": {
+      "post": {
+        "tags": ["Store"],
+        "summary": "Tạo đơn hàng",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrder" } } } },
+        "responses": {
+          "201": { "description": "Đơn hàng đã lưu", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/orders/{id}": {
+      "get": {
+        "tags": ["Store"],
+        "summary": "Tra cứu trạng thái đơn hàng; không trả thông tin giao nhận",
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "responses": {
+          "200": { "description": "Thông tin công khai của đơn", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/services": {
+      "post": {
+        "tags": ["Store"],
+        "summary": "Gửi yêu cầu thuê, thu mua hoặc trao đổi sách",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ServiceRequest" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/password-reset": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Gửi email khôi phục mật khẩu nếu email đã đăng ký",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordResetRequest" } } } },
+        "responses": {
+          "200": { "description": "Phản hồi chung để không tiết lộ email có đăng ký hay không", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/password-reset/confirm": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Đặt mật khẩu mới bằng liên kết khôi phục",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordResetConfirm" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Đăng ký tài khoản user",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Register" } } } },
+        "responses": { "201": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Đăng nhập",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Login" } } } },
+        "responses": { "200": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Lấy tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/customer-info": {
+      "patch": {
+        "tags": ["Auth"],
+        "summary": "Cập nhật thông tin liên hệ của tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "customerName": { "type": "string" }, "name": { "type": "string" }, "phone": { "type": "string" }, "address": { "type": "string" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Huỷ phiên hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }
+        }
+      }
+    },
+    "/api/customers": {
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Tìm kiếm, lọc và phân trang khách hàng",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Tạo hồ sơ khách hàng (Admin, Sales)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/customers": {
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Tìm kiếm, lọc và phân trang khách hàng (admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Tạo hồ sơ khách hàng (admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/customers/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "tags": ["Customers"], "summary": "Xem hồ sơ khách hàng", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "tags": ["Customers"], "summary": "Cập nhật hồ sơ khách hàng", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "tags": ["Customers"], "summary": "Chuyển trạng thái khách hàng", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "tags": ["Customers"], "summary": "Xoá mềm hồ sơ khách hàng (Admin)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/admin/customers/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "tags": ["Customers"], "summary": "Xem hồ sơ khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } },
+      "put": { "tags": ["Customers"], "summary": "Cập nhật hồ sơ khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "tags": ["Customers"], "summary": "Chuyển trạng thái khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "tags": ["Customers"], "summary": "Xoá mềm hồ sơ khách hàng (Admin alias)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/admin/stats": { "get": { "tags": ["Admin"], "summary": "Thống kê quản trị", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/api/admin/orders/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái đơn/thanh toán", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"] }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "cod_pending", "refunded"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/admin/books": { "post": { "tags": ["Admin"], "summary": "Thêm sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "403": { "$ref": "#/components/responses/Error" } } } },
+    "/api/admin/books/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "put": { "tags": ["Admin"], "summary": "Cập nhật sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
+      "delete": { "tags": ["Admin"], "summary": "Xoá sách", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+    },
+    "/api/admin/services": { "get": { "tags": ["Admin"], "summary": "Danh sách yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/api/admin/services/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/api/admin/users": { "get": { "tags": ["Admin"], "summary": "Danh sách thành viên an toàn", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "opaque token" }
+    },
+    "parameters": {
+      "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Ok": { "description": "Yêu cầu thành công", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+      "Created": { "description": "Đã tạo dữ liệu", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+      "Error": { "description": "Yêu cầu thất bại", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Error": { "type": "object", "properties": { "error": { "type": "string" } }, "required": ["error"] },
+      "Coupon": { "type": "object", "properties": { "rate": { "type": "number" }, "label": { "type": "string" } }, "required": ["rate", "label"] },
+      "Book": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "author": { "type": "string" }, "price": { "type": "number" }, "category": { "type": "string" }, "image": { "type": "string" }, "stock": { "type": "integer" } }, "required": ["title", "author", "price"] },
+      "Register": { "type": "object", "required": ["name", "email", "password"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "password": { "type": "string", "minLength": 6 }, "studentType": { "type": "string" }, "studentId": { "type": "string" } } },
+      "Login": { "type": "object", "required": ["email", "password"], "properties": { "email": { "type": "string", "format": "email" }, "password": { "type": "string" } } },
+      "PasswordResetRequest": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email" } } },
+      "PasswordResetConfirm": { "type": "object", "required": ["token", "password"], "properties": { "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "password": { "type": "string", "minLength": 6, "maxLength": 128 } } },
+      "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
+      "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
+      "CreateOrder": { "type": "object", "required": ["customerName", "address", "phone", "paymentMethod", "discountRate", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": ["string", "null"] }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
+      "PublicOrder": { "type": "object", "properties": { "orderId": { "type": "string", "format": "uuid" }, "createdAt": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "paymentStatus": { "type": "string" }, "paymentMethod": { "type": "string" }, "couponCode": { "type": ["string", "null"] }, "total": { "type": "number" }, "items": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "quantity": { "type": "integer" }, "lineTotal": { "type": "number" } } } } } },
+      "ServiceRequest": { "type": "object", "required": ["service", "bookTitle", "name", "phone"], "properties": { "service": { "type": "string", "enum": ["rent", "sell", "exchange"] }, "bookTitle": { "type": "string" }, "condition": { "type": "string" }, "name": { "type": "string" }, "phone": { "type": "string" }, "note": { "type": "string" } } },
+      "CustomerInput": { "type": "object", "required": ["name", "email", "phone"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "phone": { "type": "string" }, "status": { "type": "string", "enum": ["new", "lead", "customer"] } } }
+    }
+  }
+}

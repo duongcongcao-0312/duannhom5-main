@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const { Pool } = require("pg");
 const { CustomerError, validateCustomerData } = require("./db");
 const { hashPassword } = require("./auth");
@@ -18,22 +19,64 @@ function validateActor(actorId) {
   return actorId.trim();
 }
 
+function createDatabaseSslConfig(caPath = process.env.DATABASE_SSL_CA_PATH) {
+  if (!caPath) return true;
+
+  let ca;
+  try {
+    ca = fs.readFileSync(caPath, "utf8");
+  } catch (error) {
+    throw new Error(`Không thể đọc CA certificate tại DATABASE_SSL_CA_PATH: ${error.message}`);
+  }
+  if (!ca.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new Error("CA certificate trong DATABASE_SSL_CA_PATH không hợp lệ.");
+  }
+  return { ca, rejectUnauthorized: true };
+}
+
+function createDatabasePoolConfig(connectionString, caPath = process.env.DATABASE_SSL_CA_PATH) {
+  if (!caPath) {
+    const databaseHost = connectionString ? new URL(connectionString).hostname : "";
+    const isRenderInternalDatabase =
+      Boolean(process.env.RENDER) && !databaseHost.includes(".");
+    return {
+      connectionString,
+      ssl: isRenderInternalDatabase
+        ? { rejectUnauthorized: false }
+        : true,
+    };
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(connectionString);
+  } catch (error) {
+    throw new Error(`DATABASE_URL không hợp lệ khi dùng CA certificate: ${error.message}`);
+  }
+
+  for (const parameter of [
+    "ssl",
+    "sslmode",
+    "sslcert",
+    "sslkey",
+    "sslrootcert",
+    "uselibpqcompat",
+  ]) {
+    parsedUrl.searchParams.delete(parameter);
+  }
+
+  return {
+    connectionString: parsedUrl.toString(),
+    ssl: createDatabaseSslConfig(caPath),
+  };
+}
+
 class PostgresDatabase {
   constructor({ connectionString = process.env.DATABASE_URL, pool } = {}) {
     if (!pool && !connectionString) {
       throw new Error("DATABASE_URL là bắt buộc khi dùng PostgreSQL.");
     }
-    const databaseHost = connectionString
-      ? new URL(connectionString).hostname
-      : "";
-    const isRenderInternalDatabase =
-      Boolean(process.env.RENDER) && !databaseHost.includes(".");
-    this.pool = pool || new Pool({
-      connectionString,
-      ssl: isRenderInternalDatabase
-        ? { rejectUnauthorized: false }
-        : true,
-    });
+    this.pool = pool || new Pool(createDatabasePoolConfig(connectionString));
     this.initialization = null;
   }
 
@@ -481,4 +524,8 @@ class PostgresDatabase {
   }
 }
 
-module.exports = { PostgresDatabase };
+module.exports = {
+  createDatabasePoolConfig,
+  createDatabaseSslConfig,
+  PostgresDatabase,
+};

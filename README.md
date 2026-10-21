@@ -118,12 +118,15 @@ Các biến thường dùng:
 | `HOST` | Địa chỉ bind của backend; local nên dùng `127.0.0.1`, môi trường cloud thường dùng `0.0.0.0`. |
 | `NODE_ENV` | Môi trường chạy, ví dụ `development` hoặc `production`. |
 | `DATABASE_URL` | Connection string PostgreSQL; chỉ cấu hình trong secret manager hoặc biến môi trường của dịch vụ deploy. |
+| `DATABASE_SSL_CA_PATH` | Tùy chọn: đường dẫn tới CA certificate PostgreSQL tin cậy, ví dụ `/etc/secrets/supabase-ca.crt` trên Render. TLS vẫn xác minh chứng chỉ máy chủ. |
 | `ADMIN_EMAIL` | Email quản trị do maintainer tự đặt trong môi trường deploy. |
 | `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự và không dùng lại mật khẩu dịch vụ database. |
 | `CORS_ORIGINS` | Danh sách origin frontend được phép, phân tách bằng dấu phẩy. Không thêm path hoặc dấu `/` cuối origin. |
 | `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
 
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
+
+Nếu PostgreSQL/Supabase báo lỗi TLS `SELF_SIGNED_CERT_IN_CHAIN`, tải CA certificate từ **Supabase → Project Settings → Database → SSL Configuration**. Trên Render, thêm certificate đó dưới **Environment → Secret Files** với tên `supabase-ca.crt`, rồi đặt `DATABASE_SSL_CA_PATH=/etc/secrets/supabase-ca.crt`. Không tắt xác minh chứng chỉ TLS.
 
 ## Các lệnh npm
 

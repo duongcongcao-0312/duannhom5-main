@@ -862,3 +862,74 @@ test("backend rejects invalid service and status payloads", async (t) => {
   );
   assert.equal(invalidStatusRes.status, 400);
 });
+
+test("social auth registers and authenticates Google and Facebook accounts", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-social-auth-"));
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const server = createServer({ ordersPath, usersPath });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const googleRes = await fetch(`${baseUrl}/api/auth/social`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Nguyễn Văn Google",
+      email: "google.reader@gmail.com",
+      provider: "google.com",
+      providerId: "google-uid-12345"
+    })
+  });
+  assert.equal(googleRes.status, 200);
+  const googleData = await googleRes.json();
+  assert.ok(googleData.token);
+  assert.equal(googleData.user.email, "google.reader@gmail.com");
+  assert.equal(googleData.user.name, "Nguyễn Văn Google");
+  assert.equal(googleData.user.authProvider, "google.com");
+
+  const fbRes = await fetch(`${baseUrl}/api/auth/social`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Trần Facebook",
+      email: "tran.fb@facebook.com",
+      provider: "facebook.com",
+      providerId: "fb-uid-99999"
+    })
+  });
+  assert.equal(fbRes.status, 200);
+  const fbData = await fbRes.json();
+  assert.ok(fbData.token);
+  assert.equal(fbData.user.email, "tran.fb@facebook.com");
+
+  const repeatGoogleRes = await fetch(`${baseUrl}/api/auth/social`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Nguyễn Văn Google Mới",
+      email: "google.reader@gmail.com",
+      provider: "google.com"
+    })
+  });
+  assert.equal(repeatGoogleRes.status, 200);
+  const repeatData = await repeatGoogleRes.json();
+  assert.equal(repeatData.user.id, googleData.user.id);
+
+  const invalidRes = await fetch(`${baseUrl}/api/auth/social`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "No Email", email: "invalid-email" })
+  });
+  assert.equal(invalidRes.status, 400);
+});

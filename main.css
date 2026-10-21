@@ -192,3 +192,23 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
 @media (max-width: 480px) { h2 { font-size: 1.8rem; }.hero { padding-inline: 6vw; }.hero-stack { margin-left: -18px; transform: scale(.62); }.season-strip { padding-inline: 5vw; }.season-strip::after { left: 5vw; right: 5vw; }.season-list { gap: 9px; }.season-card { min-height: 138px; padding: 14px; }.season-card strong { font-size: 1.2rem; }.season-card small { font-size: .7rem; }.season-mark { font-size: 1.7rem; }.section { padding-inline: 5vw; }.book-grid { gap: 14px; }.book-card { padding: 10px; }.book-bottom { align-items: stretch; flex-direction: column; }.add-button { width: 100%; }.cart-panel { padding: 20px; }.payment-dialog, .account-dialog { padding: 18px; }.ai-launcher { bottom: 16px; right: 16px; }.ai-launcher span { display: none; }.ai-chat { bottom: 72px; right: 16px; } }
 @media (max-width: 800px) { .detail-header { padding: 15px 5vw; }.back-link { font-size: .8rem; }.book-detail-page { padding: 48px 6vw 70px; }.detail-navigation a { max-width: 48%; }.book-detail-grid { grid-template-columns: 1fr; }.detail-cover { margin: 0 auto; max-width: 300px; width: 100%; }.detail-copy h1 { font-size: 2.8rem; }.related-book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .hero-stack { flex-basis: 240px; height: 220px; margin-left: 0; transform: scale(.9); width: 240px; }.hero-book { height: 180px; padding: 20px 15px; width: 116px; }.book-blue { left: 0; transform: rotate(-10deg) scale(.8); }.book-red { left: 64px; transform: rotate(5deg) scale(.8); }.book-gold { left: 124px; transform: rotate(16deg) scale(.8); } }
+
+
+/* Social Auth Dialog */
+.social-auth-dialog { max-width: 480px; width: 92%; }
+.social-modal-body { display: grid; gap: 14px; }
+.social-modal-desc { color: var(--muted); font-size: 0.88rem; line-height: 1.5; margin: 0; }
+.social-quick-section { display: grid; gap: 8px; }
+.social-quick-heading { color: var(--ink); font-size: 0.82rem; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 0.5px; }
+.social-quick-profiles { display: grid; gap: 8px; }
+.social-quick-card { align-items: center; background: white; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; display: flex; gap: 12px; padding: 10px 14px; text-align: left; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; width: 100%; font: inherit; }
+.social-quick-card:hover { border-color: var(--green); box-shadow: 0 4px 12px rgba(43,83,41,0.1); transform: translateY(-1px); }
+.social-avatar { align-items: center; border-radius: 50%; display: inline-flex; font-weight: 800; height: 36px; justify-content: center; width: 36px; color: white; font-size: 1rem; flex-shrink: 0; }
+.social-avatar.google-avatar { background: #ea4335; }
+.social-avatar.fb-avatar { background: #1877f2; font-family: Arial, sans-serif; }
+.social-profile-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.social-profile-info strong { color: var(--ink); font-size: 0.88rem; font-weight: 700; }
+.social-profile-info span { color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.social-badge { border-radius: 12px; font-size: 0.72rem; font-weight: 700; padding: 3px 8px; flex-shrink: 0; }
+.google-badge { background: #fce8e6; color: #c5221f; }
+.fb-badge { background: #e7f0ff; color: #1877f2; }

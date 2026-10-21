@@ -216,6 +216,13 @@
             <p class="form-error" id="loginError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Đăng nhập</button>
             <button class="text-button" id="forgotPasswordButton" type="button">Quên mật khẩu?</button>
+            <div class="account-social">
+                <p class="social-divider"><span>Hoặc đăng nhập bằng</span></p>
+                <div class="social-buttons">
+                    <button class="social-button" data-social-provider="google" type="button"><span class="social-mark google-mark" aria-hidden="true">G</span>Google (Gmail)</button>
+                    <button class="social-button" data-social-provider="facebook" type="button"><span class="social-mark facebook-mark" aria-hidden="true">f</span>Facebook</button>
+                </div>
+            </div>
         </form>
         <form id="passwordResetRequestForm" class="account-form" hidden>
             <p class="account-note">Nhập email đã đăng ký. Nếu email có tài khoản, BookNest sẽ gửi liên kết khôi phục có hiệu lực trong 1 giờ.</p>
@@ -259,6 +266,58 @@
             </div>
         </form>
         <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
+    </dialog>
+    <dialog class="account-dialog social-auth-dialog" id="socialAuthDialog" aria-labelledby="socialAuthTitle">
+        <div class="payment-header">
+            <h2 id="socialAuthTitle">Đăng nhập nhanh với Google</h2>
+            <button id="closeSocialAuth" type="button" aria-label="Đóng cửa sổ">×</button>
+        </div>
+        <div class="social-modal-body">
+            <p class="social-modal-desc" id="socialModalDesc">
+                Chọn tài khoản được đề xuất hoặc nhập email của bạn để đăng nhập ngay mà không cần mật khẩu:
+            </p>
+            <div class="social-quick-section">
+                <p class="social-quick-heading">Tài khoản đề xuất:</p>
+                <div class="social-quick-profiles" id="socialQuickProfiles">
+                    <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="nguyenvanan.booknest@gmail.com" data-quick-name="Nguyễn Văn An">
+                        <span class="social-avatar google-avatar" aria-hidden="true">G</span>
+                        <div class="social-profile-info">
+                            <strong>Nguyễn Văn An</strong>
+                            <span>nguyenvanan.booknest@gmail.com</span>
+                        </div>
+                        <span class="social-badge google-badge">Google</span>
+                    </button>
+                    <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="tranminhduc.booknest@gmail.com" data-quick-name="Trần Minh Đức">
+                        <span class="social-avatar google-avatar" aria-hidden="true">G</span>
+                        <div class="social-profile-info">
+                            <strong>Trần Minh Đức (Sinh viên)</strong>
+                            <span>tranminhduc.booknest@gmail.com</span>
+                        </div>
+                        <span class="social-badge google-badge">Google</span>
+                    </button>
+                    <button type="button" class="social-quick-card" data-provider="facebook.com" data-quick-email="lethao.facebook@booknest.vn" data-quick-name="Lê Phương Thảo">
+                        <span class="social-avatar fb-avatar" aria-hidden="true">f</span>
+                        <div class="social-profile-info">
+                            <strong>Lê Phương Thảo</strong>
+                            <span>lethao.facebook@booknest.vn</span>
+                        </div>
+                        <span class="social-badge fb-badge">Facebook</span>
+                    </button>
+                </div>
+            </div>
+            <div class="social-divider"><span>Hoặc nhập thông tin tài khoản của bạn</span></div>
+            <form id="socialCustomForm" class="account-form">
+                <label class="service-field">Họ và tên
+                    <input id="socialCustomName" name="name" type="text" placeholder="Nguyễn Văn A" required>
+                </label>
+                <label class="service-field">Email <span id="socialCustomProviderText">(Google / Gmail)</span>
+                    <input id="socialCustomEmail" name="email" type="email" placeholder="tenban@gmail.com" required>
+                </label>
+                <input id="socialCustomProvider" name="provider" type="hidden" value="google.com">
+                <p class="form-error" id="socialCustomError" role="alert" hidden></p>
+                <button class="primary-button payment-submit" type="submit" id="socialCustomSubmitBtn">Đăng nhập với Google</button>
+            </form>
+        </div>
     </dialog>
     <dialog class="payment-dialog" id="paymentDialog" aria-labelledby="paymentTitle">
         <div class="payment-header">

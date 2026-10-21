@@ -1,8 +1,13 @@
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
+<<<<<<< HEAD
+require("dotenv").config({ path: path.join(__dirname, ".env") });
+const { randomUUID } = require("node:crypto");
+=======
 require("dotenv").config();
 const { randomBytes, randomUUID } = require("node:crypto");
+>>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
 const books = require("./books-data");
 const {
   CustomerError,

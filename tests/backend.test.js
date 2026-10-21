@@ -4,9 +4,13 @@ const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { hashPassword } = require("../backend/auth");
+const { hashPassword, verifyPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
+<<<<<<< HEAD
+const { PostgresDatabase } = require("../backend/postgres-db");
+=======
 const { createEmailMailer } = require("../backend/email");
+>>>>>>> 056e2a2ee6d09cd2cc279b90d7da304f73eed360
 const { createServer } = require("../server");
 
 test("email delivery uses the HTTPS provider and exposes provider errors", async () => {
@@ -83,6 +87,87 @@ test("Render backend refuses to start without a persistent database URL", () => 
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /DATABASE_URL phải được cấu hình trên Render/);
+});
+
+test("configured admin credentials restore the admin account in file storage", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-recovery-"),
+  );
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const originalAdminEmail = process.env.ADMIN_EMAIL;
+  const originalAdminPassword = process.env.ADMIN_PASSWORD;
+
+  t.after(async () => {
+    if (originalAdminEmail === undefined) delete process.env.ADMIN_EMAIL;
+    else process.env.ADMIN_EMAIL = originalAdminEmail;
+    if (originalAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
+    else process.env.ADMIN_PASSWORD = originalAdminPassword;
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await fsPromises.writeFile(
+    usersPath,
+    JSON.stringify([{
+      id: "admin-master",
+      name: "Quản trị viên BookNest",
+      email: "admin@example.com",
+      password: hashPassword("old-password"),
+      role: "user",
+    }]),
+  );
+  process.env.ADMIN_EMAIL = " ADMIN@example.com ";
+  process.env.ADMIN_PASSWORD = "new-admin-password-123";
+
+  const db = new Database({ usersPath });
+  await db.init();
+  const admin = await db.findUserByEmail("admin@example.com");
+
+  assert.equal(admin.role, "admin");
+  assert.equal(verifyPassword("new-admin-password-123", admin.password), true);
+  assert.equal(verifyPassword("old-password", admin.password), false);
+});
+
+test("configured admin credentials restore the admin account in PostgreSQL", async (t) => {
+  const originalAdminEmail = process.env.ADMIN_EMAIL;
+  const originalAdminPassword = process.env.ADMIN_PASSWORD;
+  let records = [{
+    id: "admin-master",
+    email: "admin@example.com",
+    password: hashPassword("old-password"),
+    role: "user",
+  }];
+  const pool = {
+    async query(sql, values = []) {
+      if (sql.includes("SELECT records FROM booknest_data")) {
+        return { rows: [{ records }] };
+      }
+      if (sql.includes("INSERT INTO booknest_data")) {
+        records = JSON.parse(values[0]);
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  t.after(() => {
+    if (originalAdminEmail === undefined) delete process.env.ADMIN_EMAIL;
+    else process.env.ADMIN_EMAIL = originalAdminEmail;
+    if (originalAdminPassword === undefined) delete process.env.ADMIN_PASSWORD;
+    else process.env.ADMIN_PASSWORD = originalAdminPassword;
+  });
+
+  process.env.ADMIN_EMAIL = " ADMIN@example.com ";
+  process.env.ADMIN_PASSWORD = "new-admin-password-123";
+
+  const db = new PostgresDatabase({ pool });
+  await db.init();
+
+  assert.equal(records[0].role, "admin");
+  assert.equal(
+    verifyPassword("new-admin-password-123", records[0].password),
+    true,
+  );
+  assert.equal(verifyPassword("old-password", records[0].password), false);
 });
 
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {

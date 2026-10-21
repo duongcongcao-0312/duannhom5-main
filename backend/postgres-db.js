@@ -36,31 +36,51 @@ class PostgresDatabase {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `).then(async () => {
+        const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+        const password = process.env.ADMIN_PASSWORD || "";
+        const hasAdminConfig = Boolean(email || password);
+        if (hasAdminConfig && (!email || password.length < 12)) {
+          throw new Error(
+            "Cấu hình ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) không hợp lệ.",
+          );
+        }
+
         const { rows } = await this.pool.query(
           "SELECT records FROM booknest_data WHERE collection = 'users'",
         );
-        if (rows.length === 0) {
-          const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
-          const password = process.env.ADMIN_PASSWORD || "";
-          if (!email || password.length < 12) {
-            throw new Error(
-              "Đặt ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) để tạo tài khoản quản trị đầu tiên.",
-            );
+        let users = rows.length ? rows[0].records : [];
+        if (!Array.isArray(users)) {
+          throw new Error('PostgreSQL collection "users" must contain a JSON array.');
+        }
+        if (users.length === 0 && !hasAdminConfig) {
+          throw new Error(
+            "Đặt ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) để tạo tài khoản quản trị đầu tiên.",
+          );
+        }
+        if (hasAdminConfig) {
+          let admin = users.find(
+            (user) => String(user.email || "").trim().toLowerCase() === email,
+          );
+          if (!admin) {
+            admin = {
+              id: "admin-master",
+              name: "Quản trị viên BookNest",
+              email,
+              password: hashPassword(password),
+              role: "admin",
+              studentType: "other",
+              studentId: "",
+              customerInfo: {},
+              createdAt: new Date().toISOString(),
+            };
+            users.push(admin);
+          } else {
+            admin.password = hashPassword(password);
+            admin.role = "admin";
           }
-          const admin = {
-            id: "admin-master",
-            name: "Quản trị viên BookNest",
-            email,
-            password: hashPassword(password),
-            role: "admin",
-            studentType: "other",
-            studentId: "",
-            customerInfo: {},
-            createdAt: new Date().toISOString(),
-          };
           await this.pool.query(
-            "INSERT INTO booknest_data (collection, records) VALUES ('users', $1::jsonb) ON CONFLICT (collection) DO NOTHING",
-            [JSON.stringify([admin])],
+            "INSERT INTO booknest_data (collection, records) VALUES ('users', $1::jsonb) ON CONFLICT (collection) DO UPDATE SET records = EXCLUDED.records, updated_at = NOW()",
+            [JSON.stringify(users)],
           );
         }
       }).catch((error) => {

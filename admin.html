@@ -328,13 +328,13 @@
             <form id="adminLoginForm">
                 <label class="form-group">
                     <span>Email quản trị</span>
-                    <input type="email" name="email" class="form-input" value="admin@booknest.vn" required>
+                    <input type="email" name="email" class="form-input" autocomplete="username" required>
                 </label>
                 <label class="form-group">
                     <span>Mật khẩu</span>
-                    <input type="password" name="password" class="form-input" value="admin123" required>
+                    <input type="password" name="password" class="form-input" autocomplete="current-password" required>
                 </label>
-                <p class="login-hint">💡 Tài khoản mặc định: <b>admin@booknest.vn</b> | Mật khẩu: <b>admin123</b></p>
+                <p class="login-hint">Nhập email và mật khẩu quản trị được cấu hình trên máy chủ.</p>
                 <p id="adminLoginError" class="login-error" hidden></p>
                 <button type="submit" class="btn-primary btn-block">Đăng nhập Quản trị</button>
             </form>

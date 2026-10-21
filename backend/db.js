@@ -74,21 +74,64 @@ class Database {
     if (this.initialized) return;
     await fs.mkdir(path.dirname(this.usersPath), { recursive: true });
 
-    // Seed default admin if users file does not exist
+    const configuredEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const configuredPassword = process.env.ADMIN_PASSWORD || "";
+    const hasAdminConfig = Boolean(configuredEmail || configuredPassword);
+    if (
+      hasAdminConfig &&
+      (!configuredEmail || configuredPassword.length < 12)
+    ) {
+      throw new Error(
+        "Cấu hình ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) không hợp lệ.",
+      );
+    }
+
+    let users;
     try {
-      await fs.access(this.usersPath);
-    } catch {
-      const defaultAdmin = {
-        id: "admin-master",
-        name: "Quản trị viên BookNest",
-        email: "admin@booknest.vn",
-        password: hashPassword("admin123"),
-        role: "admin",
-        studentType: "other",
-        studentId: "",
-        createdAt: new Date().toISOString()
-      };
-      await fs.writeFile(this.usersPath, JSON.stringify([defaultAdmin], null, 2), "utf8");
+      users = JSON.parse(await fs.readFile(this.usersPath, "utf8"));
+      if (!Array.isArray(users)) {
+        throw new Error("Tệp tài khoản phải chứa một danh sách.");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      users = [];
+    }
+
+    if (hasAdminConfig) {
+      let admin = users.find(
+        (user) => String(user.email || "").trim().toLowerCase() === configuredEmail,
+      );
+      if (!admin) {
+        admin = {
+          id: "admin-master",
+          name: "Quản trị viên BookNest",
+          email: configuredEmail,
+          studentType: "other",
+          studentId: "",
+          createdAt: new Date().toISOString(),
+        };
+        users.push(admin);
+      }
+      admin.password = hashPassword(configuredPassword);
+      admin.role = "admin";
+      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+    } else {
+      try {
+        await fs.access(this.usersPath);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        const defaultAdmin = {
+          id: "admin-master",
+          name: "Quản trị viên BookNest",
+          email: "admin@booknest.vn",
+          password: hashPassword("admin123"),
+          role: "admin",
+          studentType: "other",
+          studentId: "",
+          createdAt: new Date().toISOString()
+        };
+        await fs.writeFile(this.usersPath, JSON.stringify([defaultAdmin], null, 2), "utf8");
+      }
     }
 
     this.initialized = true;

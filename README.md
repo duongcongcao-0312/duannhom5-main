@@ -26,12 +26,16 @@ Sao chép file mẫu và chỉnh sửa nếu cần:
 copy .env.example .env
 ```
 
-File `.env.example` có nội dung mặc định:
+Để dùng tài khoản quản trị của riêng bạn, đặt `ADMIN_EMAIL` và
+`ADMIN_PASSWORD` (ít nhất 12 ký tự) trong `.env`. Backend sẽ tạo hoặc khôi phục
+quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Khi dùng PostgreSQL,
+cũng cần đặt `DATABASE_URL`. Không dùng thông tin mẫu làm thông tin thật.
 
 ```env
 PORT=8000
 HOST=127.0.0.1
-NODE_ENV=development
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=your-unique-password-at-least-12-characters
 ```
 
 Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:

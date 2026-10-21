@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const { randomUUID } = require("node:crypto");
 const books = require("./books-data");
 const {

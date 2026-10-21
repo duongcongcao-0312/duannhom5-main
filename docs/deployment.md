@@ -22,6 +22,10 @@ qua secret manager trước khi tạo server. Có thể đặt thêm `ADMIN_NAME
 chối khởi động production nếu thiếu email/mật khẩu hợp lệ; tài khoản demo chỉ
 được seed trong môi trường không phải production.
 
+Khi dùng Render Postgres, ưu tiên internal database URL của cùng region. Backend
+dùng TLS và chỉ bỏ xác thực chứng thư cho hostname nội bộ Render (không có dấu
+chấm); các hostname database bên ngoài vẫn xác thực chứng thư TLS.
+
 Để bật khôi phục mật khẩu, cấu hình các biến sau trên backend:
 
 - `PUBLIC_APP_URL`: URL đầy đủ của storefront, bao gồm đường dẫn nếu website

@@ -23,7 +23,17 @@ class PostgresDatabase {
     if (!pool && !connectionString) {
       throw new Error("DATABASE_URL là bắt buộc khi dùng PostgreSQL.");
     }
-    this.pool = pool || new Pool({ connectionString, ssl: true });
+    const databaseHost = connectionString
+      ? new URL(connectionString).hostname
+      : "";
+    const isRenderInternalDatabase =
+      Boolean(process.env.RENDER) && !databaseHost.includes(".");
+    this.pool = pool || new Pool({
+      connectionString,
+      ssl: isRenderInternalDatabase
+        ? { rejectUnauthorized: false }
+        : true,
+    });
     this.initialization = null;
   }
 

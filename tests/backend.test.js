@@ -86,6 +86,29 @@ test("Render backend refuses to start without a persistent database URL", () => 
   assert.match(result.stderr, /DATABASE_URL phải được cấu hình trên Render/);
 });
 
+test("PostgreSQL uses TLS settings compatible with Render internal databases", async (t) => {
+  const originalRender = process.env.RENDER;
+  t.after(async () => {
+    if (originalRender === undefined) delete process.env.RENDER;
+    else process.env.RENDER = originalRender;
+  });
+
+  process.env.RENDER = "true";
+  const internalDatabase = new PostgresDatabase({
+    connectionString: "postgres://user:password@dpg-test-a:5432/booknest",
+  });
+  assert.deepEqual(internalDatabase.pool.options.ssl, {
+    rejectUnauthorized: false,
+  });
+  await internalDatabase.pool.end();
+
+  const externalDatabase = new PostgresDatabase({
+    connectionString: "postgres://user:password@dpg-test-a.oregon-postgres.render.com:5432/booknest",
+  });
+  assert.equal(externalDatabase.pool.options.ssl, true);
+  await externalDatabase.pool.end();
+});
+
 test("configured admin credentials restore the admin account in file storage", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-admin-recovery-"),

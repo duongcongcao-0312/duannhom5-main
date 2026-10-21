@@ -69,6 +69,12 @@ test('account login provides password-reset request and confirmation forms', () 
 	assert.match(script, /window\.location\.hash/);
 });
 
+test('admin API authentication uses bearer tokens without cross-origin cookies', () => {
+	const script = read('admin.js');
+	assert.match(script, /headers\[AUTH_HEADER_KEY\]/);
+	assert.doesNotMatch(script, /credentials:\s*['"]include['"]/);
+});
+
 test('account registration only reports duplicates for an explicit conflict response', () => {
 	const script = read('main.js');
 	assert.match(script, /response\.status === 409/);

@@ -22,6 +22,27 @@ qua secret manager trước khi tạo server. Có thể đặt thêm `ADMIN_NAME
 chối khởi động production nếu thiếu email/mật khẩu hợp lệ; tài khoản demo chỉ
 được seed trong môi trường không phải production.
 
+Để bật khôi phục mật khẩu, cấu hình các biến sau trên backend:
+
+- `PUBLIC_APP_URL`: URL đầy đủ của storefront, bao gồm đường dẫn nếu website
+  được phục vụ trong thư mục con (ví dụ `https://example.com/booknest/`).
+- `SMTP_HOST`, `SMTP_PORT` và `SMTP_FROM`: máy chủ SMTP, cổng (587 mặc định)
+  và địa chỉ gửi thư.
+- `SMTP_USER` và `SMTP_PASSWORD`: thông tin xác thực SMTP nếu máy chủ yêu cầu.
+- Khuyến nghị dùng API email qua HTTPS: cấu hình `RESEND_API_KEY` và
+  `RESEND_FROM` (địa chỉ gửi đã xác minh trong Resend). Khi các biến này có
+  giá trị, backend ưu tiên Resend thay vì SMTP.
+
+Liên kết khôi phục có hiệu lực một giờ, chỉ dùng được một lần; sau khi đổi mật
+khẩu, các phiên đăng nhập hiện có bị thu hồi. Nếu chưa cấu hình email hoặc URL
+website, API khôi phục trả lỗi cấu hình thay vì thông báo đã gửi email.
+Blueprint `render.yaml` khai báo sẵn các biến này và URL GitHub Pages. Trên
+Render, hãy nhập `RESEND_API_KEY` và `RESEND_FROM` vào Environment, xác minh
+domain gửi thư với Resend, rồi redeploy. API HTTPS không phụ thuộc kết nối
+SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP_*`. Không đưa
+API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
+log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
+
 ## Chạy bằng Docker
 
 ```sh
@@ -33,12 +54,21 @@ docker run -d --name booknest \
   --env ADMIN_EMAIL \
   --env ADMIN_PASSWORD \
   --env ADMIN_NAME \
+  --env PUBLIC_APP_URL \
+  --env SMTP_HOST \
+  --env SMTP_PORT \
+  --env SMTP_FROM \
+  --env SMTP_USER \
+  --env SMTP_PASSWORD \
+  --env RESEND_API_KEY \
+  --env RESEND_FROM \
   -v booknest-data:/app/data \
   booknest:0.1.0
 ```
 
-Các biến `ADMIN_*` trong lệnh trên phải được cấp sẵn từ secret manager của host;
-không ghi giá trị bí mật trực tiếp vào shell history hoặc file trong repository.
+Các biến `ADMIN_*`, `SMTP_PASSWORD` và `RESEND_API_KEY` trong lệnh trên phải
+được cấp sẵn từ secret manager của host; không ghi giá trị bí mật trực tiếp
+vào shell history hoặc file trong repository.
 
 Image xuất bản từ GitHub Actions có tên
 `ghcr.io/duongcongcao-0312/duannhom5-main:<tag>`. Workflow chạy khi push tag

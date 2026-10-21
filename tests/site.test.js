@@ -58,6 +58,27 @@ test('customer contact information persists for purchases and book services afte
 	assert.match(script, /api\/auth\/me/);
 });
 
+test('account login provides password-reset request and confirmation forms', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	assert.match(html, /id="forgotPasswordButton"/);
+	assert.match(html, /id="passwordResetRequestForm"/);
+	assert.match(html, /id="passwordResetConfirmForm"/);
+	assert.match(script, /api\/auth\/password-reset/);
+	assert.match(script, /api\/auth\/password-reset\/confirm/);
+	assert.match(script, /window\.location\.hash/);
+});
+
+test('account registration only reports duplicates for an explicit conflict response', () => {
+	const script = read('main.js');
+	assert.match(script, /response\.status === 409/);
+	assert.match(script, /Không thể kết nối máy chủ để tạo tài khoản/);
+	assert.match(script, /Không thể tạo tài khoản lúc này/);
+	assert.match(script, /submitButton\.disabled = true/);
+	assert.match(script, /submitButton\.disabled = false/);
+	assert.doesNotMatch(script, /const users = readUsers\(\);[\s\S]{0,300}showAccountError\('#registerError', 'Email này đã được đăng ký\.'\)/);
+});
+
 test('cart groups duplicate books and provides quantity controls', () => {
 	const script = read('main.js');
 	const css = read('main.css');
@@ -113,6 +134,12 @@ test('frontend API client targets the configured backend origin', () => {
 	const context = { window: { BOOKNEST_API_BASE_URL: 'https://api.example.com/' } };
 	vm.runInNewContext(read('assets/api-client.js'), context);
 	assert.equal(context.window.booknestApiUrl('/api/books'), 'https://api.example.com/api/books');
+	const pagesConfig = { window: { location: { hostname: 'duongcongcao-0312.github.io' } } };
+	vm.runInNewContext(read('assets/api-config.js'), pagesConfig);
+	assert.equal(pagesConfig.window.BOOKNEST_API_BASE_URL, 'https://duannhom5-main.onrender.com');
+	const localConfig = { window: { location: { hostname: '127.0.0.1' } } };
+	vm.runInNewContext(read('assets/api-config.js'), localConfig);
+	assert.equal(localConfig.window.BOOKNEST_API_BASE_URL, '');
 	assert.match(read('index.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*main\.js/);
 	assert.match(read('admin.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*admin\.js/);
 });
@@ -307,6 +334,8 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	const spec = JSON.parse(read('docs/openapi.json'));
 	assert.equal(spec.openapi, '3.1.0');
 	assert.ok(spec.paths['/api/auth/register']);
+	assert.ok(spec.paths['/api/auth/password-reset']);
+	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
 	assert.ok(spec.paths['/api/customers/{id}']);
 	assert.ok(spec.paths['/api/admin/customers']);
@@ -315,6 +344,15 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 		spec.paths['/api/customers/{id}'].patch.requestBody.content['application/json'].schema.properties.status.enum,
 		['new', 'lead', 'customer']
 	);
+});
+
+test('Render deployment provisions storefront URL and SMTP reset-email settings', () => {
+	const renderConfig = read('render.yaml');
+	assert.match(renderConfig, /key: PUBLIC_APP_URL[\s\S]*value: https:\/\/duongcongcao-0312\.github\.io\/duannhom5-main\//);
+	['SMTP_HOST', 'SMTP_PORT', 'SMTP_FROM', 'SMTP_USER', 'SMTP_PASSWORD']
+		.forEach((key) => assert.match(renderConfig, new RegExp(`key: ${key}`)));
+	['RESEND_API_KEY', 'RESEND_FROM']
+		.forEach((key) => assert.match(renderConfig, new RegExp(`key: ${key}`)));
 });
 
 test('invalid books are rejected without saving an order', async (t) => {

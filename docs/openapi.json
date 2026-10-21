@@ -67,6 +67,30 @@
         "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/auth/password-reset": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Gửi email khôi phục mật khẩu nếu email đã đăng ký",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordResetRequest" } } } },
+        "responses": {
+          "200": { "description": "Phản hồi chung để không tiết lộ email có đăng ký hay không", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/password-reset/confirm": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Đặt mật khẩu mới bằng liên kết khôi phục",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordResetConfirm" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/auth/register": {
       "post": {
         "tags": ["Auth"],
@@ -203,6 +227,9 @@
       "Book": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "author": { "type": "string" }, "price": { "type": "number" }, "category": { "type": "string" }, "image": { "type": "string" }, "stock": { "type": "integer" } }, "required": ["title", "author", "price"] },
       "Register": { "type": "object", "required": ["name", "email", "password"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "password": { "type": "string", "minLength": 6 }, "studentType": { "type": "string" }, "studentId": { "type": "string" } } },
       "Login": { "type": "object", "required": ["email", "password"], "properties": { "email": { "type": "string", "format": "email" }, "password": { "type": "string" } } },
+      "PasswordResetRequest": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email" } } },
+      "PasswordResetConfirm": { "type": "object", "required": ["token", "password"], "properties": { "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "password": { "type": "string", "minLength": 6, "maxLength": 128 } } },
+      "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
       "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
       "CreateOrder": { "type": "object", "required": ["customerName", "address", "phone", "paymentMethod", "discountRate", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": ["string", "null"] }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
       "PublicOrder": { "type": "object", "properties": { "orderId": { "type": "string", "format": "uuid" }, "createdAt": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "paymentStatus": { "type": "string" }, "paymentMethod": { "type": "string" }, "couponCode": { "type": ["string", "null"] }, "total": { "type": "number" }, "items": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "quantity": { "type": "integer" }, "lineTotal": { "type": "number" } } } } } },

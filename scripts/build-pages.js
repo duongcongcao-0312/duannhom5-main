@@ -32,7 +32,7 @@ async function copyFiles(files, sourceDirectory, destinationDirectory) {
 }
 
 async function buildPages() {
-	const apiBaseUrl = (process.env.API_BASE_URL || '').trim().replace(/\/+$/, '');
+	const apiBaseUrl = (process.env.API_BASE_URL || 'https://duannhom5-main.onrender.com').trim().replace(/\/+$/, '');
 	if (apiBaseUrl && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(apiBaseUrl)) {
 		throw new Error('API_BASE_URL phải là một origin HTTPS hợp lệ, ví dụ https://booknest-api.onrender.com.');
 	}

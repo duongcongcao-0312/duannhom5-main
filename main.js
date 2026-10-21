@@ -599,7 +599,9 @@ const accountButton = document.querySelector('#accountButton');
 const trackOrderDialog = document.querySelector('#trackOrderDialog');
 const accountViews = {
 	login: document.querySelector('#loginForm'),
-	register: document.querySelector('#registerForm')
+	register: document.querySelector('#registerForm'),
+	'reset-request': document.querySelector('#passwordResetRequestForm'),
+	'reset-confirm': document.querySelector('#passwordResetConfirmForm')
 };
 
 function readUsers() {
@@ -612,13 +614,15 @@ function readUsers() {
 }
 
 function setAccountView(view) {
-	const loginForm = document.querySelector('#loginForm');
-	const registerForm = document.querySelector('#registerForm');
-
-	if (loginForm) loginForm.hidden = view !== 'login';
-	if (registerForm) registerForm.hidden = view !== 'register';
-
+	Object.entries(accountViews).forEach(([name, form]) => {
+		if (form) form.hidden = name !== view;
+	});
+	const isAccountTabView = view === 'login' || view === 'register';
+	document.querySelector('.account-tabs').hidden = !isAccountTabView;
 	document.querySelectorAll('.account-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.accountView === view));
+	document.querySelector('#accountTitle').textContent = isAccountTabView
+		? 'Tài khoản BookNest'
+		: 'Khôi phục mật khẩu';
 }
 
 function renderAccount() {
@@ -652,7 +656,9 @@ function saveFederatedAccount(firebaseUser) {
 	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
-	accountDialog.close();
+	if (!new URLSearchParams(window.location.hash.slice(1)).has('resetToken')) {
+		accountDialog.close();
+	}
 }
 
 function getSocialAuthError(error) {
@@ -665,11 +671,93 @@ function getSocialAuthError(error) {
 
 accountButton.addEventListener('click', () => {
 	renderAccount();
+	document.querySelector('#loginMessage').hidden = true;
 	setAccountView('login');
 	accountDialog.showModal();
 });
 document.querySelector('#closeAccount').addEventListener('click', () => accountDialog.close());
 document.querySelectorAll('.account-tab').forEach((tab) => tab.addEventListener('click', () => setAccountView(tab.dataset.accountView)));
+document.querySelector('#forgotPasswordButton').addEventListener('click', () => {
+	const loginEmail = document.querySelector('#loginForm [name="email"]').value.trim();
+	const resetEmail = document.querySelector('#passwordResetRequestForm [name="email"]');
+	resetEmail.value = loginEmail;
+	document.querySelector('#passwordResetRequestError').hidden = true;
+	document.querySelector('#passwordResetRequestMessage').hidden = true;
+	setAccountView('reset-request');
+	resetEmail.focus();
+});
+document.querySelectorAll('[data-account-back="login"]').forEach((button) => button.addEventListener('click', () => {
+	setAccountView('login');
+}));
+document.querySelector('#passwordResetRequestForm').addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const form = event.currentTarget;
+	if (!form.reportValidity()) return;
+	const submitButton = form.querySelector('[type="submit"]');
+	const error = document.querySelector('#passwordResetRequestError');
+	const message = document.querySelector('#passwordResetRequestMessage');
+	error.hidden = true;
+	message.hidden = true;
+	submitButton.disabled = true;
+	try {
+		const response = await fetch(window.booknestApiUrl('/api/auth/password-reset'), {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email: String(new FormData(form).get('email') || '').trim().toLowerCase() })
+		});
+		const result = await response.json().catch(() => ({}));
+		if (!response.ok) throw new Error(result.error || 'Không thể gửi email khôi phục. Vui lòng thử lại.');
+		message.textContent = result.message;
+		message.hidden = false;
+	} catch (errorValue) {
+		showAccountError('#passwordResetRequestError', errorValue instanceof Error ? errorValue.message : 'Không thể gửi email khôi phục. Vui lòng thử lại.');
+	} finally {
+		submitButton.disabled = false;
+	}
+});
+document.querySelector('#passwordResetConfirmForm').addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const form = event.currentTarget;
+	if (!form.reportValidity()) return;
+	const formData = new FormData(form);
+	const password = String(formData.get('password') || '');
+	if (password !== String(formData.get('confirmPassword') || '')) {
+		showAccountError('#passwordResetConfirmError', 'Mật khẩu nhập lại không khớp.');
+		return;
+	}
+	const submitButton = form.querySelector('[type="submit"]');
+	showAccountError('#passwordResetConfirmError', '');
+	submitButton.disabled = true;
+	try {
+		const response = await fetch(window.booknestApiUrl('/api/auth/password-reset/confirm'), {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				token: String(formData.get('token') || ''),
+				password
+			})
+		});
+		const result = await response.json().catch(() => ({}));
+		if (!response.ok) throw new Error(result.error || 'Không thể cập nhật mật khẩu. Vui lòng thử lại.');
+		form.reset();
+		const cleanUrl = new URL(window.location.href);
+		cleanUrl.hash = '';
+		window.history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}`);
+		document.querySelector('#loginMessage').textContent = 'Mật khẩu đã được cập nhật. Bạn có thể đăng nhập bằng mật khẩu mới.';
+		document.querySelector('#loginMessage').hidden = false;
+		setAccountView('login');
+	} catch (errorValue) {
+		showAccountError('#passwordResetConfirmError', errorValue instanceof Error ? errorValue.message : 'Không thể cập nhật mật khẩu. Vui lòng thử lại.');
+	} finally {
+		submitButton.disabled = false;
+	}
+});
+const resetTokenFromUrl = new URLSearchParams(window.location.hash.slice(1)).get('resetToken');
+if (resetTokenFromUrl) {
+	document.querySelector('#passwordResetConfirmForm [name="token"]').value = resetTokenFromUrl;
+	setAccountView('reset-confirm');
+	accountDialog.showModal();
+}
 document.querySelector('#registerForm select[name="studentType"]').addEventListener('change', (event) => {
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
@@ -772,6 +860,8 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 		studentType: data.get('studentType'),
 		studentId: String(data.get('studentId') || '').trim()
 	};
+	const submitButton = form.querySelector('[type="submit"]');
+	submitButton.disabled = true;
 
 	try {
 		const response = await fetch(window.booknestApiUrl('/api/auth/register'), {
@@ -785,9 +875,6 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			state.user = resData.user || user;
 			applyAccountCustomerInfo(state.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
-			const users = readUsers();
-			users.push(user);
-			localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 			renderAccount();
 			renderCart();
 			setAccountView('login');
@@ -797,29 +884,25 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			return;
 		} else {
 			const errorData = await response.json().catch(() => ({}));
-			showAccountError('#registerError', errorData.error || 'Email này đã được đăng ký.');
+			showAccountError(
+				'#registerError',
+				response.status === 409
+					? 'Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Quên mật khẩu?” để khôi phục tài khoản.'
+					: errorData.error || `Máy chủ không thể tạo tài khoản (mã lỗi ${response.status}). Vui lòng thử lại sau.`
+			);
 			return;
 		}
-	} catch {
-		// Server offline fallback
-	}
-
-	const users = readUsers();
-	if (users.some((item) => item.email === email)) {
-		showAccountError('#registerError', 'Email này đã được đăng ký.');
+	} catch (error) {
+		showAccountError(
+			'#registerError',
+			error instanceof Error
+				? 'Không thể kết nối máy chủ để tạo tài khoản. Vui lòng kiểm tra kết nối rồi thử lại.'
+				: 'Không thể tạo tài khoản lúc này. Vui lòng thử lại sau.'
+		);
 		return;
+	} finally {
+		submitButton.disabled = false;
 	}
-	users.push(user);
-	localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
-	state.user = user;
-	applyAccountCustomerInfo(user);
-	renderAccount();
-	renderCart();
-	setAccountView('login');
-	accountDialog.close();
-	form.reset();
-	document.querySelector('.student-id-field').hidden = true;
 });
 document.querySelector('#logoutButton').addEventListener('click', async () => {
 	if (state.user?.firebaseUid && firebaseAuth) {

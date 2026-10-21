@@ -133,6 +133,39 @@ class PostgresDatabase {
     return (await this.getUsers()).find((user) => user.id === id) || null;
   }
 
+  async createPasswordResetToken(email, tokenHash, expiresAt) {
+    return this.updateCollection("users", (users) => {
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const user = users.find((entry) => entry.email.toLowerCase() === normalizedEmail);
+      if (!user) return null;
+      user.passwordReset = { tokenHash, expiresAt };
+      return { id: user.id, name: user.name, email: user.email };
+    });
+  }
+
+  async clearPasswordResetToken(tokenHash) {
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.passwordReset?.tokenHash === tokenHash);
+      if (!user) return false;
+      delete user.passwordReset;
+      return true;
+    });
+  }
+
+  async resetPassword(tokenHash, password) {
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => (
+        entry.passwordReset?.tokenHash === tokenHash &&
+        Date.parse(entry.passwordReset.expiresAt) > Date.now()
+      ));
+      if (!user) return null;
+      user.password = hashPassword(password);
+      delete user.passwordReset;
+      user.updatedAt = new Date().toISOString();
+      return user.id;
+    });
+  }
+
   async createUser(data) {
     return this.updateCollection("users", (users) => {
       const email = String(data.email).trim().toLowerCase();

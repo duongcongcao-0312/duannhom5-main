@@ -68,6 +68,7 @@ class Database {
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.initialized = false;
+    this.userWriteQueue = Promise.resolve();
   }
 
   async init() {
@@ -119,57 +120,95 @@ class Database {
     return users.find((u) => u.id === id) || null;
   }
 
+  async updateUsers(update) {
+    const operation = this.userWriteQueue.then(async () => {
+      await this.init();
+      const users = await this.getUsers();
+      const result = await update(users);
+      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+      return result;
+    });
+    this.userWriteQueue = operation.catch(() => {});
+    return operation;
+  }
+
+  async createPasswordResetToken(email, tokenHash, expiresAt) {
+    return this.updateUsers((users) => {
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const user = users.find((entry) => entry.email.toLowerCase() === normalizedEmail);
+      if (!user) return null;
+      user.passwordReset = { tokenHash, expiresAt };
+      return { id: user.id, name: user.name, email: user.email };
+    });
+  }
+
+  async clearPasswordResetToken(tokenHash) {
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.passwordReset?.tokenHash === tokenHash);
+      if (!user) return false;
+      delete user.passwordReset;
+      return true;
+    });
+  }
+
+  async resetPassword(tokenHash, password) {
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => (
+        entry.passwordReset?.tokenHash === tokenHash &&
+        Date.parse(entry.passwordReset.expiresAt) > Date.now()
+      ));
+      if (!user) return null;
+      user.password = hashPassword(password);
+      delete user.passwordReset;
+      user.updatedAt = new Date().toISOString();
+      return user.id;
+    });
+  }
+
   async updateCustomerInfo(id, customerInfo, actorName = "system") {
-    await this.init();
-    const users = await this.getUsers();
-    const userIndex = users.findIndex((user) => user.id === id);
-    if (userIndex < 0) return null;
-    const normalizedActor = String(actorName || "system").trim() || "system";
-    users[userIndex].customerInfo = {
-      ...(users[userIndex].customerInfo || {}),
-      ...customerInfo,
-    };
-    users[userIndex].updatedBy = normalizedActor;
-    users[userIndex].updatedAt = new Date().toISOString();
-    await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
-    return users[userIndex];
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user) return null;
+      const normalizedActor = String(actorName || "system").trim() || "system";
+      user.customerInfo = { ...(user.customerInfo || {}), ...customerInfo };
+      user.updatedBy = normalizedActor;
+      user.updatedAt = new Date().toISOString();
+      return user;
+    });
   }
 
   async createUser(data) {
-    await this.init();
-    const users = await this.getUsers();
-    const cleanEmail = String(data.email).trim().toLowerCase();
-    if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
-      throw new Error("Email này đã được đăng ký trên hệ thống.");
-    }
+    return this.updateUsers((users) => {
+      const cleanEmail = String(data.email).trim().toLowerCase();
+      if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+        throw new Error("Email này đã được đăng ký trên hệ thống.");
+      }
 
-    const normalizedRole = String(data.role || "user").trim().toLowerCase();
-    const allowedRoles = new Set(["user", "admin", "sales", "support"]);
-    if (!allowedRoles.has(normalizedRole)) {
-      throw new Error("Vai trò người dùng không hợp lệ.");
-    }
+      const normalizedRole = String(data.role || "user").trim().toLowerCase();
+      const allowedRoles = new Set(["user", "admin", "sales", "support"]);
+      if (!allowedRoles.has(normalizedRole)) {
+        throw new Error("Vai trò người dùng không hợp lệ.");
+      }
 
-    const actorName = String(data.createdBy || data.updatedBy || "system").trim() || "system";
-    const now = new Date().toISOString();
-
-    const newUser = {
-      id: crypto.randomUUID(),
-      name: String(data.name).trim(),
-      email: cleanEmail,
-      password: hashPassword(data.password),
-      role: normalizedRole,
-      studentType: data.studentType || "other",
-      studentId: String(data.studentId || "").trim(),
-      customerInfo: {},
-      createdBy: actorName,
-      updatedBy: actorName,
-      createdAt: now,
-      updatedAt: now
-    };
-
-    users.push(newUser);
-    await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
-    return newUser;
+      const actorName = String(data.createdBy || data.updatedBy || "system").trim() || "system";
+      const now = new Date().toISOString();
+      const newUser = {
+        id: crypto.randomUUID(),
+        name: String(data.name).trim(),
+        email: cleanEmail,
+        password: hashPassword(data.password),
+        role: normalizedRole,
+        studentType: data.studentType || "other",
+        studentId: String(data.studentId || "").trim(),
+        customerInfo: {},
+        createdBy: actorName,
+        updatedBy: actorName,
+        createdAt: now,
+        updatedAt: now
+      };
+      users.push(newUser);
+      return newUser;
+    });
   }
 
   // --- CRM Customers ---

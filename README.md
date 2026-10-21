@@ -198,8 +198,13 @@ npm audit --omit=dev
 
 1. Chạy `npm run build:pages`.
 2. Workflow GitHub Actions deploy thư mục `dist/`.
-3. Đặt `API_BASE_URL` trong GitHub Actions Variables nếu backend không dùng URL mặc định.
+3. GitHub Pages mặc định gọi backend `https://duannhom5-main.onrender.com`;
+   đặt `API_BASE_URL` trong GitHub Actions Variables nếu backend dùng URL khác.
 4. Đảm bảo frontend gọi backend qua HTTPS.
+5. Để bật khôi phục mật khẩu, cấu hình `PUBLIC_APP_URL` theo đúng URL storefront
+   (bao gồm đường dẫn GitHub Pages nếu có) và thông tin nhà cung cấp email trên
+   backend. Khuyến nghị dùng Resend qua HTTPS: `RESEND_API_KEY` và `RESEND_FROM`
+   (địa chỉ gửi phải xác minh domain). Xem [docs/deployment.md](docs/deployment.md).
 
 ### Tài liệu API
 

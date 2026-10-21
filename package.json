@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "build:pages": "node scripts/build-pages.js",
-    "check": "node --check server.js && node --check backend/auth.js && node --check backend/db.js && node --check admin.js && node --check book-detail.js && node --check books-data.js && node --check main.js && node --check assets/firebase-config.js && node --check scripts/build-pages.js && node --check tests/backend.test.js && node --check tests/site.test.js",
+    "check": "node --check server.js && node --check backend/auth.js && node --check backend/email.js && node --check backend/db.js && node --check backend/postgres-db.js && node --check admin.js && node --check book-detail.js && node --check books-data.js && node --check main.js && node --check assets/firebase-config.js && node --check scripts/build-pages.js && node --check tests/backend.test.js && node --check tests/site.test.js",
     "migrate": "node scripts/migrate.js",
     "seed:customers": "node scripts/seed-customers.js",
     "test": "node --test tests/site.test.js tests/backend.test.js",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "dotenv": "^18.0.7",
+    "nodemailer": "^10.1.7",
     "pg": "8.13.1"
   }
 }

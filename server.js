@@ -1,7 +1,8 @@
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+require("dotenv").config();
+const { randomBytes, randomUUID } = require("node:crypto");
 const books = require("./books-data");
 const {
   CustomerError,
@@ -9,7 +10,12 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
-const { SessionStore, verifyPassword } = require("./backend/auth");
+const {
+  hashPasswordResetToken,
+  SessionStore,
+  verifyPassword,
+} = require("./backend/auth");
+const { createEmailMailer } = require("./backend/email");
 
 const root = __dirname;
 const defaultOrdersPath = path.join(root, "data", "orders.jsonl");
@@ -384,6 +390,8 @@ function createServer({
   servicesPath,
   booksPath,
   database,
+  passwordResetMailer = createEmailMailer(),
+  appBaseUrl = process.env.PUBLIC_APP_URL,
   corsOrigins = process.env.CORS_ORIGINS || (
     process.env.RENDER
       ? "https://duongcongcao-0312.github.io"
@@ -416,6 +424,8 @@ function createServer({
       booksPath,
     }));
   const sessionStore = new SessionStore();
+  const passwordResetAttempts = new Map();
+  const passwordResetEmailAttempts = new Map();
   const allowedOrigins = new Set(
     corsOrigins
       .split(",")
@@ -537,7 +547,122 @@ function createServer({
       return;
     }
 
-    // --- API: Auth (Register / Login / Profile / Logout) ---
+    // --- API: Auth (Register / Login / Password reset / Profile / Logout) ---
+    if (
+      requestUrl.pathname === "/api/auth/password-reset" &&
+      request.method === "POST"
+    ) {
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Email không hợp lệ.",
+      );
+      const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new RequestError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
+      }
+
+      const now = Date.now();
+      let resetBase;
+      try {
+        resetBase = new URL(String(appBaseUrl || ""));
+        if (
+          !["http:", "https:"].includes(resetBase.protocol) ||
+          resetBase.username ||
+          resetBase.password ||
+          resetBase.search ||
+          resetBase.hash
+        ) {
+          throw new Error("Invalid public app URL.");
+        }
+        if (!resetBase.pathname.endsWith("/")) resetBase.pathname += "/";
+      } catch {
+        throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình địa chỉ website.");
+      }
+      if (!passwordResetMailer) {
+        throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình email.");
+      }
+
+      for (const [key, attempt] of passwordResetAttempts) {
+        if (attempt.expiresAt <= now) passwordResetAttempts.delete(key);
+      }
+      for (const [key, attempt] of passwordResetEmailAttempts) {
+        if (attempt.expiresAt <= now) passwordResetEmailAttempts.delete(key);
+      }
+      const address = request.socket.remoteAddress || "unknown";
+      const attempt = passwordResetAttempts.get(address);
+      if (attempt && attempt.count >= 30) {
+        throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
+      }
+      passwordResetAttempts.set(address, {
+        count: (attempt?.count || 0) + 1,
+        expiresAt: attempt?.expiresAt || now + 15 * 60 * 1000,
+      });
+      const emailAttempt = passwordResetEmailAttempts.get(email);
+      if (emailAttempt && emailAttempt.count >= 5) {
+        throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
+      }
+      passwordResetEmailAttempts.set(email, {
+        count: (emailAttempt?.count || 0) + 1,
+        expiresAt: emailAttempt?.expiresAt || now + 15 * 60 * 1000,
+      });
+
+      const token = randomBytes(32).toString("hex");
+      const tokenHash = hashPasswordResetToken(token);
+      const user = await db.createPasswordResetToken(
+        email,
+        tokenHash,
+        new Date(now + 60 * 60 * 1000).toISOString(),
+      );
+      if (user) {
+        resetBase.hash = new URLSearchParams({ resetToken: token }).toString();
+        try {
+          await passwordResetMailer.sendPasswordReset({
+            to: user.email,
+            name: user.name,
+            url: resetBase.toString(),
+          });
+        } catch (error) {
+          await db.clearPasswordResetToken(tokenHash);
+          passwordResetAttempts.delete(address);
+          passwordResetEmailAttempts.delete(email);
+          console.error("Không thể gửi email khôi phục mật khẩu:", error);
+          throw new RequestError(
+            503,
+            "Không thể gửi email khôi phục. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
+          );
+        }
+      }
+      sendJson(response, 200, {
+        message: "Nếu email được đăng ký, hướng dẫn khôi phục mật khẩu sẽ được gửi đến hộp thư của bạn.",
+      });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/auth/password-reset/confirm" &&
+      request.method === "POST"
+    ) {
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Yêu cầu đặt lại mật khẩu không hợp lệ.",
+      );
+      const token = typeof payload.token === "string" ? payload.token : "";
+      const password = typeof payload.password === "string" ? payload.password : "";
+      if (!/^[a-f0-9]{64}$/i.test(token)) {
+        throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
+      }
+      if (password.length < 6 || password.length > 128) {
+        throw new RequestError(400, "Mật khẩu mới phải có từ 6 đến 128 ký tự.");
+      }
+      const userId = await db.resetPassword(hashPasswordResetToken(token), password);
+      if (!userId) {
+        throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
+      }
+      sessionStore.destroyUserSessions(userId);
+      sendJson(response, 200, { message: "Mật khẩu đã được cập nhật." });
+      return;
+    }
+
     if (
       requestUrl.pathname === "/api/auth/register" &&
       request.method === "POST"
@@ -569,7 +694,14 @@ function createServer({
           user: publicUser(user),
         });
       } catch (err) {
-        throw new RequestError(400, err.message);
+        if (err instanceof Error && err.message === "Email này đã được đăng ký trên hệ thống.") {
+          throw new RequestError(409, err.message);
+        }
+        console.error("Không thể lưu tài khoản đăng ký:", err);
+        throw new RequestError(
+          503,
+          "Hệ thống hiện không thể lưu tài khoản. Vui lòng thử lại sau hoặc liên hệ quản trị viên.",
+        );
       }
       return;
     }
@@ -993,6 +1125,12 @@ function createServer({
       }
       console.error("Không thể xử lý yêu cầu:", error);
       if (!response.headersSent) {
+        if (request.url?.startsWith("/api/")) {
+          sendJson(response, 500, {
+            error: "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.",
+          });
+          return;
+        }
         void sendHtmlError(response, 500, "500");
         return;
       }

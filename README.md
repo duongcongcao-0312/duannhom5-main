@@ -13,9 +13,9 @@ BookNest là ứng dụng bán sách trực tuyến gồm storefront cho khách 
 - [Cấu hình môi trường](#cấu-hình-môi-trường)
 - [Các lệnh npm](#các-lệnh-npm)
 - [API](#api)
-- [Tài liệu API](#tài-liệu-api)
 - [Cổng quản trị](#cổng-quản-trị)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
+- [CRM khách hàng](#crm-khách-hàng)
 - [Kiểm thử](#kiểm-thử)
 - [Triển khai](#triển-khai)
 - [Bảo mật](#bảo-mật)
@@ -245,6 +245,13 @@ ID người dùng của phiên xác thực. Đăng ký công khai luôn tạo t�
 chỉ quy trình cấp quyền đáng tin cậy mới được gán vai trò `admin`, `sales` hoặc
 `support`.
 
+### CRM khách hàng
+
+Hướng dẫn schema PostgreSQL, migration/seed, ví dụ request/response API và
+quyền riêng tư nằm trong [docs/customer-crm.md](docs/customer-crm.md). API
+hiện tại tiếp tục dùng JSON; migration SQL là schema đích độc lập và không tự
+chuyển backend sang PostgreSQL.
+
 ### Backend trên Render
 
 File `render.yaml` định nghĩa service Node.js, chạy `npm ci`, khởi động bằng `npm start` và health check tại `/api/books`. Cấu hình các giá trị nhạy cảm trong Render Environment/Secret Variables:
@@ -333,5 +340,7 @@ Nếu bật Firebase Authentication, cấu hình provider trong Firebase Console
 2. Chạy `npm test` và các kiểm tra phù hợp.
 3. Không commit `.env`, secret hoặc dữ liệu thật.
 4. Mô tả rõ thay đổi và ảnh hưởng tới cấu hình/deploy trong pull request.
+5. Dùng mẫu PR trong [.github/pull_request_template.md](.github/pull_request_template.md) và tuân thủ quy trình review được mô tả trong [CONTRIBUTING.md](CONTRIBUTING.md).
+6. Đảm bảo comment/review feedback được xử lý rõ ràng trước khi merge.
 
 Thông tin đóng góp của thành viên nên được đối chiếu từ commit, issue và pull request thực tế thay vì suy diễn chức danh.

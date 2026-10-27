@@ -15,7 +15,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: ci-gate
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -24,6 +28,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
       - name: Build static site
         run: npm run build:pages
         env:

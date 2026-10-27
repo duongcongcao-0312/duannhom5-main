@@ -9,7 +9,11 @@ permissions:
   packages: write
 
 jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci-gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

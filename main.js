@@ -707,7 +707,6 @@ async function saveFederatedAccount(socialUser) {
 		accountDialog.close();
 	}
 }
-}
 
 function getSocialAuthError(error) {
 	if (error.code === 'auth/popup-closed-by-user') return 'Cửa sổ đăng nhập đã được đóng.';

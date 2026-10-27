@@ -2,15 +2,16 @@ name: BookNest CI
 
 on:
   push:
-    branches: [main]
+    branches-ignore: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  ci-gate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,11 +23,11 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Check JavaScript syntax
+      - name: Static JavaScript checks
         run: npm run check
-      - name: Run tests with coverage
+      - name: Unit and integration tests
         run: npm run test:coverage
-      - name: Build GitHub Pages
+      - name: Build application
         run: npm run build:pages
-      - name: Audit dependencies
+      - name: Security audit
         run: npm audit --omit=dev

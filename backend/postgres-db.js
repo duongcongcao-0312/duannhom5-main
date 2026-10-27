@@ -281,6 +281,39 @@ class PostgresDatabase {
     });
   }
 
+  async findOrCreateSocialUser(data) {
+    return this.updateCollection("users", (users) => {
+      const email = String(data.email || "").trim().toLowerCase();
+      let user = email ? users.find((u) => u.email.toLowerCase() === email) : null;
+      const now = new Date().toISOString();
+      if (user) {
+        user.authProvider = data.authProvider || user.authProvider || "google";
+        if (data.providerId) user.providerId = data.providerId;
+        user.updatedAt = now;
+        return user;
+      }
+      const actor = String(data.authProvider || "social").trim();
+      const newUser = {
+        id: crypto.randomUUID(),
+        name: String(data.name || email.split("@")[0] || "Thành viên BookNest").trim(),
+        email,
+        password: hashPassword(crypto.randomBytes(24).toString("hex")),
+        role: "user",
+        studentType: data.studentType || "other",
+        studentId: String(data.studentId || "").trim(),
+        authProvider: data.authProvider || "google",
+        providerId: String(data.providerId || "").trim(),
+        customerInfo: {},
+        createdBy: actor,
+        updatedBy: actor,
+        createdAt: now,
+        updatedAt: now
+      };
+      users.push(newUser);
+      return newUser;
+    });
+  }
+
   async readCustomers() {
     return this.readCollection("customers");
   }

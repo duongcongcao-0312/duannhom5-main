@@ -140,6 +140,7 @@ function publicUser(user) {
     role: user.role,
     studentType: user.studentType,
     studentId: user.studentId,
+    authProvider: user.authProvider || undefined,
     customerInfo: user.customerInfo || {},
   };
 }
@@ -720,6 +721,40 @@ function createServer({
       if (!user || !verifyPassword(payload.password, user.password)) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
+      const session = sessionStore.createSession(user);
+      sendJson(response, 200, {
+        token: session.token,
+        user: publicUser(user),
+      });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/auth/social" &&
+      request.method === "POST"
+    ) {
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu xác thực không hợp lệ.",
+      );
+      const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+      const name = typeof payload.name === "string" ? payload.name.trim() : "";
+      const provider = typeof payload.provider === "string" ? payload.provider.trim() : "google";
+      const providerId = typeof payload.providerId === "string" ? payload.providerId.trim() : (payload.firebaseUid || "");
+
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new RequestError(400, "Vui lòng cung cấp email hợp lệ.");
+      }
+
+      const user = await db.findOrCreateSocialUser({
+        name: name || email.split("@")[0],
+        email,
+        authProvider: provider,
+        providerId,
+        studentType: payload.studentType || "other",
+        studentId: payload.studentId || "",
+      });
+
       const session = sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,

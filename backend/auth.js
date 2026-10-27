@@ -32,15 +32,27 @@ function hashPasswordResetToken(token) {
 }
 
 /**
- * In-memory session store with token expiration
+ * In-memory session store with token expiration and production-friendly cleanup.
  */
 class SessionStore {
-  constructor() {
+  constructor(options = {}) {
     this.sessions = new Map();
+    this.sessionTtlMs = Number.isFinite(options.sessionTtlMs)
+      ? options.sessionTtlMs
+      : 7 * 24 * 60 * 60 * 1000;
+    this.cleanupIntervalMs = Number.isFinite(options.cleanupIntervalMs)
+      ? options.cleanupIntervalMs
+      : 60 * 1000;
+    this._cleanupTimer = null;
+    if (this.cleanupIntervalMs > 0) {
+      this._cleanupTimer = setInterval(() => this.pruneExpiredSessions(), this.cleanupIntervalMs);
+      this._cleanupTimer.unref?.();
+    }
   }
 
-  createSession(user) {
+  createSession(user, sessionTtlMs = this.sessionTtlMs) {
     const token = crypto.randomUUID();
+    const now = Date.now();
     const sessionData = {
       token,
       userId: user.id,
@@ -50,32 +62,66 @@ class SessionStore {
       studentType: user.studentType || "other",
       studentId: user.studentId || "",
       customerInfo: user.customerInfo || {},
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days validity
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + Number(sessionTtlMs),
     };
     this.sessions.set(token, sessionData);
     return sessionData;
   }
 
   getSession(token) {
-    if (!token) return null;
+    if (!token || typeof token !== "string") return null;
     const session = this.sessions.get(token);
     if (!session) return null;
-    if (Date.now() > session.expiresAt) {
+    if (Date.now() >= session.expiresAt) {
       this.sessions.delete(token);
       return null;
     }
     return session;
   }
 
+  refreshSession(token, sessionTtlMs = this.sessionTtlMs) {
+    const session = this.getSession(token);
+    if (!session) return null;
+    const now = Date.now();
+    session.updatedAt = now;
+    session.expiresAt = now + Number(sessionTtlMs);
+    return session;
+  }
+
   destroySession(token) {
-    if (!token) return;
-    this.sessions.delete(token);
+    if (!token || typeof token !== "string") return false;
+    return this.sessions.delete(token);
   }
 
   destroyUserSessions(userId) {
+    let removed = 0;
     for (const [token, session] of this.sessions) {
-      if (session.userId === userId) this.sessions.delete(token);
+      if (session.userId === userId) {
+        this.sessions.delete(token);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  pruneExpiredSessions() {
+    const now = Date.now();
+    let removed = 0;
+    for (const [token, session] of this.sessions) {
+      if (now >= session.expiresAt) {
+        this.sessions.delete(token);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  close() {
+    if (this._cleanupTimer) {
+      clearInterval(this._cleanupTimer);
+      this._cleanupTimer = null;
     }
   }
 }

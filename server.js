@@ -423,7 +423,10 @@ function createServer({
       servicesPath,
       booksPath,
     }));
-  const sessionStore = new SessionStore();
+  const sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
+    ? Number(process.env.SESSION_TTL_MS)
+    : 7 * 24 * 60 * 60 * 1000;
+  const sessionStore = new SessionStore({ sessionTtlMs, cleanupIntervalMs: 60 * 1000 });
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
   const allowedOrigins = new Set(

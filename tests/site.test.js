@@ -322,17 +322,18 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(serverSourceResponse.status, 404);
 });
 
-test('customer schema is documented with required tables, keys and indexes', () => {
+test('customer PostgreSQL migration defines CRM tables, constraints and indexes', () => {
 	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
 	assert.ok(fs.existsSync(schemaPath));
 	const schema = fs.readFileSync(schemaPath, 'utf8');
-	assert.match(schema, /CREATE TABLE customers/);
-	assert.match(schema, /CREATE TABLE customer_interactions/);
-	assert.match(schema, /CREATE TABLE customer_orders/);
-	assert.match(schema, /UNIQUE \(email\)/);
-	assert.match(schema, /UNIQUE \(phone\)/);
-	assert.match(schema, /CREATE INDEX idx_customers_phone/);
-	assert.match(schema, /CREATE INDEX idx_customers_email/);
+	assert.match(schema, /CREATE TABLE IF NOT EXISTS customers/);
+	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_interactions/);
+	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_orders/);
+	assert.match(schema, /CREATE TABLE IF NOT EXISTS consent_records/);
+	assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone/);
+	assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email/);
+	assert.match(schema, /WHERE is_active/);
+	assert.match(schema, /CHECK \(status IN \('new', 'lead', 'customer'\)\)/);
 	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
 });
 
@@ -359,6 +360,16 @@ test('Render deployment provisions storefront URL and SMTP reset-email settings'
 		.forEach((key) => assert.match(renderConfig, new RegExp(`key: ${key}`)));
 	['RESEND_API_KEY', 'RESEND_FROM']
 		.forEach((key) => assert.match(renderConfig, new RegExp(`key: ${key}`)));
+});
+
+test('customer seed is repeatable and includes 10 to 20 synthetic customers', () => {
+	const seedPath = path.join(root, 'data', 'customer-seed.sql');
+	assert.ok(fs.existsSync(seedPath));
+	const seed = fs.readFileSync(seedPath, 'utf8');
+	const demoEmails = seed.match(/'crm-demo-\d{2}@example\.com'/g) || [];
+	assert.ok(demoEmails.length >= 10 && demoEmails.length <= 20);
+	assert.match(seed, /ON CONFLICT DO NOTHING/);
+	assert.match(seed, /INSERT INTO customer_interactions/);
 });
 
 test('invalid books are rejected without saving an order', async (t) => {

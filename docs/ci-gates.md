@@ -10,7 +10,10 @@ bước sau:
 
 1. Cài dependency bằng `npm ci` theo `package-lock.json`.
 2. Kiểm tra cú pháp JavaScript bằng `npm run check`.
-3. Chạy unit test và integration test bằng `npm run test:coverage`.
+3. Chạy unit test và integration test theo các nhóm độc lập bằng
+   `npm run test:coverage`. Có thể chạy riêng từng nhóm để chẩn đoán, ví dụ:
+   `npm run test:backend:auth`, `npm run test:backend:customer` hoặc
+   `npm run test:postgres-ssl`.
 4. Build frontend tĩnh bằng `npm run build:pages`.
 5. Kiểm tra dependency có lỗ hổng production bằng `npm audit --omit=dev`.
 

@@ -602,8 +602,19 @@ npm start  # Chạy server.js
 ### 13.2 Testing
 ```bash
 npm test
-# Chạy site.test.js & backend.test.js
+npm run test:site
+npm run test:backend:auth
+npm run test:backend:customer
+npm run test:postgres-ssl
 ```
+Tests được chia theo site, runtime/backend config, workflow tích hợp, auth,
+admin, customer, validation và PostgreSQL SSL. Mỗi file backend là một tiến
+trình test riêng để tránh chia sẻ trạng thái giữa các nhóm; có thể chạy riêng
+từng nhóm bằng các lệnh `test:backend:*` khi cần chẩn đoán lỗi.
+
+`backend-workflow.test.js` giữ các thao tác phụ thuộc nhau trong cùng một
+integration test vì chúng xác minh một luồng xuyên suốt; các test khác tạo và
+dọn dữ liệu riêng để chạy độc lập.
 
 ### 13.3 Production
 - Deploy lên: GitHub Pages, Vercel, Heroku, hoặc VPS

@@ -6,11 +6,20 @@
   "scripts": {
     "start": "node server.js",
     "build:pages": "node scripts/build-pages.js",
-    "check": "node --check server.js && node --check backend/auth.js && node --check backend/email.js && node --check backend/db.js && node --check backend/postgres-db.js && node --check admin.js && node --check book-detail.js && node --check books-data.js && node --check main.js && node --check assets/firebase-config.js && node --check scripts/build-pages.js && node --check tests/backend.test.js && node --check tests/site.test.js && node --check tests/postgres-ssl.test.js",
+    "check": "node --check server.js && node --check backend/auth.js && node --check backend/email.js && node --check backend/db.js && node --check backend/postgres-db.js && node --check admin.js && node --check book-detail.js && node --check books-data.js && node --check main.js && node --check assets/firebase-config.js && node --check scripts/build-pages.js && node --check tests/backend-runtime.test.js && node --check tests/backend-workflow.test.js && node --check tests/backend-auth.test.js && node --check tests/backend-admin.test.js && node --check tests/backend-customer.test.js && node --check tests/backend-validation.test.js && node --check tests/site.test.js && node --check tests/postgres-ssl.test.js",
+    "test:site": "node --test tests/site.test.js",
+    "test:backend": "node --test tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js",
+    "test:backend:runtime": "node --test tests/backend-runtime.test.js",
+    "test:backend:workflow": "node --test tests/backend-workflow.test.js",
+    "test:backend:auth": "node --test tests/backend-auth.test.js",
+    "test:backend:admin": "node --test tests/backend-admin.test.js",
+    "test:backend:customer": "node --test tests/backend-customer.test.js",
+    "test:backend:validation": "node --test tests/backend-validation.test.js",
+    "test:postgres-ssl": "node --test tests/postgres-ssl.test.js",
     "migrate": "node scripts/migrate.js",
     "seed:customers": "node scripts/seed-customers.js",
-    "test": "node --test tests/site.test.js tests/backend.test.js tests/postgres-ssl.test.js",
-    "test:coverage": "node --test --experimental-test-coverage tests/site.test.js tests/backend.test.js tests/postgres-ssl.test.js",
+    "test": "node --test tests/site.test.js tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js tests/postgres-ssl.test.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/site.test.js tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js tests/postgres-ssl.test.js",
     "audit": "npm audit --omit=dev"
   },
   "dependencies": {

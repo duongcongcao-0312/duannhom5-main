@@ -26,6 +26,9 @@ Mỗi PR nên có:
 - Mô tả ngắn gọn về vấn đề cần giải quyết.
 - Liên kết tới issue tương ứng hoặc ghi chú logic của task.
 - Danh sách kiểm tra test và impact.
+- Bằng chứng TDD theo mẫu PR: test case/file hoặc commit được tạo trước implementation, kết quả lần chạy đầu tiên thể hiện test thất bại, và lệnh/kết quả chạy lại sau implementation. Nếu không áp dụng được TDD, nêu rõ lý do cùng cách xác minh thay thế.
+
+Không ghi bằng chứng mơ hồ như “đã test” hoặc chỉ nêu kết quả cuối. Ưu tiên liên kết tới các commit riêng theo thứ tự test-first rồi implementation; kèm lệnh đã chạy và thông báo lỗi/pass liên quan để reviewer có thể kiểm tra, audit.
 
 ## 3. Tiêu chí review code
 
@@ -46,6 +49,7 @@ PR được xem là đầy đủ khi chứa đủ thông tin để reviewer hi�
 - Có ảnh hưởng gì tới frontend/backend/data/deploy.
 - Có cần migration, config mới hoặc điều kiện đặc biệt không.
 - Có test nào đã chạy và kết quả ra sao.
+- Test nào được viết trước implementation, kết quả chạy lần đầu ra sao, và thay đổi nào làm test pass (hoặc lý do không áp dụng TDD).
 
 Nếu mô tả PR thiếu thông tin, người tạo PR phải bổ sung trước khi yêu cầu review.
 

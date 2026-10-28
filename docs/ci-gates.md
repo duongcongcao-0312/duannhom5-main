@@ -10,8 +10,12 @@ bước sau:
 
 1. Cài dependency bằng `npm ci` theo `package-lock.json`.
 2. Kiểm tra cú pháp JavaScript bằng `npm run check`.
-3. Chạy unit test và integration test theo các nhóm độc lập bằng
-   `npm run test:coverage`. Có thể chạy riêng từng nhóm để chẩn đoán, ví dụ:
+3. Chạy unit test, integration test và kiểm tra coverage bằng
+   `npm run test:coverage`. Gate yêu cầu ít nhất **60% line coverage, 60%
+   branch coverage và 45% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
+   lệnh thất bại và chặn job CI. Báo cáo coverage dạng bảng được in trong log
+   GitHub Actions và báo cáo LCOV được tạo tại `coverage/lcov.info`.
+   Có thể chạy riêng từng nhóm để chẩn đoán, ví dụ:
    `npm run test:backend:auth`, `npm run test:backend:customer` hoặc
    `npm run test:postgres-ssl`.
 4. Build frontend tĩnh bằng `npm run build:pages`.
@@ -28,6 +32,8 @@ bước sau:
 - Khi thêm kiểm tra mới, cần thêm vào `.github/workflows/ci.yml` để mọi luồng
   deploy tiếp tục dùng cùng một gate.
 
-Để biến gate thành điều kiện bắt buộc khi merge, maintainer cần bật branch
-protection/ruleset cho `main` trên GitHub và yêu cầu check `ci-gate` (workflow
-`BookNest CI`) thành công.
+PR vào `main` chạy `ci-gate`; test fail hoặc coverage dưới ngưỡng làm check
+này thất bại. Để GitHub chặn merge thực sự, maintainer cần bật branch
+protection/ruleset cho `main` và yêu cầu check `ci-gate` (workflow `BookNest
+CI`) thành công. Đây là cài đặt quyền trên GitHub, không thể áp dụng chỉ bằng
+thay đổi trong repository.

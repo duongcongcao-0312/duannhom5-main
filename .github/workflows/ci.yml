@@ -25,7 +25,7 @@ jobs:
         run: npm ci
       - name: Static JavaScript checks
         run: npm run check
-      - name: Unit and integration tests
+      - name: Tests and coverage thresholds (lines 60%, branches 60%, functions 45%)
         run: npm run test:coverage
       - name: Build application
         run: npm run build:pages

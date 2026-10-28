@@ -16,6 +16,7 @@ Tài liệu này mô tả quy trình làm việc thông dụng cho repository Bo
 Trước khi tạo pull request, đảm bảo:
 
 - Mã nguồn đã được kiểm tra bằng lệnh phù hợp (`npm test`, `npm run build:pages`, `npm run check` nếu có).
+- `npm run test:coverage` đạt ngưỡng tối thiểu 60% line, 60% branch và 45% function coverage; báo cáo được in trong log kiểm tra CI.
 - Thay đổi được giới hạn trong phạm vi của issue hoặc task.
 - Nếu có thay đổi cấu hình/deploy, đã cập nhật tài liệu liên quan.
 - Không commit secret, `.env`, dữ liệu thật hoặc thông tin nhạy cảm.

@@ -19,12 +19,15 @@
     "migrate": "node scripts/migrate.js",
     "seed:customers": "node scripts/seed-customers.js",
     "test": "node --test tests/site.test.js tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js tests/postgres-ssl.test.js",
-    "test:coverage": "node --test --experimental-test-coverage tests/site.test.js tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js tests/postgres-ssl.test.js",
+    "test:coverage": "c8 --check-coverage --lines 60 --branches 60 --functions 45 --reporter=text --reporter=lcov node --test tests/site.test.js tests/backend-runtime.test.js tests/backend-workflow.test.js tests/backend-auth.test.js tests/backend-admin.test.js tests/backend-customer.test.js tests/backend-validation.test.js tests/postgres-ssl.test.js",
     "audit": "npm audit --omit=dev"
   },
   "dependencies": {
     "dotenv": "^18.0.7",
     "nodemailer": "^10.1.7",
     "pg": "8.13.1"
+  },
+  "devDependencies": {
+    "c8": "^12.0.0"
   }
 }

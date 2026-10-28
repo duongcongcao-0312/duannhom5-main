@@ -14,7 +14,10 @@ bước sau:
    `npm run test:coverage`. Gate yêu cầu ít nhất **60% line coverage, 60%
    branch coverage và 45% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
    lệnh thất bại và chặn job CI. Báo cáo coverage dạng bảng được in trong log
-   GitHub Actions và báo cáo LCOV được tạo tại `coverage/lcov.info`.
+   GitHub Actions; test output dạng `spec` cũng hiển thị rõ pass/fail. Báo cáo
+   JUnit được tạo tại `test-results.xml` và LCOV tại `coverage/lcov.info`.
+   CI tải cả hai lên artifact `test-reports` trong 14 ngày kể cả khi test hoặc
+   coverage gate thất bại; mở trang workflow run để xem/tải báo cáo.
    Có thể chạy riêng từng nhóm để chẩn đoán, ví dụ:
    `npm run test:backend:auth`, `npm run test:backend:customer` hoặc
    `npm run test:postgres-ssl`.

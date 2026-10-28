@@ -27,6 +27,16 @@ jobs:
         run: npm run check
       - name: Tests and coverage thresholds (lines 60%, branches 60%, functions 45%)
         run: npm run test:coverage
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            test-results.xml
+            coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build application
         run: npm run build:pages
       - name: Security audit

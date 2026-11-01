@@ -123,6 +123,7 @@ Các biến thường dùng:
 | `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự và không dùng lại mật khẩu dịch vụ database. |
 | `CORS_ORIGINS` | Danh sách origin frontend được phép, phân tách bằng dấu phẩy. Không thêm path hoặc dấu `/` cuối origin. |
 | `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
+| `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày. |
 
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
 
@@ -193,7 +194,7 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 Khi có `DATABASE_URL`, backend và các script CRM có thể sử dụng PostgreSQL. Migration tạo các bảng CRM cần thiết; seed chỉ dành cho development. Dữ liệu JSON/JSONL cũ không tự động được import vào PostgreSQL, cần lập kế hoạch migration và sao lưu riêng.
 
-Phiên đăng nhập hiện được lưu trong bộ nhớ tiến trình backend, vì vậy có thể mất khi service khởi động lại và không phù hợp cho nhiều instance. Production nên dùng session store dùng chung hoặc cơ chế xác thực phù hợp.
+Phiên đăng nhập hết hạn sau thời gian cấu hình bởi `SESSION_TTL_MS` (mặc định 7 ngày); đăng xuất sẽ thu hồi token ngay lập tức. Endpoint cần xác thực trả về HTTP 401 với phiên hết hạn, đã đăng xuất hoặc không hợp lệ, và HTTP 403 khi người dùng đã đăng nhập nhưng không đủ quyền. Phiên hiện được lưu trong bộ nhớ tiến trình backend, vì vậy có thể mất khi service khởi động lại và không phù hợp cho nhiều instance. Production nên dùng session store dùng chung hoặc cơ chế xác thực phù hợp.
 
 ## Kiểm thử
 

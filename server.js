@@ -390,6 +390,9 @@ function createServer({
   servicesPath,
   booksPath,
   database,
+  sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
+    ? Number(process.env.SESSION_TTL_MS)
+    : 7 * 24 * 60 * 60 * 1000,
   passwordResetMailer = createEmailMailer(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
   corsOrigins = process.env.CORS_ORIGINS || (
@@ -423,9 +426,6 @@ function createServer({
       servicesPath,
       booksPath,
     }));
-  const sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
-    ? Number(process.env.SESSION_TTL_MS)
-    : 7 * 24 * 60 * 60 * 1000;
   const sessionStore = new SessionStore({ sessionTtlMs, cleanupIntervalMs: 60 * 1000 });
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
@@ -459,7 +459,10 @@ function createServer({
 
   function requireCustomerPermission(request, permission) {
     const user = getAuthUser(request);
-    if (!user || !customerRolePermissions[user.role]?.has(permission)) {
+    if (!user) {
+      throw new RequestError(401, "Chưa đăng nhập.");
+    }
+    if (!customerRolePermissions[user.role]?.has(permission)) {
       const messages = {
         view: "Bạn không có quyền xem dữ liệu khách hàng.",
         create: "Bạn không có quyền tạo khách hàng.",

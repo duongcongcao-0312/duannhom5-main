@@ -5,6 +5,78 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 
+async function startAuthTestServer(t, options = {}) {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-auth-session-test-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    ...options,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+test("expired sessions are rejected by every protected endpoint", async (t) => {
+  const baseUrl = await startAuthTestServer(t, { sessionTtlMs: 25 });
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Expired User",
+      email: "expired@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const { token } = await registerResponse.json();
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const headers = { Authorization: `Bearer ${token}` };
+  const profileResponse = await fetch(`${baseUrl}/api/auth/me`, { headers });
+  const customersResponse = await fetch(`${baseUrl}/api/customers`, { headers });
+  assert.equal(profileResponse.status, 401);
+  assert.equal(customersResponse.status, 401);
+});
+
+test("logging out revokes the token for subsequent protected requests", async (t) => {
+  const baseUrl = await startAuthTestServer(t);
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Logged Out User",
+      email: "logged-out@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+  const { token } = await registerResponse.json();
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const logoutResponse = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: "POST",
+    headers,
+  });
+  assert.equal(logoutResponse.status, 200);
+
+  const profileResponse = await fetch(`${baseUrl}/api/auth/me`, { headers });
+  const customersResponse = await fetch(`${baseUrl}/api/customers`, { headers });
+  assert.equal(profileResponse.status, 401);
+  assert.equal(customersResponse.status, 401);
+});
 
 test("password reset emails a single-use link and replaces the account password", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(

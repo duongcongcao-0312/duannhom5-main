@@ -196,6 +196,8 @@ Khi có `DATABASE_URL`, backend và các script CRM có thể sử dụng Postgr
 
 Phiên đăng nhập hết hạn sau thời gian cấu hình bởi `SESSION_TTL_MS` (mặc định 7 ngày); đăng xuất sẽ thu hồi token ngay lập tức. Endpoint cần xác thực trả về HTTP 401 với phiên hết hạn, đã đăng xuất hoặc không hợp lệ, và HTTP 403 khi người dùng đã đăng nhập nhưng không đủ quyền. Phiên hiện được lưu trong bộ nhớ tiến trình backend, vì vậy có thể mất khi service khởi động lại và không phù hợp cho nhiều instance. Production nên dùng session store dùng chung hoặc cơ chế xác thực phù hợp.
 
+Đăng nhập giới hạn 5 lần thử cho mỗi địa chỉ IP trong cửa sổ 15 phút; đăng nhập thành công sẽ xóa bộ đếm. Các thông tin đăng nhập sai và email không tồn tại cùng trả về HTTP 401 với thông báo chung. Khi vượt giới hạn, API trả về HTTP 429.
+
 ## Kiểm thử
 
 ```sh

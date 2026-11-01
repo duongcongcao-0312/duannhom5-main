@@ -427,6 +427,9 @@ function createServer({
       booksPath,
     }));
   const sessionStore = new SessionStore({ sessionTtlMs, cleanupIntervalMs: 60 * 1000 });
+  const loginAttempts = new Map();
+  const loginAttemptLimit = 5;
+  const loginAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
   const allowedOrigins = new Set(
@@ -723,10 +726,27 @@ function createServer({
         await readJson(request),
         "Dữ liệu đăng nhập không hợp lệ.",
       );
+      const now = Date.now();
+      for (const [address, attempt] of loginAttempts) {
+        if (attempt.expiresAt <= now) loginAttempts.delete(address);
+      }
+      const address = request.socket.remoteAddress || "unknown";
+      const attempt = loginAttempts.get(address);
+      if (attempt && attempt.count >= loginAttemptLimit) {
+        throw new RequestError(
+          429,
+          "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+        );
+      }
+      loginAttempts.set(address, {
+        count: (attempt?.count || 0) + 1,
+        expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
+      });
       const user = await db.findUserByEmail(payload.email);
       if (!user || !verifyPassword(payload.password, user.password)) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
+      loginAttempts.delete(address);
       const session = sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,

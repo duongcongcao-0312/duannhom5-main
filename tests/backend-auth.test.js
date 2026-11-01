@@ -78,6 +78,73 @@ test("logging out revokes the token for subsequent protected requests", async (t
   assert.equal(customersResponse.status, 401);
 });
 
+test("login failures use a generic response and are limited per source address", async (t) => {
+  const baseUrl = await startAuthTestServer(t);
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Login Limit User",
+      email: "login-limit@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+
+  const login = (email, password) => fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const unknownUserResponse = await login("unknown@example.com", "password123");
+  assert.equal(unknownUserResponse.status, 401);
+  const unknownUserError = await unknownUserResponse.json();
+
+  const wrongPasswordResponse = await login("login-limit@example.com", "wrong-password");
+  assert.equal(wrongPasswordResponse.status, 401);
+  assert.deepEqual(await wrongPasswordResponse.json(), unknownUserError);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await login("login-limit@example.com", "wrong-password");
+    assert.equal(response.status, 401);
+  }
+  const limitedResponse = await login("login-limit@example.com", "password123");
+  assert.equal(limitedResponse.status, 429);
+  assert.match((await limitedResponse.json()).error, /thử lại sau 15 phút/i);
+
+  const invalidTokenResponse = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: "Bearer invalid-token" },
+  });
+  assert.equal(invalidTokenResponse.status, 401);
+  assert.match((await invalidTokenResponse.json()).error, /chưa đăng nhập/i);
+});
+
+test("successful login resets failed attempts for the source address", async (t) => {
+  const baseUrl = await startAuthTestServer(t);
+  const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Reset Attempts User",
+      email: "reset-attempts@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(registerResponse.status, 201);
+
+  const login = (password) => fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "reset-attempts@example.com", password }),
+  });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await login("wrong-password");
+    assert.equal(response.status, 401);
+  }
+  assert.equal((await login("password123")).status, 200);
+  assert.equal((await login("wrong-password")).status, 401);
+});
+
 test("password reset emails a single-use link and replaces the account password", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-password-reset-test-"),

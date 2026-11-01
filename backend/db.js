@@ -16,14 +16,39 @@ class CustomerError extends Error {
   }
 }
 
+function sanitizeTextValue(value, { maxLength = 255, allowEmpty = false, fieldName = "dữ liệu" } = {}) {
+  const stringValue = typeof value === "string" ? value : String(value ?? "");
+  const cleaned = stringValue
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, " ")
+    .replace(/<\s*script\b[\s\S]*?<\/\s*script\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/(?:javascript\s*:|data\s*:\s*text\/html|vbscript\s*:|on\w+\s*=)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned && !allowEmpty) {
+    throw new CustomerError(400, `${fieldName} không hợp lệ.`);
+  }
+
+  const trimmed = maxLength > 0 && cleaned.length > maxLength
+    ? cleaned.slice(0, maxLength).trim()
+    : cleaned;
+
+  if (trimmed.length === 0 && !allowEmpty) {
+    throw new CustomerError(400, `${fieldName} không hợp lệ.`);
+  }
+
+  return trimmed;
+}
+
 function validateCustomerData(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new CustomerError(400, "Dữ liệu khách hàng không hợp lệ.");
   }
 
-  const name = typeof data.name === "string" ? data.name.trim() : "";
-  const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : "";
-  const phone = typeof data.phone === "string" ? data.phone.trim() : "";
+  const name = sanitizeTextValue(data.name, { maxLength: 120, fieldName: "Họ tên" });
+  const email = sanitizeTextValue(data.email, { maxLength: 254, fieldName: "Email" }).toLowerCase();
+  const phone = sanitizeTextValue(data.phone, { maxLength: 20, fieldName: "Số điện thoại" });
   const phoneDigits = phone.replace(/\D/g, "");
 
   if (name.length < 2 || name.length > 120) {
@@ -225,7 +250,13 @@ class Database {
       const user = users.find((entry) => entry.id === id);
       if (!user) return null;
       const normalizedActor = String(actorName || "system").trim() || "system";
-      user.customerInfo = { ...(user.customerInfo || {}), ...customerInfo };
+      const safeCustomerInfo = {};
+      for (const [key, value] of Object.entries(customerInfo || {})) {
+        if (typeof value === "string" || typeof value === "number") {
+          safeCustomerInfo[key] = sanitizeTextValue(value, { maxLength: 300, allowEmpty: true, fieldName: key });
+        }
+      }
+      user.customerInfo = { ...(user.customerInfo || {}), ...safeCustomerInfo };
       user.updatedBy = normalizedActor;
       user.updatedAt = new Date().toISOString();
       return user;
@@ -234,7 +265,7 @@ class Database {
 
   async createUser(data) {
     return this.updateUsers((users) => {
-      const cleanEmail = String(data.email).trim().toLowerCase();
+      const cleanEmail = sanitizeTextValue(data.email, { maxLength: 254, fieldName: "Email" }).toLowerCase();
       if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
         throw new Error("Email này đã được đăng ký trên hệ thống.");
       }
@@ -249,12 +280,12 @@ class Database {
       const now = new Date().toISOString();
       const newUser = {
         id: crypto.randomUUID(),
-        name: String(data.name).trim(),
+        name: sanitizeTextValue(data.name, { maxLength: 120, fieldName: "Họ tên" }),
         email: cleanEmail,
         password: hashPassword(data.password),
         role: normalizedRole,
-        studentType: data.studentType || "other",
-        studentId: String(data.studentId || "").trim(),
+        studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
+        studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
         customerInfo: {},
         createdBy: actorName,
         updatedBy: actorName,
@@ -268,26 +299,26 @@ class Database {
 
   async findOrCreateSocialUser(data) {
     return this.updateUsers((users) => {
-      const email = String(data.email || "").trim().toLowerCase();
+      const email = sanitizeTextValue(data.email || "", { maxLength: 254, fieldName: "Email" }).toLowerCase();
       let user = email ? users.find((u) => u.email.toLowerCase() === email) : null;
       const now = new Date().toISOString();
       if (user) {
-        user.authProvider = data.authProvider || user.authProvider || "google";
-        if (data.providerId) user.providerId = data.providerId;
+        user.authProvider = sanitizeTextValue(data.authProvider || user.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google";
+        if (data.providerId) user.providerId = sanitizeTextValue(data.providerId, { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" });
         user.updatedAt = now;
         return user;
       }
-      const actor = String(data.authProvider || "social").trim();
+      const actor = sanitizeTextValue(data.authProvider || "social", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "social";
       const newUser = {
         id: crypto.randomUUID(),
-        name: String(data.name || email.split("@")[0] || "Thành viên BookNest").trim(),
+        name: sanitizeTextValue(data.name || email.split("@")[0] || "Thành viên BookNest", { maxLength: 120, allowEmpty: true, fieldName: "Họ tên" }),
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
         role: "user",
-        studentType: data.studentType || "other",
-        studentId: String(data.studentId || "").trim(),
-        authProvider: data.authProvider || "google",
-        providerId: String(data.providerId || "").trim(),
+        studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
+        studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
+        authProvider: sanitizeTextValue(data.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google",
+        providerId: sanitizeTextValue(data.providerId || "", { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" }),
         customerInfo: {},
         createdBy: actor,
         updatedBy: actor,
@@ -527,18 +558,18 @@ class Database {
   // --- Service Requests (Thuê / Thu mua / Trao đổi sách) ---
   async addServiceRequest(request) {
     await this.init();
-    const serviceType = String(request.service || "").trim();
+    const serviceType = sanitizeTextValue(request.service || "", { maxLength: 32, fieldName: "Loại dịch vụ" });
     if (!allowedServiceTypes.has(serviceType)) {
       throw new Error("Loại dịch vụ không hợp lệ.");
     }
     const entry = {
       id: crypto.randomUUID(),
       service: serviceType,
-      bookTitle: String(request.bookTitle).trim(),
-      condition: request.condition,
-      name: String(request.name).trim(),
-      phone: String(request.phone).trim(),
-      note: String(request.note || "").trim(),
+      bookTitle: sanitizeTextValue(request.bookTitle || "", { maxLength: 200, fieldName: "Tên sách" }),
+      condition: sanitizeTextValue(request.condition || "", { maxLength: 64, allowEmpty: true, fieldName: "Tình trạng sách" }),
+      name: sanitizeTextValue(request.name || "", { maxLength: 120, fieldName: "Tên khách hàng" }),
+      phone: sanitizeTextValue(request.phone || "", { maxLength: 20, fieldName: "Số điện thoại" }),
+      note: sanitizeTextValue(request.note || "", { maxLength: 500, allowEmpty: true, fieldName: "Ghi chú" }),
       status: "pending", // pending, processing, completed, cancelled
       createdAt: new Date().toISOString()
     };
@@ -619,13 +650,13 @@ class Database {
     const books = await this.getCustomBooks();
     const newBook = {
       id: crypto.randomUUID(),
-      title: String(book.title).trim(),
-      author: String(book.author).trim(),
-      category: String(book.category).trim(),
+      title: sanitizeTextValue(book.title || "", { maxLength: 200, fieldName: "Tên sách" }),
+      author: sanitizeTextValue(book.author || "", { maxLength: 200, fieldName: "Tác giả" }),
+      category: sanitizeTextValue(book.category || "", { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc",
       price: Number(book.price) || 0,
       stock: Number.isInteger(book.stock) ? book.stock : 12,
-      cover: String(book.cover || "").trim() || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
-      description: String(book.description || "").trim(),
+      cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
+      description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
       createdAt: new Date().toISOString()
     };
     books.push(newBook);
@@ -638,9 +669,15 @@ class Database {
     const books = await this.getCustomBooks();
     const index = books.findIndex((b) => b.id === id || b.title === id);
     if (index === -1) return null;
+    const safeUpdate = { ...updateData };
+    if (safeUpdate.title !== undefined) safeUpdate.title = sanitizeTextValue(safeUpdate.title, { maxLength: 200, fieldName: "Tên sách" });
+    if (safeUpdate.author !== undefined) safeUpdate.author = sanitizeTextValue(safeUpdate.author, { maxLength: 200, fieldName: "Tác giả" });
+    if (safeUpdate.category !== undefined) safeUpdate.category = sanitizeTextValue(safeUpdate.category, { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc";
+    if (safeUpdate.description !== undefined) safeUpdate.description = sanitizeTextValue(safeUpdate.description, { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" });
+    if (safeUpdate.cover !== undefined) safeUpdate.cover = sanitizeTextValue(safeUpdate.cover, { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80";
     books[index] = {
       ...books[index],
-      ...updateData,
+      ...safeUpdate,
       updatedAt: new Date().toISOString()
     };
     await fs.writeFile(this.booksPath, JSON.stringify(books, null, 2), "utf8");

@@ -181,17 +181,76 @@ async function readJson(request) {
   }
 
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return sanitizePayload(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   } catch {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
+}
+
+function sanitizePlainText(value, maxLength = 0) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  let cleaned = value
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, " ")
+    .replace(/<\s*script\b[\s\S]*?<\/\s*script\s*>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/(?:javascript\s*:|data\s*:\s*text\/html|vbscript\s*:|on\w+\s*=)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (maxLength > 0 && cleaned.length > maxLength) {
+    cleaned = cleaned.slice(0, maxLength).trim();
+  }
+
+  return cleaned;
+}
+
+function sanitizePayload(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return sanitizePlainText(value, 2000);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizePayload(entry));
+  }
+
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new RequestError(400, "Dữ liệu yêu cầu chứa thuộc tính không hợp lệ.");
+    }
+
+    const cleaned = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") {
+        continue;
+      }
+      cleaned[key] = sanitizePayload(nested);
+    }
+    return cleaned;
+  }
+
+  return value;
 }
 
 function requireJsonObject(payload, message = "Dữ liệu yêu cầu không hợp lệ.") {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, message);
   }
-  return payload;
+
+  const sanitized = sanitizePayload(payload);
+  const prototype = Object.getPrototypeOf(sanitized);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RequestError(400, message);
+  }
+
+  return sanitized;
 }
 
 function createOrder(payload) {
@@ -199,17 +258,27 @@ function createOrder(payload) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
 
-  const customerName =
-    typeof payload.customerName === "string" ? payload.customerName.trim() : "";
-  const address =
-    typeof payload.address === "string" ? payload.address.trim() : "";
-  const phone = typeof payload.phone === "string" ? payload.phone.trim() : "";
-  const paymentMethod = payload.paymentMethod;
+  const customerName = sanitizePlainText(
+    typeof payload.customerName === "string" ? payload.customerName : String(payload.customerName || ""),
+    120,
+  );
+  const address = sanitizePlainText(
+    typeof payload.address === "string" ? payload.address : String(payload.address || ""),
+    300,
+  );
+  const phone = sanitizePlainText(
+    typeof payload.phone === "string" ? payload.phone : String(payload.phone || ""),
+    20,
+  );
+  const paymentMethod = sanitizePlainText(
+    typeof payload.paymentMethod === "string" ? payload.paymentMethod : "",
+    32,
+  );
   const discountRate = payload.discountRate;
-  const couponCode =
-    typeof payload.couponCode === "string"
-      ? payload.couponCode.trim().toUpperCase()
-      : "";
+  const couponCode = sanitizePlainText(
+    typeof payload.couponCode === "string" ? payload.couponCode : "",
+    32,
+  ).toUpperCase();
 
   if (customerName.length < 2 || customerName.length > 120) {
     throw new RequestError(400, "Vui lòng kiểm tra họ tên người nhận.");
@@ -239,10 +308,11 @@ function createOrder(payload) {
 
   const quantities = new Map();
   for (const item of payload.items) {
-    const book =
-      item && typeof item.title === "string"
-        ? bookCatalog.get(item.title)
-        : null;
+    const safeTitle = sanitizePlainText(
+      item && typeof item.title === "string" ? item.title : "",
+      200,
+    );
+    const book = safeTitle ? bookCatalog.get(safeTitle) : null;
     const stock =
       Number.isInteger(book && book.stock) && book.stock >= 0
         ? book.stock
@@ -565,7 +635,10 @@ function createServer({
         await readJson(request),
         "Email không hợp lệ.",
       );
-      const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+      const email = sanitizePlainText(
+        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
+        254,
+      ).toLowerCase();
       if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new RequestError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
       }
@@ -655,7 +728,10 @@ function createServer({
         await readJson(request),
         "Yêu cầu đặt lại mật khẩu không hợp lệ.",
       );
-      const token = typeof payload.token === "string" ? payload.token.trim() : "";
+      const token = sanitizePlainText(
+        typeof payload.token === "string" ? payload.token : String(payload.token || ""),
+        128,
+      );
       const password = typeof payload.password === "string" ? payload.password : "";
       if (!/^[a-f0-9]{64}$/i.test(token)) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
@@ -683,22 +759,37 @@ function createServer({
         await readJson(request),
         "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
       );
-      if (!payload.email || !payload.password || !payload.name) {
+      const name = sanitizePlainText(
+        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
+        120,
+      );
+      const email = sanitizePlainText(
+        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
+        254,
+      ).toLowerCase();
+      const password = typeof payload.password === "string" ? payload.password : "";
+      if (!name || !email || !password) {
         throw new RequestError(
           400,
           "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
         );
       }
-      if (String(payload.password).length < 6) {
+      if (password.length < 6) {
         throw new RequestError(400, "Mật khẩu phải có ít nhất 6 ký tự.");
       }
       try {
         const user = await db.createUser({
-          name: payload.name,
-          email: payload.email,
-          password: payload.password,
-          studentType: payload.studentType || "other",
-          studentId: payload.studentId || "",
+          name,
+          email,
+          password,
+          studentType: sanitizePlainText(
+            typeof payload.studentType === "string" ? payload.studentType : "other",
+            32,
+          ) || "other",
+          studentId: sanitizePlainText(
+            typeof payload.studentId === "string" ? payload.studentId : "",
+            64,
+          ),
         });
         const session = sessionStore.createSession(user);
         sendJson(response, 201, {
@@ -742,8 +833,13 @@ function createServer({
         count: (attempt?.count || 0) + 1,
         expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
       });
-      const user = await db.findUserByEmail(payload.email);
-      if (!user || !verifyPassword(payload.password, user.password)) {
+      const email = sanitizePlainText(
+        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
+        254,
+      ).toLowerCase();
+      const password = typeof payload.password === "string" ? payload.password : "";
+      const user = await db.findUserByEmail(email);
+      if (!user || !verifyPassword(password, user.password)) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
       loginAttempts.delete(address);
@@ -763,22 +859,42 @@ function createServer({
         await readJson(request),
         "Dữ liệu xác thực không hợp lệ.",
       );
-      const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-      const name = typeof payload.name === "string" ? payload.name.trim() : "";
-      const provider = typeof payload.provider === "string" ? payload.provider.trim() : "google";
-      const providerId = typeof payload.providerId === "string" ? payload.providerId.trim() : (payload.firebaseUid || "");
+      const email = sanitizePlainText(
+        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
+        254,
+      ).toLowerCase();
+      const name = sanitizePlainText(
+        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
+        120,
+      ) || email.split("@")[0];
+      const provider = sanitizePlainText(
+        typeof payload.provider === "string" ? payload.provider : "google",
+        32,
+      ) || "google";
+      const providerId = sanitizePlainText(
+        typeof payload.providerId === "string"
+          ? payload.providerId
+          : typeof payload.firebaseUid === "string" ? payload.firebaseUid : "",
+        128,
+      );
 
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new RequestError(400, "Vui lòng cung cấp email hợp lệ.");
       }
 
       const user = await db.findOrCreateSocialUser({
-        name: name || email.split("@")[0],
+        name,
         email,
         authProvider: provider,
         providerId,
-        studentType: payload.studentType || "other",
-        studentId: payload.studentId || "",
+        studentType: sanitizePlainText(
+          typeof payload.studentType === "string" ? payload.studentType : "other",
+          32,
+        ) || "other",
+        studentId: sanitizePlainText(
+          typeof payload.studentId === "string" ? payload.studentId : "",
+          64,
+        ),
       });
 
       const session = sessionStore.createSession(user);
@@ -814,10 +930,14 @@ function createServer({
       for (const field of ["customerName", "name", "phone", "address"]) {
         if (Object.prototype.hasOwnProperty.call(payload, field)) {
           const rawValue = payload[field];
-          if (typeof rawValue !== "string" || rawValue.trim().length > 300) {
+          const safeValue = sanitizePlainText(
+            typeof rawValue === "string" ? rawValue : String(rawValue || ""),
+            field === "phone" ? 20 : 300,
+          );
+          if (!safeValue && field !== "customerName") {
             throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
           }
-          customerInfo[field] = rawValue.trim();
+          customerInfo[field] = safeValue;
         }
       }
       const updatedUser = await db.updateCustomerInfo(
@@ -974,18 +1094,43 @@ function createServer({
         await readJson(request),
         "Dữ liệu yêu cầu dịch vụ không hợp lệ.",
       );
-      if (
-        !payload.bookTitle ||
-        !payload.name ||
-        !payload.phone ||
-        !payload.service
-      ) {
+      const bookTitle = sanitizePlainText(
+        typeof payload.bookTitle === "string" ? payload.bookTitle : String(payload.bookTitle || ""),
+        200,
+      );
+      const name = sanitizePlainText(
+        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
+        120,
+      );
+      const phone = sanitizePlainText(
+        typeof payload.phone === "string" ? payload.phone : String(payload.phone || ""),
+        20,
+      );
+      const service = sanitizePlainText(
+        typeof payload.service === "string" ? payload.service : String(payload.service || ""),
+        32,
+      );
+      if (!bookTitle || !name || !phone || !service) {
         throw new RequestError(400, "Vui lòng nhập đầy đủ thông tin dịch vụ.");
       }
-      if (!allowedServiceTypes.has(String(payload.service).trim())) {
+      if (!allowedServiceTypes.has(service)) {
         throw new RequestError(400, "Loại dịch vụ không hợp lệ.");
       }
-      const entry = await db.addServiceRequest(payload);
+      const entry = await db.addServiceRequest({
+        ...payload,
+        bookTitle,
+        name,
+        phone,
+        service,
+        condition: sanitizePlainText(
+          typeof payload.condition === "string" ? payload.condition : "",
+          64,
+        ),
+        note: sanitizePlainText(
+          typeof payload.note === "string" ? payload.note : "",
+          500,
+        ),
+      });
       sendJson(response, 201, {
         message: "Đã gửi yêu cầu thành công.",
         request: entry,
@@ -1035,21 +1180,30 @@ function createServer({
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
       );
-      if (
-        payload.status !== undefined &&
-        !allowedOrderStatuses.has(String(payload.status).trim())
-      ) {
-        throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
+      const safePayload = {
+        ...payload,
+      };
+      if (safePayload.status !== undefined) {
+        safePayload.status = sanitizePlainText(
+          typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
+          32,
+        );
+        if (!allowedOrderStatuses.has(safePayload.status)) {
+          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
+        }
       }
-      if (
-        payload.paymentStatus !== undefined &&
-        !allowedPaymentStatuses.has(String(payload.paymentStatus).trim())
-      ) {
-        throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
+      if (safePayload.paymentStatus !== undefined) {
+        safePayload.paymentStatus = sanitizePlainText(
+          typeof safePayload.paymentStatus === "string" ? safePayload.paymentStatus : String(safePayload.paymentStatus || ""),
+          32,
+        );
+        if (!allowedPaymentStatuses.has(safePayload.paymentStatus)) {
+          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
+        }
       }
       const updated = await db.updateOrderStatus(
         adminOrderMatch[1],
-        payload,
+        safePayload,
         ordersPath,
       );
       if (!updated) {
@@ -1080,10 +1234,13 @@ function createServer({
       requireRole(request, "write:services");
       const payload = await readJson(request);
       const status =
-        payload && typeof payload === "object" ? payload.status : undefined;
+        payload && typeof payload === "object" ? sanitizePlainText(
+          typeof payload.status === "string" ? payload.status : String(payload.status || ""),
+          32,
+        ) : undefined;
       if (
         status !== undefined &&
-        !allowedServiceStatuses.has(String(status).trim())
+        !allowedServiceStatuses.has(status)
       ) {
         throw new RequestError(400, "Trạng thái yêu cầu dịch vụ không hợp lệ.");
       }
@@ -1108,10 +1265,32 @@ function createServer({
         await readJson(request),
         "Dữ liệu sách không hợp lệ.",
       );
-      if (!payload.title || !payload.author || !payload.price) {
+      const title = sanitizePlainText(
+        typeof payload.title === "string" ? payload.title : String(payload.title || ""),
+        200,
+      );
+      const author = sanitizePlainText(
+        typeof payload.author === "string" ? payload.author : String(payload.author || ""),
+        200,
+      );
+      const price = Number(payload.price);
+      if (!title || !author || !Number.isFinite(price) || price < 0) {
         throw new RequestError(400, "Vui lòng nhập tên sách, tác giả và giá.");
       }
-      const newBook = await db.addCustomBook(payload);
+      const newBook = await db.addCustomBook({
+        ...payload,
+        title,
+        author,
+        price,
+        category: sanitizePlainText(
+          typeof payload.category === "string" ? payload.category : "",
+          64,
+        ) || "van-hoc",
+        description: sanitizePlainText(
+          typeof payload.description === "string" ? payload.description : "",
+          1000,
+        ),
+      });
       bookCatalog.set(newBook.title, newBook);
       sendJson(response, 201, newBook);
       return;

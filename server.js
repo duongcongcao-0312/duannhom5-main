@@ -253,7 +253,7 @@ function requireJsonObject(payload, message = "Dữ liệu yêu cầu không h�
   return sanitized;
 }
 
-function createOrder(payload) {
+function createOrder(payload, userId = null) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
@@ -356,7 +356,7 @@ function createOrder(payload) {
     subtotal * Math.min(discountRate + couponRate, 0.3),
   );
 
-  return {
+  const order = {
     orderId: randomUUID(),
     createdAt: new Date().toISOString(),
     status: "received",
@@ -372,6 +372,12 @@ function createOrder(payload) {
     total: subtotal - discount,
     items: orderItems,
   };
+
+  if (userId && typeof userId === "string" && userId.trim()) {
+    order.userId = userId.trim();
+  }
+
+  return order;
 }
 
 function publicOrder(order) {
@@ -1069,7 +1075,8 @@ function createServer({
         throw new RequestError(415, "Đơn hàng cần được gửi ở định dạng JSON.");
       }
 
-      const order = createOrder(await readJson(request));
+      const requester = getAuthUser(request);
+      const order = createOrder(await readJson(request), requester?.userId || null);
       await persistOrder(order);
       sendJson(response, 201, publicOrder(order));
       return;
@@ -1084,7 +1091,76 @@ function createServer({
         sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
         return;
       }
+      const requester = getAuthUser(request);
+      if (requester && requester.role !== "admin") {
+        if (order.userId && order.userId !== requester.userId) {
+          throw new RequestError(
+            403,
+            "Bạn không có quyền xem đơn hàng của người dùng khác.",
+          );
+        }
+        if (order.userId && order.userId === requester.userId) {
+          sendJson(response, 200, publicOrder(order));
+          return;
+        }
+      }
+      if (!requester && order.userId) {
+        throw new RequestError(
+          401,
+          "Vui lòng đăng nhập để xem thông tin đơn hàng này.",
+        );
+      }
       sendJson(response, 200, publicOrder(order));
+      return;
+    }
+
+    if (orderMatch && (request.method === "PATCH" || request.method === "PUT")) {
+      const requester = getAuthUser(request);
+      if (!requester) {
+        throw new RequestError(401, "Chưa đăng nhập.");
+      }
+      const order = await db.findOrderById(orderMatch[1], ordersPath);
+      if (!order) {
+        throw new RequestError(404, "Không tìm thấy đơn hàng.");
+      }
+      if (requester.role !== "admin" && (!order.userId || order.userId !== requester.userId)) {
+        throw new RequestError(
+          403,
+          "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
+        );
+      }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật đơn hàng không hợp lệ.",
+      );
+      const safePayload = { ...payload };
+      if (safePayload.status !== undefined) {
+        safePayload.status = sanitizePlainText(
+          typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
+          32,
+        );
+        if (!allowedOrderStatuses.has(safePayload.status)) {
+          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
+        }
+      }
+      if (safePayload.paymentStatus !== undefined) {
+        safePayload.paymentStatus = sanitizePlainText(
+          typeof safePayload.paymentStatus === "string" ? safePayload.paymentStatus : String(safePayload.paymentStatus || ""),
+          32,
+        );
+        if (!allowedPaymentStatuses.has(safePayload.paymentStatus)) {
+          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
+        }
+      }
+      const updated = await db.updateOrderStatus(
+        orderMatch[1],
+        safePayload,
+        ordersPath,
+      );
+      if (!updated) {
+        throw new RequestError(404, "Không tìm thấy đơn hàng.");
+      }
+      sendJson(response, 200, updated);
       return;
     }
 

@@ -202,6 +202,101 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.ok(stats.totalUsers >= 2);
 });
 
+test("authenticated users cannot read or modify other users' orders", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-order-ownership-test-"),
+  );
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const server = createServer({ ordersPath, usersPath, servicesPath });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const aliceRegister = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Alice",
+      email: "alice@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(aliceRegister.status, 201);
+  const aliceToken = (await aliceRegister.json()).token;
+
+  const bobRegister = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Bob",
+      email: "bob@example.com",
+      password: "password123",
+    }),
+  });
+  assert.equal(bobRegister.status, 201);
+  const bobToken = (await bobRegister.json()).token;
+
+  const orderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aliceToken}`,
+    },
+    body: JSON.stringify({
+      customerName: "Alice",
+      address: "123 Đường Sách Hà Nội",
+      phone: "0912345678",
+      paymentMethod: "transfer",
+      discountRate: 0,
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(orderRes.status, 201);
+  const orderId = (await orderRes.json()).orderId;
+
+  const bobView = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${bobToken}` },
+  });
+  assert.equal(bobView.status, 403);
+
+  const bobPatch = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bobToken}`,
+    },
+    body: JSON.stringify({ status: "shipping" }),
+  });
+  assert.equal(bobPatch.status, 403);
+
+  const aliceView = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    headers: { Authorization: `Bearer ${aliceToken}` },
+  });
+  assert.equal(aliceView.status, 200);
+
+  const alicePatch = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aliceToken}`,
+    },
+    body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
+  });
+  assert.equal(alicePatch.status, 200);
+  assert.equal((await alicePatch.json()).status, "processing");
+});
+
 test("registration returns a JSON service error when user persistence is unavailable", async (t) => {
   const server = createServer({
     database: {

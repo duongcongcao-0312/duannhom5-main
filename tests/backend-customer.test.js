@@ -79,6 +79,11 @@ test("customer management access is role-scoped and audit fields are recorded", 
   });
   assert.equal(memberStatsRes.status, 403);
 
+  const memberUnknownAdminPathRes = await fetch(`${baseUrl}/api/admin/secret`, {
+    headers: { Authorization: `Bearer ${memberToken}` },
+  });
+  assert.equal(memberUnknownAdminPathRes.status, 403);
+
   const salesRecord = await db.findUserByEmail("sales@example.com");
   assert.equal(salesRecord.role, "sales");
   assert.equal(salesRecord.createdBy, "admin@booknest.vn");

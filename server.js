@@ -571,6 +571,25 @@ function createServer({
     return user;
   }
 
+  function getAdminRoutePermission(pathname, method) {
+    const adminRoutePatterns = [
+      { match: (value) => value === "/api/admin/stats" && method === "GET", permission: "read:dashboard" },
+      { match: (value) => value === "/api/admin/orders" && method === "GET", permission: "read:orders" },
+      { match: (value) => /^\/api\/admin\/orders\/[0-9a-f-]+$/i.test(value) && (method === "PATCH" || method === "PUT"), permission: "write:orders" },
+      { match: (value) => value === "/api/admin/services" && method === "GET", permission: "read:services" },
+      { match: (value) => /^\/api\/admin\/services\/[0-9a-f-]+$/i.test(value) && (method === "PATCH" || method === "PUT"), permission: "write:services" },
+      { match: (value) => value === "/api/admin/books" && method === "POST", permission: "write:books" },
+      { match: (value) => /^\/api\/admin\/books\/[A-Za-z0-9_-]+$/i.test(value) && (method === "PUT" || method === "PATCH" || method === "DELETE"), permission: "write:books" },
+      { match: (value) => value === "/api/admin/users" && method === "GET", permission: "read:users" },
+      { match: (value) => value === "/api/admin/customers" && method === "GET", permission: "read:customers" },
+      { match: (value) => value === "/api/admin/customers" && method === "POST", permission: "write:customers" },
+      { match: (value) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(value) && (method === "GET" || method === "PATCH" || method === "PUT"), permission: "read:customers" },
+      { match: (value) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(value) && method === "DELETE", permission: "delete:customers" },
+    ];
+
+    return adminRoutePatterns.find(({ match }) => match(pathname))?.permission || null;
+  }
+
   function requireAdmin(request) {
     return requireRole(request, "read:dashboard");
   }
@@ -1418,6 +1437,21 @@ function createServer({
       }));
       sendJson(response, 200, safeUsers);
       return;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/admin/")) {
+      const requester = getAuthUser(request);
+      if (!requester) {
+        throw new RequestError(401, "Vui lòng đăng nhập để truy cập API quản trị.");
+      }
+      const permission = getAdminRoutePermission(requestUrl.pathname, request.method);
+      if (!permission) {
+        throw new RequestError(403, "API quản trị không tồn tại hoặc bạn không có quyền truy cập.");
+      }
+      if (!rolePermissions[String(requester.role || "user").trim().toLowerCase()]?.includes(permission)) {
+        throw new RequestError(403, "Bạn không có quyền truy cập API quản trị.");
+      }
+      throw new RequestError(404, "Không tìm thấy API quản trị.");
     }
 
     // Catch unhandled /api/ requests

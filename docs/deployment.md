@@ -85,6 +85,10 @@ vụ trong `/app/data`. Gắn volume bền vững trước khi nhận dữ liệ
 volume trước khi nâng phiên bản và thử khôi phục định kỳ. Bản phát hành hiện
 không có migration tự động.
 
+Quy trình backup, restore và ứng phó sự cố chi tiết nằm trong
+[runbook backup/restore](./backup-restore-incident-runbook.md). Dùng
+`node scripts/backup.js verify` sau mỗi lần tạo backup và trước khi restore.
+
 Tài khoản `admin@booknest.vn` / `admin123` chỉ được seed trong môi trường không
 phải production. Production cần credentials riêng ngay từ lần khởi động đầu.
 Phiên đăng nhập lưu trong bộ nhớ sẽ bị vô hiệu khi tiến trình khởi động lại.

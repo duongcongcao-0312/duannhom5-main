@@ -144,6 +144,10 @@ class PostgresDatabase {
     await this.initialization;
   }
 
+  async close() {
+    return this.pool.end();
+  }
+
   async readCollection(name) {
     if (!collections.has(name)) throw new Error(`Unknown data collection: ${name}`);
     await this.init();

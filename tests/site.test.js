@@ -268,6 +268,12 @@ test('issue #39 - search, category filter, price filter, tag filter and sorting 
 	assert.match(adminHtml, /id="bookSortFilter"/);
 	assert.match(adminScript, /bookSortFilter/);
 });
+
+test('issue #25 - main.js syntax is valid without duplicate closing braces in account handlers', () => {
+	const script = read('main.js');
+	assert.doesNotMatch(script, /accountDialog\.close\(\);\s*\}\s*\}\s*\}/);
+	assert.doesNotMatch(script, /\}\s*\r?\n\}\s*\r?\n\}\s*\r?\n\s*function getSocialAuthError/);
+});
 test('storefront includes quick cart, stock visibility and refreshed branding', () => {
 	const html = read('index.html');
 	const script = read('main.js');

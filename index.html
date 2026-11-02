@@ -385,9 +385,9 @@
                 <p class="payment-note">Vui lòng chuyển khoản đúng số tiền hiển thị.</p>
             </div>
             <div class="shipping-fields">
-                <label>Họ và tên<input name="customerName" type="text" placeholder="Nguyễn Văn A" required></label>
-                <label>Số điện thoại<input name="phone" type="tel" placeholder="0901234567" pattern="[0-9 +()\-]{8,}" required></label>
-                <label>Địa chỉ nhận hàng<textarea name="address" rows="3" placeholder="Số nhà, đường, phường/xã, tỉnh/thành phố" required></textarea></label>
+                <label>Họ và tên<input name="customerName" type="text" placeholder="Nguyễn Văn A" autocomplete="name" required></label>
+                <label>Số điện thoại<input name="phone" type="tel" placeholder="0901234567" autocomplete="tel" inputmode="tel" pattern="[0-9 +()\-]{8,}" required></label>
+                <label>Địa chỉ nhận hàng<textarea name="address" rows="3" placeholder="Số nhà, đường, phường/xã, tỉnh/thành phố" autocomplete="street-address" required></textarea></label>
             </div>
             <p class="form-error" id="paymentError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Xác nhận đặt hàng</button>

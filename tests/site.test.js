@@ -113,6 +113,18 @@ test('responsive CSS includes tablet and mobile breakpoints', () => {
 	assert.match(css, /overflow-x: hidden/);
 });
 
+test('mobile checkout keeps delivery fields accessible before transfer details', () => {
+	const html = read('index.html');
+	const css = read('main.css');
+	assert.match(html, /name="customerName"[^>]*autocomplete="name"/);
+	assert.match(html, /name="phone"[^>]*inputmode="tel"/);
+	assert.match(html, /name="address"[^>]*autocomplete="street-address"/);
+	assert.match(css, /\.payment-dialog \.shipping-fields \{ order: 2; \}/);
+	assert.match(css, /\.payment-dialog #transferDetails \{ order: 3; \}/);
+	assert.match(css, /\.shipping-fields input,\s*\.shipping-fields textarea \{\s*font-size: 16px;/);
+	assert.match(css, /\.site-header > \.cart-button,\s*\.site-header > \.account-button \{\s*flex: 1 1 0;/);
+});
+
 test('homepage presents the four-season bookstore layout', () => {
 	const html = read('index.html');
 	const css = read('main.css');

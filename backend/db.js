@@ -3,6 +3,25 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
 
+async function atomicWriteFile(filePath, contents) {
+  const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporaryPath, contents, "utf8");
+    try {
+      await fs.rename(temporaryPath, filePath);
+    } catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EEXIST"].includes(error.code)) {
+        throw error;
+      }
+      await fs.rm(filePath, { force: true });
+      await fs.rename(temporaryPath, filePath);
+    }
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 const customerStatuses = ["new", "lead", "customer"];
 const nextCustomerStatus = new Map([
   ["new", "lead"],
@@ -94,6 +113,14 @@ class Database {
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.initialized = false;
     this.userWriteQueue = Promise.resolve();
+    this.fileWriteQueues = new Map();
+  }
+
+  enqueueFileWrite(filePath, operation) {
+    const previous = this.fileWriteQueues.get(filePath) || Promise.resolve();
+    const next = previous.then(operation);
+    this.fileWriteQueues.set(filePath, next.catch(() => {}));
+    return next;
   }
 
   async init() {
@@ -119,8 +146,13 @@ class Database {
         throw new Error("Tệp tài khoản phải chứa một danh sách.");
       }
     } catch (error) {
-      if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
-      users = [];
+      if (error.code === "ENOENT") {
+        users = [];
+      } else if (error instanceof SyntaxError) {
+        throw new Error(`Tệp tài khoản bị hỏng: ${error.message}`);
+      } else {
+        throw error;
+      }
     }
 
     const defaultAdminEmail = "admin@booknest.vn";
@@ -169,7 +201,7 @@ class Database {
     }
 
     if (users.length > 0) {
-      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+      await atomicWriteFile(this.usersPath, JSON.stringify(users, null, 2));
     }
 
     this.initialized = true;
@@ -182,8 +214,12 @@ class Database {
       const content = await fs.readFile(this.usersPath, "utf8");
       const users = JSON.parse(content);
       return Array.isArray(users) ? users : [];
-    } catch {
-      return [];
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      if (error instanceof SyntaxError) {
+        throw new Error(`Tệp tài khoản bị hỏng: ${error.message}`);
+      }
+      throw error;
     }
   }
 
@@ -205,7 +241,7 @@ class Database {
       await this.init();
       const users = await this.getUsers();
       const result = await update(users);
-      await fs.writeFile(this.usersPath, JSON.stringify(users, null, 2), "utf8");
+      await atomicWriteFile(this.usersPath, JSON.stringify(users, null, 2));
       return result;
     });
     this.userWriteQueue = operation.catch(() => {});
@@ -347,7 +383,7 @@ class Database {
 
   async writeCustomers(customers) {
     await fs.mkdir(path.dirname(this.customersPath), { recursive: true });
-    await fs.writeFile(this.customersPath, JSON.stringify(customers, null, 2), "utf8");
+    await atomicWriteFile(this.customersPath, JSON.stringify(customers, null, 2));
   }
 
   async getCustomers() {
@@ -500,8 +536,10 @@ class Database {
 
   async addOrder(order, ordersPathOverride) {
     const filePath = ordersPathOverride || this.ordersPath;
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.appendFile(filePath, `${JSON.stringify(order)}\n`, "utf8");
+    await this.enqueueFileWrite(filePath, async () => {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.appendFile(filePath, `${JSON.stringify(order)}\n`, "utf8");
+    });
   }
 
   async findOrderById(orderId, ordersPathOverride) {
@@ -551,7 +589,9 @@ class Database {
     });
 
     if (!updatedOrder) return null;
-    await fs.writeFile(filePath, newLines.join("\n") + "\n", "utf8");
+    await this.enqueueFileWrite(filePath, () =>
+      atomicWriteFile(filePath, newLines.join("\n") + "\n"),
+    );
     return updatedOrder;
   }
 
@@ -574,7 +614,10 @@ class Database {
       createdAt: new Date().toISOString()
     };
     await fs.mkdir(path.dirname(this.servicesPath), { recursive: true });
-    await fs.appendFile(this.servicesPath, `${JSON.stringify(entry)}\n`, "utf8");
+    await this.enqueueFileWrite(this.servicesPath, async () => {
+      await fs.mkdir(path.dirname(this.servicesPath), { recursive: true });
+      await fs.appendFile(this.servicesPath, `${JSON.stringify(entry)}\n`, "utf8");
+    });
     return entry;
   }
 
@@ -629,7 +672,9 @@ class Database {
     });
 
     if (!updated) return null;
-    await fs.writeFile(this.servicesPath, newLines.join("\n") + "\n", "utf8");
+    await this.enqueueFileWrite(this.servicesPath, () =>
+      atomicWriteFile(this.servicesPath, newLines.join("\n") + "\n"),
+    );
     return updated;
   }
 
@@ -660,7 +705,7 @@ class Database {
       createdAt: new Date().toISOString()
     };
     books.push(newBook);
-    await fs.writeFile(this.booksPath, JSON.stringify(books, null, 2), "utf8");
+    await atomicWriteFile(this.booksPath, JSON.stringify(books, null, 2));
     return newBook;
   }
 
@@ -680,7 +725,7 @@ class Database {
       ...safeUpdate,
       updatedAt: new Date().toISOString()
     };
-    await fs.writeFile(this.booksPath, JSON.stringify(books, null, 2), "utf8");
+    await atomicWriteFile(this.booksPath, JSON.stringify(books, null, 2));
     return books[index];
   }
 
@@ -689,7 +734,7 @@ class Database {
     const books = await this.getCustomBooks();
     const nextBooks = books.filter((b) => b.id !== id && b.title !== id);
     if (nextBooks.length === books.length) return false;
-    await fs.writeFile(this.booksPath, JSON.stringify(nextBooks, null, 2), "utf8");
+    await atomicWriteFile(this.booksPath, JSON.stringify(nextBooks, null, 2));
     return true;
   }
 

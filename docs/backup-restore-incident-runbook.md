@@ -29,6 +29,12 @@ thực tế sau mỗi lần diễn tập và cập nhật bảng này khi có th
 
 ## File storage: backup và restore
 
+Các file JSON được ghi qua file tạm rồi thay thế nguyên tử; các thao tác append
+JSONL được tuần tự hóa theo từng file trong tiến trình. JSONL hỏng từng dòng
+được cô lập khi đọc, nhưng JSON cấu trúc hỏng hoặc lỗi quyền đọc/ghi sẽ trả lỗi
+explicit và không bị coi là dữ liệu rỗng. Vì vậy cần dừng backend trước khi
+restore và luôn verify checksum sau restore.
+
 Dừng ghi dữ liệu hoặc chuyển traffic sang maintenance trước khi sao chép để
 tránh backup chứa JSONL đang được ghi dở:
 

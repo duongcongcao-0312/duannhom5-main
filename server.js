@@ -699,6 +699,7 @@ function createServer({
       } catch {
         throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình địa chỉ website.");
       }
+      await db.init();
       if (!passwordResetMailer) {
         throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình email.");
       }

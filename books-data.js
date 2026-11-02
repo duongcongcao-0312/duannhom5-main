@@ -81,6 +81,15 @@ const catalogBooks = [
 	{ title: 'Tiếng Hàn sơ cấp', author: 'Nhiều tác giả', price: 150000, category: 'ngoai-ngu', cover: 'cover-1', label: 'TIẾNG\nHÀN' }
 ];
 
+catalogBooks.forEach((book, index) => {
+	if (!book.tag) {
+		if (book.price <= 90000) book.tag = 'sale';
+		else if (index % 3 === 0) book.tag = 'bestseller';
+		else if (index % 3 === 1) book.tag = 'featured';
+		else book.tag = 'new';
+	}
+});
+
 if (typeof module !== 'undefined' && module.exports) {
 	module.exports = catalogBooks;
 } else {

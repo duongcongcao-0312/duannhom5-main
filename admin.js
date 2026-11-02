@@ -378,14 +378,25 @@
         const tbody = document.getElementById('booksTableBody');
         const catFilter = document.getElementById('bookCategoryFilter').value;
         const searchQuery = document.getElementById('bookSearchInput').value.trim().toLowerCase();
+        const searchNorm = searchQuery.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd');
 
         const filtered = allBooks.filter((book) => {
             const matchCategory = catFilter === 'all' || book.category === catFilter;
+            const bookText = `${book.title || ''} ${book.author || ''}`.toLowerCase();
+            const bookNorm = bookText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd');
             const matchSearch = !searchQuery ||
-                (book.title && book.title.toLowerCase().includes(searchQuery)) ||
-                (book.author && book.author.toLowerCase().includes(searchQuery));
+                bookText.includes(searchQuery) ||
+                bookNorm.includes(searchNorm);
             return matchCategory && matchSearch;
         });
+
+        const sortMode = document.getElementById('bookSortFilter')?.value || 'default';
+        if (sortMode === 'title-asc') filtered.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'vi'));
+        if (sortMode === 'title-desc') filtered.sort((a, b) => (b.title || '').localeCompare(a.title || '', 'vi'));
+        if (sortMode === 'price-asc') filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
+        if (sortMode === 'price-desc') filtered.sort((a, b) => (b.price || 0) - (a.price || 0));
+        if (sortMode === 'stock-asc') filtered.sort((a, b) => ((a.stock !== undefined ? a.stock : 12) - (b.stock !== undefined ? b.stock : 12)));
+        if (sortMode === 'stock-desc') filtered.sort((a, b) => ((b.stock !== undefined ? b.stock : 12) - (a.stock !== undefined ? a.stock : 12)));
 
         if (!filtered.length) {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center">Không tìm thấy sách nào.</td></tr>';
@@ -459,6 +470,7 @@
     }
 
     document.getElementById('bookCategoryFilter')?.addEventListener('change', renderFilteredBooks);
+    document.getElementById('bookSortFilter')?.addEventListener('change', renderFilteredBooks);
     document.getElementById('bookSearchInput')?.addEventListener('input', renderFilteredBooks);
 
     document.getElementById('openAddBookBtn')?.addEventListener('click', () => {

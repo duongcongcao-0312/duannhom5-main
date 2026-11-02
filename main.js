@@ -163,10 +163,32 @@ const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavori
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
+const priceFilter = document.querySelector('#priceFilter');
+const tagFilter = document.querySelector('#tagFilter');
 const sortFilter = document.querySelector('#sortFilter');
 const favoritesFilter = document.querySelector('#favoritesFilter');
+const resetFiltersBtn = document.querySelector('#resetFiltersBtn');
 let showFavoritesOnly = false;
 const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
+
+function removeVietnameseAccents(str) {
+	return String(str || '')
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/đ/g, 'd')
+		.replace(/Đ/g, 'd');
+}
+
+const tagLabels = {
+	bestseller: 'Bán chạy',
+	featured: 'Nổi bật',
+	sale: 'Ưu đãi',
+	new: 'Mới'
+};
+
+function getBookTag(book) {
+	return book.tag || 'featured';
+}
 
 function renderCategories() {
 	if (!categoryFilter) return;
@@ -284,28 +306,88 @@ function showPaymentError(message) {
 function renderBooks() {
 	if (!bookGrid || !searchInput || !categoryFilter) return;
 	const query = searchInput.value.trim().toLowerCase();
+	const queryNorm = removeVietnameseAccents(query).toLowerCase();
 	const category = categoryFilter.value;
+	const priceRange = priceFilter?.value || 'all';
+	const selectedTag = tagFilter?.value || 'all';
+
 	let visibleBooks = books.filter((book) => {
-		const matchesQuery = `${book.title} ${book.author}`.toLowerCase().includes(query);
+		const titleAuthor = `${book.title} ${book.author}`;
+		const searchableText = `${book.title} ${book.author} ${book.category} ${book.label || ''}`;
+		const searchableNorm = removeVietnameseAccents(searchableText).toLowerCase();
+		const matchesQuery = !query ||
+			titleAuthor.toLowerCase().includes(query) ||
+			searchableNorm.includes(queryNorm);
 		const matchesFavorite = !showFavoritesOnly || state.favorites.includes(book.title);
-		return matchesQuery && matchesFavorite && (category === 'all' || book.category === category);
+		const matchesCategory = category === 'all' || book.category === category;
+		const matchesPrice = priceRange === 'all' ||
+			(priceRange === 'under-100k' && book.price < 100000) ||
+			(priceRange === '100k-200k' && book.price >= 100000 && book.price <= 200000) ||
+			(priceRange === 'above-200k' && book.price > 200000);
+		const bookTag = getBookTag(book);
+		const matchesTag = selectedTag === 'all' || bookTag === selectedTag;
+
+		return matchesQuery && matchesFavorite && (category === 'all' || book.category === category) && matchesPrice && matchesTag;
 	});
+
 	if (sortFilter?.value === 'price-asc') visibleBooks.sort((a, b) => a.price - b.price);
 	if (sortFilter?.value === 'price-desc') visibleBooks.sort((a, b) => b.price - a.price);
 	if (sortFilter?.value === 'title') visibleBooks.sort((a, b) => a.title.localeCompare(b.title, 'vi'));
-	bookGrid.innerHTML = visibleBooks.map((book) => `
+	if (sortFilter?.value === 'title-desc') visibleBooks.sort((a, b) => b.title.localeCompare(a.title, 'vi'));
+
+	bookGrid.innerHTML = visibleBooks.map((book) => {
+		const tag = getBookTag(book);
+		const tagLabel = tagLabels[tag] || tag;
+		return `
 		<article class="book-card">
-			<div class="cover ${escapeHtml(book.cover)} has-image"><img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"><span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span></div>
+			<div class="cover ${escapeHtml(book.cover)} has-image">
+				<span class="book-tag tag-${escapeHtml(tag)}">${escapeHtml(tagLabel)}</span>
+				<img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">
+				<span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span>
+			</div>
 			<div class="book-info">
 				<h3>${escapeHtml(book.title)}</h3><p class="author">${escapeHtml(book.author)}</p><p class="stock-status ${getBookStock(book) < 4 ? 'stock-low' : ''}">${getBookStock(book) ? `Còn ${getBookStock(book)} cuốn` : 'Tạm hết hàng'}</p>
 				<div class="book-bottom"><span class="price">${formatPrice(book.price)}</span><a class="details-link" href="${getBookDetailsUrl(book)}">Chi tiết</a><button class="favorite-button ${state.favorites.includes(book.title) ? 'active' : ''}" data-favorite-title="${escapeHtml(book.title)}" type="button" aria-label="${state.favorites.includes(book.title) ? 'Bỏ yêu thích' : 'Thêm yêu thích'}">${state.favorites.includes(book.title) ? '♥' : '♡'}</button><button class="add-button" data-title="${escapeHtml(book.title)}" type="button" ${getBookStock(book) === 0 ? 'disabled' : ''}>${getBookStock(book) === 0 ? 'Hết hàng' : 'Thêm vào giỏ'}</button></div>
 			</div>
-		</article>`).join('');
+		</article>`;
+	}).join('');
 	removeFailedImages(bookGrid);
 	const emptyState = document.querySelector('#emptyState');
 	const bookCount = document.querySelector('#bookCount');
 	if (emptyState) emptyState.hidden = visibleBooks.length > 0;
 	if (bookCount) bookCount.textContent = visibleBooks.length;
+
+	document.querySelectorAll('.season-card, .category-list button').forEach((btn) => {
+		const isMatch = btn.dataset.category && btn.dataset.category === category;
+		btn.classList.toggle('active', Boolean(isMatch));
+		btn.setAttribute('aria-pressed', String(Boolean(isMatch)));
+	});
+
+	const hasActiveFilters = Boolean(
+		query ||
+		category !== 'all' ||
+		priceRange !== 'all' ||
+		selectedTag !== 'all' ||
+		showFavoritesOnly ||
+		(sortFilter?.value && sortFilter.value !== 'featured')
+	);
+	if (resetFiltersBtn) {
+		resetFiltersBtn.hidden = !hasActiveFilters;
+	}
+}
+
+function resetFilters() {
+	if (searchInput) searchInput.value = '';
+	if (categoryFilter) categoryFilter.value = 'all';
+	if (priceFilter) priceFilter.value = 'all';
+	if (tagFilter) tagFilter.value = 'all';
+	if (sortFilter) sortFilter.value = 'featured';
+	showFavoritesOnly = false;
+	if (favoritesFilter) {
+		favoritesFilter.setAttribute('aria-pressed', 'false');
+		favoritesFilter.textContent = '♡ Yêu thích';
+	}
+	renderBooks();
 }
 
 function toggleFavorite(title) {
@@ -422,7 +504,11 @@ if (cartItems) {
 }
 if (searchInput) searchInput.addEventListener('input', renderBooks);
 if (categoryFilter) categoryFilter.addEventListener('change', renderBooks);
+if (priceFilter) priceFilter.addEventListener('change', renderBooks);
+if (tagFilter) tagFilter.addEventListener('change', renderBooks);
 if (sortFilter) sortFilter.addEventListener('change', renderBooks);
+if (resetFiltersBtn) resetFiltersBtn.addEventListener('click', resetFilters);
+document.querySelector('#emptyStateResetBtn')?.addEventListener('click', resetFilters);
 if (favoritesFilter) favoritesFilter.addEventListener('click', () => {
 	showFavoritesOnly = !showFavoritesOnly;
 	favoritesFilter.setAttribute('aria-pressed', String(showFavoritesOnly));

@@ -237,6 +237,37 @@ test('book catalog supports price sorting with search and category filters', () 
 	assert.match(script, /sortFilter\) sortFilter\.addEventListener\('change', renderBooks\)/);
 	assert.match(script, /data-title="\$\{escapeHtml\(book\.title\)\}"/);
 });
+
+test('issue #39 - search, category filter, price filter, tag filter and sorting work accurately across storefront and admin', () => {
+	const html = read('index.html');
+	const script = read('main.js');
+	const adminHtml = read('admin.html');
+	const adminScript = read('admin.js');
+
+	// Storefront filters in HTML
+	assert.match(html, /id="priceFilter"/);
+	assert.match(html, /id="tagFilter"/);
+	assert.match(html, /<option value="under-100k">/);
+	assert.match(html, /<option value="100k-200k">/);
+	assert.match(html, /<option value="above-200k">/);
+	assert.match(html, /<option value="bestseller">/);
+	assert.match(html, /<option value="title-desc">Tên Z-A<\/option>/);
+	assert.match(html, /id="resetFiltersBtn"/);
+
+	// Storefront script filter & sort logic
+	assert.match(script, /removeVietnameseAccents/);
+	assert.match(script, /priceFilter/);
+	assert.match(script, /tagFilter/);
+	assert.match(script, /priceRange === 'under-100k'/);
+	assert.match(script, /priceRange === '100k-200k'/);
+	assert.match(script, /priceRange === 'above-200k'/);
+	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.title\.localeCompare\(a\.title, 'vi'\)\)/);
+	assert.match(script, /resetFiltersBtn/);
+
+	// Admin search, category filter and sorting
+	assert.match(adminHtml, /id="bookSortFilter"/);
+	assert.match(adminScript, /bookSortFilter/);
+});
 test('storefront includes quick cart, stock visibility and refreshed branding', () => {
 	const html = read('index.html');
 	const script = read('main.js');

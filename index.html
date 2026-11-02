@@ -111,14 +111,36 @@
                         <option value="van-hoc">Văn học</option>
                         <option value="ky-nang">Kỹ năng sống</option>
                         <option value="kinh-te">Kinh tế</option>
+                        <option value="khoa-hoc">Khoa học</option>
+                        <option value="lich-su">Lịch sử</option>
+                        <option value="thieu-nhi">Thiếu nhi</option>
+                        <option value="trinh-tham">Trinh thám</option>
+                        <option value="tam-ly">Tâm lý</option>
+                        <option value="cong-nghe">Công nghệ</option>
+                        <option value="ngoai-ngu">Ngoại ngữ</option>
+                    </select>
+                    <select id="priceFilter" aria-label="Lọc theo khoảng giá">
+                        <option value="all">Tất cả mức giá</option>
+                        <option value="under-100k">Dưới 100.000 đ</option>
+                        <option value="100k-200k">100.000 đ - 200.000 đ</option>
+                        <option value="above-200k">Trên 200.000 đ</option>
+                    </select>
+                    <select id="tagFilter" aria-label="Lọc theo nhãn">
+                        <option value="all">Tất cả nhãn</option>
+                        <option value="bestseller">Bán chạy</option>
+                        <option value="featured">Nổi bật</option>
+                        <option value="sale">Ưu đãi</option>
+                        <option value="new">Mới</option>
                     </select>
                     <select id="sortFilter" aria-label="Sắp xếp sách">
                         <option value="featured">Sắp xếp nổi bật</option>
                         <option value="price-asc">Giá thấp đến cao</option>
                         <option value="price-desc">Giá cao đến thấp</option>
                         <option value="title">Tên A-Z</option>
+                        <option value="title-desc">Tên Z-A</option>
                     </select>
                     <button class="secondary-button favorites-filter" id="favoritesFilter" type="button" aria-pressed="false">♡ Yêu thích</button>
+                    <button class="secondary-button" id="resetFiltersBtn" type="button" title="Đặt lại bộ lọc" hidden>↻ Đặt lại</button>
                 </div>
             </div>
             <div class="book-grid" id="bookGrid"></div>
@@ -131,6 +153,13 @@
                 <button data-category="van-hoc" type="button">Văn học <span>→</span></button>
                 <button data-category="ky-nang" type="button">Kỹ năng sống <span>→</span></button>
                 <button data-category="kinh-te" type="button">Kinh tế <span>→</span></button>
+                <button data-category="khoa-hoc" type="button">Khoa học <span>→</span></button>
+                <button data-category="lich-su" type="button">Lịch sử <span>→</span></button>
+                <button data-category="thieu-nhi" type="button">Thiếu nhi <span>→</span></button>
+                <button data-category="trinh-tham" type="button">Trinh thám <span>→</span></button>
+                <button data-category="tam-ly" type="button">Tâm lý <span>→</span></button>
+                <button data-category="cong-nghe" type="button">Công nghệ <span>→</span></button>
+                <button data-category="ngoai-ngu" type="button">Ngoại ngữ <span>→</span></button>
             </div>
         </section>
 

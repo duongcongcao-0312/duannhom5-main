@@ -552,3 +552,66 @@ test('orders exceeding stock are rejected without changing existing orders', asy
 	assert.match((await duplicateOverflow.json()).error, /vượt quá tồn kho/i);
 	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), existingOrder);
 });
+
+test('zero and negative quantities are rejected on create and update without persistence', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-quantity-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const request = (quantity) => fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Nguyễn Văn A',
+			address: '12 Đường Sách, Quận 1',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity }],
+		}),
+	});
+
+	for (const quantity of [0, -1]) {
+		const response = await request(quantity);
+		assert.equal(response.status, 400);
+		assert.match((await response.json()).error, /lớn hơn 0/i);
+	}
+	assert.equal(await fsPromises.stat(ordersPath).then(() => true, (error) => {
+		if (error.code === 'ENOENT') return false;
+		throw error;
+	}), false);
+
+	const validResponse = await request(1);
+	assert.equal(validResponse.status, 201);
+	const order = await validResponse.json();
+	const beforeUpdate = await fsPromises.readFile(ordersPath, 'utf8');
+	const updateResponse = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ items: [{ title: 'Nhà giả kim', quantity: 0 }] }),
+	});
+	assert.equal(updateResponse.status, 401);
+
+	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'admin@booknest.vn', password: 'admin123' }),
+	});
+	const token = (await loginResponse.json()).token;
+	const authenticatedUpdate = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ items: [{ title: 'Nhà giả kim', quantity: -2 }] }),
+	});
+	assert.equal(authenticatedUpdate.status, 400);
+	assert.match((await authenticatedUpdate.json()).error, /lớn hơn 0/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
+});

@@ -317,11 +317,14 @@ function createOrder(payload, userId = null) {
       Number.isInteger(book && book.stock) && book.stock >= 0
         ? book.stock
         : defaultBookStock;
-    if (!book || !Number.isInteger(item.quantity) || item.quantity < 1) {
+    if (!book) {
       throw new RequestError(
         400,
         "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.",
       );
+    }
+    if (!Number.isInteger(item.quantity) || item.quantity < 1) {
+      throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
     }
     if (item.quantity > stock) {
       throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
@@ -1167,6 +1170,16 @@ function createServer({
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
       );
+      if (payload.items !== undefined) {
+        if (!Array.isArray(payload.items) || payload.items.length === 0) {
+          throw new RequestError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+        }
+        for (const item of payload.items) {
+          if (!Number.isInteger(item?.quantity) || item.quantity < 1) {
+            throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
+          }
+        }
+      }
       const safePayload = { ...payload };
       if (safePayload.status !== undefined) {
         safePayload.status = sanitizePlainText(

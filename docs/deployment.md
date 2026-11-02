@@ -96,13 +96,21 @@ Phiên đăng nhập lưu trong bộ nhớ sẽ bị vô hiệu khi tiến trìn
 ## Kiểm tra sau deploy
 
 ```sh
-curl --fail http://127.0.0.1:8000/api/books
-curl --fail http://127.0.0.1:8000/
+curl --fail http://127.0.0.1:8000/health
+curl --fail http://127.0.0.1:8000/ready
+npm run smoke
 ```
 
-Sau đó kiểm tra thủ công đăng nhập quản trị, tải dashboard và một luồng mua
-hàng với dữ liệu thử. Theo dõi log/container và dung lượng volume; quy trình
-giám sát, rollback và thời gian quan sát sau deploy phụ thuộc nền tảng vận hành.
+`npm run smoke` ghi từng kết quả dưới dạng JSON, kiểm tra liveness/readiness,
+frontend, books API, login failure và register validation. Hai kiểm tra auth cuối
+cố ý dùng dữ liệu không hợp lệ nên không tạo tài khoản hoặc phiên trong
+production. Có thể chạy với backend từ xa bằng `SMOKE_BASE_URL=https://api.example.com npm run smoke`.
+
+Sau đó kiểm tra thủ công đăng nhập quản trị bằng tài khoản test riêng, tải
+dashboard và một luồng mua hàng trong môi trường staging. Theo dõi log/container,
+latency và dung lượng volume; không dùng tài khoản hoặc dữ liệu khách hàng thật
+cho smoke test. Quy trình giám sát, rollback và thời gian quan sát sau deploy
+phụ thuộc nền tảng vận hành.
 
 ## Build và kiểm tra trước phát hành
 

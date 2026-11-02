@@ -257,7 +257,7 @@ chuyển backend sang PostgreSQL.
 
 ### Backend trên Render
 
-File `render.yaml` định nghĩa service Node.js, chạy `npm ci`, khởi động bằng `npm start` và health check tại `/api/books`. Cấu hình các giá trị nhạy cảm trong Render Environment/Secret Variables:
+File `render.yaml` định nghĩa service Node.js, chạy `npm ci`, khởi động bằng `npm start` và health check readiness tại `/ready`. Liveness dùng `/health`; smoke test sau deploy chạy bằng `npm run smoke`. Cấu hình các giá trị nhạy cảm trong Render Environment/Secret Variables:
 
 - `DATABASE_URL`
 - `ADMIN_EMAIL`

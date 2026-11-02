@@ -635,6 +635,22 @@ function createServer({
       return;
     }
 
+    if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
+      sendJson(response, 200, { status: "ok", service: "booknest" });
+      return;
+    }
+
+    if (requestUrl.pathname === "/ready" && (request.method === "GET" || request.method === "HEAD")) {
+      try {
+        await db.init();
+        sendJson(response, 200, { status: "ready", service: "booknest" });
+      } catch (error) {
+        console.error("Readiness check failed:", error);
+        sendJson(response, 503, { status: "not_ready", service: "booknest" });
+      }
+      return;
+    }
+
     // --- API: Coupons (Look up discount coupon) ---
     const couponMatch = requestUrl.pathname.match(
       /^\/api\/coupons\/([A-Za-z0-9_-]+)$/,

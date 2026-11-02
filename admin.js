@@ -67,7 +67,7 @@
         if (token && token !== 'admin-session') {
             headers[AUTH_HEADER_KEY] = `Bearer ${token}`;
         }
-        const response = await fetch(window.booknestApiUrl(url), { ...options, headers });
+        const response = await window.booknestApiFetch(url, { ...options, headers });
         if (response.status === 401 || response.status === 403) {
             if (url.startsWith('/api/admin/')) {
                 showLoginOverlay();
@@ -117,7 +117,7 @@
         const password = formData.get('password');
 
         try {
-            const res = await fetch(window.booknestApiUrl('/api/auth/login'), {
+            const res = await window.booknestApiFetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, password })

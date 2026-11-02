@@ -89,7 +89,7 @@ function saveCustomerInfo(info) {
 async function saveCustomerInfoToAccount(info) {
 	const token = localStorage.getItem('booknest-auth-token');
 	if (!token) return;
-	const response = await fetch(window.booknestApiUrl('/api/auth/customer-info'), {
+	const response = await window.booknestApiFetch('/api/auth/customer-info', {
 		method: 'PATCH',
 		headers: {
 			'Content-Type': 'application/json',
@@ -110,7 +110,7 @@ async function hydrateAuthenticatedUser() {
 	const token = localStorage.getItem('booknest-auth-token');
 	if (!token) return;
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/me'), {
+		const response = await window.booknestApiFetch('/api/auth/me', {
 			headers: { Authorization: `Bearer ${token}` }
 		});
 		if (response.status === 401) {
@@ -521,7 +521,7 @@ document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
 	const code = input.value.trim().toUpperCase();
 	if (!code) { message.textContent = 'Vui lòng nhập mã ưu đãi.'; return; }
 	try {
-		const response = await fetch(window.booknestApiUrl(`/api/coupons/${encodeURIComponent(code)}`));
+		const response = await window.booknestApiFetch(`/api/coupons/${encodeURIComponent(code)}`);
 		const result = await response.json();
 		if (!response.ok) throw new Error(result.error || 'Mã ưu đãi không hợp lệ.');
 		state.coupon = code;
@@ -572,7 +572,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		}, new Map())].map(([title, quantity]) => ({ title, quantity }));
 		let result;
 		try {
-			const response = await fetch(window.booknestApiUrl('/api/orders'), {
+			const response = await window.booknestApiFetch('/api/orders', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -662,11 +662,19 @@ serviceForm.addEventListener('submit', async (event) => {
 		if (!Array.isArray(savedRequests)) throw new Error('Không thể lưu yêu cầu lúc này.');
 		savedRequests.push(request);
 		localStorage.setItem(SERVICE_REQUESTS_STORAGE_KEY, JSON.stringify(savedRequests));
-		fetch(window.booknestApiUrl('/api/services'), {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(request)
-		}).catch((error) => console.error('Không thể lưu yêu cầu dịch vụ:', error));
+		const submitButton = serviceForm.querySelector('[type="submit"]');
+		submitButton.disabled = true;
+		try {
+			const response = await window.booknestApiFetch('/api/services', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(request)
+			});
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(result.error || 'Không thể gửi yêu cầu đến máy chủ. Vui lòng thử lại.');
+		} finally {
+			submitButton.disabled = false;
+		}
 		try {
 			await saveCustomerInfoToAccount(customerInfo);
 		} catch (profileError) {
@@ -758,7 +766,7 @@ async function saveFederatedAccount(socialUser) {
 	};
 
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/social'), {
+		const response = await window.booknestApiFetch('/api/auth/social', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -839,7 +847,7 @@ document.querySelector('#passwordResetRequestForm').addEventListener('submit', a
 	message.hidden = true;
 	submitButton.disabled = true;
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/password-reset'), {
+		const response = await window.booknestApiFetch('/api/auth/password-reset', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ email: String(new FormData(form).get('email') || '').trim().toLowerCase() })
@@ -872,7 +880,7 @@ document.querySelector('#passwordResetConfirmForm').addEventListener('submit', a
 	showAccountError('#passwordResetConfirmError', '');
 	submitButton.disabled = true;
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/password-reset/confirm'), {
+		const response = await window.booknestApiFetch('/api/auth/password-reset/confirm', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -1014,7 +1022,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 	const password = String(formData.get('password') || '');
 
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/login'), {
+		const response = await window.booknestApiFetch('/api/auth/login', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ email, password })
@@ -1073,7 +1081,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 	submitButton.disabled = true;
 
 	try {
-		const response = await fetch(window.booknestApiUrl('/api/auth/register'), {
+		const response = await window.booknestApiFetch('/api/auth/register', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(user)
@@ -1125,7 +1133,7 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 	try {
 		const token = localStorage.getItem('booknest-auth-token');
 		if (token) {
-			await fetch(window.booknestApiUrl('/api/auth/logout'), {
+			await window.booknestApiFetch('/api/auth/logout', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` }
 			});
@@ -1155,7 +1163,7 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 	if (!form.reportValidity()) return;
 	try {
 		const orderId = String(new FormData(form).get('orderId')).trim();
-		const response = await fetch(window.booknestApiUrl(`/api/orders/${encodeURIComponent(orderId)}`));
+		const response = await window.booknestApiFetch(`/api/orders/${encodeURIComponent(orderId)}`);
 		const order = await response.json();
 		if (!response.ok) throw new Error(order.error || 'Không tìm thấy đơn hàng.');
 		result.innerHTML = `<h3>Đơn hàng ${escapeHtml(order.orderId)}</h3><p>Trạng thái: <strong>${escapeHtml(order.status)}</strong></p><p>Tổng tiền: <strong>${formatPrice(order.total)}</strong></p><ul>${order.items.map((item) => `<li>${escapeHtml(item.title)} × ${item.quantity}</li>`).join('')}</ul>`;

@@ -21,6 +21,11 @@ bước sau:
    Có thể chạy riêng từng nhóm để chẩn đoán, ví dụ:
    `npm run test:backend:auth`, `npm run test:backend:customer` hoặc
    `npm run test:postgres-ssl`.
+   CI khởi động PostgreSQL 16 bằng service container và chạy
+   `tests/postgres-integration.test.js` với database rỗng để kiểm tra khởi tạo
+   schema, CRUD, rollback transaction và cleanup thật. Khi chạy local không có
+   `DATABASE_URL`, test tích hợp này được skip; có thể chạy riêng bằng
+   `DATABASE_URL=... npm run test:postgres-integration`.
 4. Build frontend tĩnh bằng `npm run build:pages`.
 5. Kiểm tra dependency có lỗ hổng production bằng `npm audit --omit=dev`.
 

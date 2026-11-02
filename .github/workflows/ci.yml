@@ -13,6 +13,24 @@ permissions:
 jobs:
   ci-gate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: booknest_test
+          POSTGRES_USER: booknest
+          POSTGRES_PASSWORD: booknest-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U booknest -d booknest_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://booknest:booknest-test-password@localhost:5432/booknest_test
+      ADMIN_EMAIL: integration-admin@example.com
+      ADMIN_PASSWORD: integration-password-123
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -58,6 +58,13 @@ test('customer contact information persists for purchases and book services afte
 	assert.match(script, /api\/auth\/me/);
 });
 
+test('service requests wait for API confirmation and surface connection failures', () => {
+	const script = read('main.js');
+	assert.match(script, /const response = await window\.booknestApiFetch\('\/api\/services'/);
+	assert.match(script, /if \(!response\.ok\) throw new Error\(result\.error \|\| 'Không thể gửi yêu cầu đến máy chủ/);
+	assert.match(script, /showServiceError\(error instanceof Error \? error\.message/);
+});
+
 test('account login provides password-reset request and confirmation forms', () => {
 	const html = read('index.html');
 	const script = read('main.js');
@@ -140,6 +147,7 @@ test('frontend API client targets the configured backend origin', () => {
 	const context = { window: { BOOKNEST_API_BASE_URL: 'https://api.example.com/' } };
 	vm.runInNewContext(read('assets/api-client.js'), context);
 	assert.equal(context.window.booknestApiUrl('/api/books'), 'https://api.example.com/api/books');
+	assert.equal(typeof context.window.booknestApiFetch, 'function');
 	const pagesConfig = { window: { location: { hostname: 'duongcongcao-0312.github.io' } } };
 	vm.runInNewContext(read('assets/api-config.js'), pagesConfig);
 	assert.equal(pagesConfig.window.BOOKNEST_API_BASE_URL, 'https://duannhom5-main.onrender.com');
@@ -148,6 +156,57 @@ test('frontend API client targets the configured backend origin', () => {
 	assert.equal(localConfig.window.BOOKNEST_API_BASE_URL, '');
 	assert.match(read('index.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*main\.js/);
 	assert.match(read('admin.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*admin\.js/);
+});
+
+test('API client reports timeouts and unavailable server responses with actionable notices', async () => {
+	let notice;
+	const createElement = () => ({
+		children: [],
+		setAttribute() {},
+		addEventListener() {},
+		append(...children) { this.children.push(...children); },
+		appendChild(child) { this.children.push(child); },
+		querySelector(selector) {
+			return this.children.find((child) => child.className === selector.slice(1));
+		},
+		remove() {}
+	});
+	const document = {
+		body: { appendChild(element) { notice = element; } },
+		getElementById(id) { return id === 'apiConnectionNotice' ? notice : null; },
+		createElement
+	};
+	const context = {
+		window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
+		document,
+		AbortController,
+		fetch: async (_url, { signal }) => {
+			assert.equal(signal.aborted, true);
+			throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+		},
+		setTimeout(callback) {
+			callback();
+			return 1;
+		},
+		clearTimeout() {}
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+
+	await assert.rejects(
+		context.window.booknestApiFetch('/api/orders'),
+		/Máy chủ BookNest không phản hồi sau 15 giây/,
+	);
+	assert.match(
+		notice.querySelector('.api-connection-notice-message').textContent,
+		/kiểm tra kết nối mạng và thử lại thao tác/i,
+	);
+
+	context.fetch = async () => ({ status: 503 });
+	await context.window.booknestApiFetch('/api/orders');
+	assert.match(
+		notice.querySelector('.api-connection-notice-message').textContent,
+		/không khả dụng \(HTTP 503\)/i,
+	);
 });
 
 test('each book category contains eight titles', () => {

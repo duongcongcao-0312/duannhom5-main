@@ -31,6 +31,41 @@ body {
     min-height: 100vh;
 }
 
+.api-connection-notice {
+    align-items: flex-start;
+    background: #fff1f0;
+    border: 1px solid #d85f4e;
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    color: #7a2118;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    left: 50%;
+    max-width: 560px;
+    padding: 14px 16px;
+    position: fixed;
+    top: 16px;
+    transform: translateX(-50%);
+    width: calc(100% - 32px);
+    z-index: 10000;
+}
+
+.api-connection-notice-message {
+    line-height: 1.5;
+}
+
+.api-connection-notice-dismiss {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 0 2px;
+}
+
 /* HEADER */
 .admin-header {
     background: #ffffff;
@@ -646,4 +681,3 @@ body {
         justify-content: space-between;
     }
 }
-

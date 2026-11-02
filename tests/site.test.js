@@ -436,6 +436,71 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(serverSourceResponse.status, 404);
 });
 
+test('retries with the same idempotency key return one saved order', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const payload = {
+		customerName: 'Nguyễn Văn B',
+		address: '20 Đường Sách, Quận 1',
+		phone: '0901234567',
+		paymentMethod: 'cod',
+		discountRate: 0,
+		items: [{ title: 'Nhà giả kim', quantity: 1 }],
+	};
+	const headers = {
+		'Content-Type': 'application/json',
+		'Idempotency-Key': 'checkout-retry-123',
+	};
+	const request = () => fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify(payload),
+	});
+	const first = await request();
+	const firstBody = await first.json();
+	const retry = await request();
+	const retryBody = await retry.json();
+	assert.equal(first.status, 201);
+	assert.equal(retry.status, 200);
+	assert.equal(retryBody.orderId, firstBody.orderId);
+	assert.equal(retryBody.total, firstBody.total);
+	const saved = (await fsPromises.readFile(ordersPath, 'utf8')).trim().split(/\r?\n/);
+	assert.equal(saved.length, 1);
+});
+
+test('invalid idempotency keys are rejected before creating an order', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-invalid-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const response = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Idempotency-Key': 'bad key',
+		},
+		body: '{}',
+	});
+	assert.equal(response.status, 400);
+	await assert.rejects(fsPromises.access(ordersPath));
+});
+
 test('coupon and account discounts use one rounded integer-money calculation', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-money-rounding-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');

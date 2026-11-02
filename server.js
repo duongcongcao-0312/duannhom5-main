@@ -537,10 +537,16 @@ function createServer({
       console.error("Không thể tải sách quản trị:", error);
     });
 
-  async function createAndPersistOrder(payload, userId) {
+  async function createAndPersistOrder(payload, userId, idempotencyKey) {
     const operation = orderWriteQueue.then(async () => {
-      const order = createOrder(payload, userId);
       const existingOrders = await db.getAllOrders(ordersPath);
+      const existingOrder = existingOrders.find(
+        (entry) => entry.idempotencyKey === idempotencyKey,
+      );
+      if (existingOrder) {
+        return { order: existingOrder, replayed: true };
+      }
+      const order = createOrder(payload, userId);
       const reserved = new Map();
       for (const existingOrder of existingOrders) {
         if (existingOrder.status === "cancelled") continue;
@@ -561,8 +567,9 @@ function createServer({
           throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
         }
       }
+      order.idempotencyKey = idempotencyKey;
       await db.addOrder(order, ordersPath);
-      return order;
+      return { order, replayed: false };
     });
     orderWriteQueue = operation.catch(() => {});
     return operation;
@@ -1150,11 +1157,25 @@ function createServer({
       }
 
       const requester = getAuthUser(request);
-      const order = await createAndPersistOrder(
+      const suppliedIdempotencyKey = String(
+        request.headers["idempotency-key"] || "",
+      ).trim();
+      if (
+        suppliedIdempotencyKey &&
+        !/^[\w\-:.]{8,128}$/.test(suppliedIdempotencyKey)
+      ) {
+        throw new RequestError(
+          400,
+          "Đơn hàng cần có Idempotency-Key hợp lệ để tránh tạo trùng.",
+        );
+      }
+      const idempotencyKey = suppliedIdempotencyKey || randomUUID();
+      const { order, replayed } = await createAndPersistOrder(
         await readJson(request),
         requester?.userId || null,
+        idempotencyKey,
       );
-      sendJson(response, 201, publicOrder(order));
+      sendJson(response, replayed ? 200 : 201, publicOrder(order));
       return;
     }
 

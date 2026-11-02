@@ -555,6 +555,12 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 	event.preventDefault();
 	try {
 		const form = event.currentTarget;
+		const idempotencyKey = form.dataset.idempotencyKey || (
+			typeof globalThis.crypto?.randomUUID === 'function'
+				? globalThis.crypto.randomUUID()
+				: `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`
+		);
+		form.dataset.idempotencyKey = idempotencyKey;
 		showPaymentError('');
 		if (!form.reportValidity()) return;
 		if (!state.cart.length) throw new Error('Giỏ hàng đang trống.');
@@ -579,7 +585,10 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		try {
 			const response = await window.booknestApiFetch('/api/orders', {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				headers: {
+					'Content-Type': 'application/json',
+					'Idempotency-Key': idempotencyKey
+				},
 				body: JSON.stringify({
 					customerName,
 					address,
@@ -618,6 +627,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		fillSavedCustomerInfo();
 		document.querySelector('#transferDetails').hidden = false;
 		document.querySelector('#paymentDialog').close();
+		delete form.dataset.idempotencyKey;
 		toggleCart(false);
 		renderCart();
 	} catch (error) {

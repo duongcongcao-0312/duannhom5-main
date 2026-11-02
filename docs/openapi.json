@@ -40,9 +40,11 @@
       "post": {
         "tags": ["Store"],
         "summary": "Tạo đơn hàng",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrder" } } } },
         "responses": {
           "201": { "description": "Đơn hàng đã lưu", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
+          "200": { "description": "Trả lại đơn hàng đã tạo cho request lặp lại", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "415": { "$ref": "#/components/responses/Error" }
         }
@@ -214,7 +216,8 @@
     },
     "parameters": {
       "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-      "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }
+      "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\\\w\\\\-:.]+$" } }
     },
     "responses": {
       "Ok": { "description": "Yêu cầu thành công", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },

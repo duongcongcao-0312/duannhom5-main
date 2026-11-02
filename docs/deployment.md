@@ -106,6 +106,12 @@ frontend, books API, login failure và register validation. Hai kiểm tra auth 
 cố ý dùng dữ liệu không hợp lệ nên không tạo tài khoản hoặc phiên trong
 production. Có thể chạy với backend từ xa bằng `SMOKE_BASE_URL=https://api.example.com npm run smoke`.
 
+API đặt hàng hỗ trợ retry an toàn bằng header `Idempotency-Key` (8-128 ký tự,
+chỉ gồm chữ, số, dấu gạch ngang, gạch dưới, dấu chấm hoặc dấu hai chấm).
+Client phải giữ nguyên khóa này khi retry sau timeout; server sẽ trả lại đơn
+đã tạo thay vì ghi thêm một đơn mới. Giao diện checkout tự giữ khóa cho đến
+khi đơn được xác nhận thành công.
+
 Sau đó kiểm tra thủ công đăng nhập quản trị bằng tài khoản test riêng, tải
 dashboard và một luồng mua hàng trong môi trường staging. Theo dõi log/container,
 latency và dung lượng volume; không dùng tài khoản hoặc dữ liệu khách hàng thật

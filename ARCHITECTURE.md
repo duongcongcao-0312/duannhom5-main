@@ -164,6 +164,11 @@ categories = [
   - Quản lý CORS
   - Error handling
 
+`backend/router.js` chứa route table dùng chung để nhận diện nhóm endpoint
+và ánh xạ các route quản trị tới permission tương ứng. `server.js` giữ các
+handler nghiệp vụ và dependency injection, còn router chịu trách nhiệm
+matching/mapping để có thể kiểm thử độc lập mà không thay đổi API contract.
+
 **MIME Types hỗ trợ**:
 ```
 .css, .html, .ico, .js, .jpg, .jpeg, .json, 

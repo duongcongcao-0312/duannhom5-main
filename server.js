@@ -10,6 +10,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { getAdminPermission } = require("./backend/router");
 const {
   hashPasswordResetToken,
   SessionStore,
@@ -616,25 +617,6 @@ function createServer({
     return user;
   }
 
-  function getAdminRoutePermission(pathname, method) {
-    const adminRoutePatterns = [
-      { match: (value) => value === "/api/admin/stats" && method === "GET", permission: "read:dashboard" },
-      { match: (value) => value === "/api/admin/orders" && method === "GET", permission: "read:orders" },
-      { match: (value) => /^\/api\/admin\/orders\/[0-9a-f-]+$/i.test(value) && (method === "PATCH" || method === "PUT"), permission: "write:orders" },
-      { match: (value) => value === "/api/admin/services" && method === "GET", permission: "read:services" },
-      { match: (value) => /^\/api\/admin\/services\/[0-9a-f-]+$/i.test(value) && (method === "PATCH" || method === "PUT"), permission: "write:services" },
-      { match: (value) => value === "/api/admin/books" && method === "POST", permission: "write:books" },
-      { match: (value) => /^\/api\/admin\/books\/[A-Za-z0-9_-]+$/i.test(value) && (method === "PUT" || method === "PATCH" || method === "DELETE"), permission: "write:books" },
-      { match: (value) => value === "/api/admin/users" && method === "GET", permission: "read:users" },
-      { match: (value) => value === "/api/admin/customers" && method === "GET", permission: "read:customers" },
-      { match: (value) => value === "/api/admin/customers" && method === "POST", permission: "write:customers" },
-      { match: (value) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(value) && (method === "GET" || method === "PATCH" || method === "PUT"), permission: "read:customers" },
-      { match: (value) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(value) && method === "DELETE", permission: "delete:customers" },
-    ];
-
-    return adminRoutePatterns.find(({ match }) => match(pathname))?.permission || null;
-  }
-
   function requireAdmin(request) {
     return requireRole(request, "read:dashboard");
   }
@@ -674,7 +656,7 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key",
       });
       response.end();
       return;
@@ -1532,7 +1514,7 @@ function createServer({
       if (!requester) {
         throw new RequestError(401, "Vui lòng đăng nhập để truy cập API quản trị.");
       }
-      const permission = getAdminRoutePermission(requestUrl.pathname, request.method);
+      const permission = getAdminPermission(requestUrl.pathname, request.method);
       if (!permission) {
         throw new RequestError(403, "API quản trị không tồn tại hoặc bạn không có quyền truy cập.");
       }

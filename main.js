@@ -209,7 +209,12 @@ function renderCategories() {
 	}));
 }
 
-function formatPrice(price) { return `${price.toLocaleString('vi-VN')} đ`; }
+function roundMoney(value) {
+	const numericValue = Number(value);
+	return Number.isFinite(numericValue) ? Math.round(numericValue) : 0;
+}
+
+function formatPrice(price) { return `${roundMoney(price).toLocaleString('vi-VN')} đ`; }
 
 function getDiscountRate() {
 	if (!state.user) return 0;
@@ -456,10 +461,10 @@ function renderCart() {
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
 	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
-	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(book.price * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
+	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 	removeFailedImages(cartItems);
-	const subtotal = state.cart.reduce((sum, book) => sum + book.price, 0);
-	const discount = Math.round(subtotal * Math.min(getDiscountRate() + getCouponRate(), 0.3));
+	const subtotal = state.cart.reduce((sum, book) => sum + roundMoney(book.price), 0);
+	const discount = roundMoney(subtotal * Math.min(getDiscountRate() + getCouponRate(), 0.3));
 	const total = subtotal - discount;
 	document.querySelector('#cartSubtotal').textContent = formatPrice(subtotal);
 	document.querySelector('#cartDiscount').textContent = `-${formatPrice(discount)}`;

@@ -332,6 +332,8 @@ test('issue #39 - search, category filter, price filter, tag filter and sorting 
 	assert.match(script, /priceRange === 'under-100k'/);
 	assert.match(script, /priceRange === '100k-200k'/);
 	assert.match(script, /priceRange === 'above-200k'/);
+	assert.match(script, /function roundMoney/);
+	assert.match(script, /Math\.min\(getDiscountRate\(\) \+ getCouponRate\(\), 0\.3\)/);
 	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.title\.localeCompare\(a\.title, 'vi'\)\)/);
 	assert.match(script, /resetFiltersBtn/);
 
@@ -413,6 +415,8 @@ test('orders are saved before confirmation and can be looked up without exposing
 	const confirmation = await response.json();
 	assert.match(confirmation.orderId, /^[0-9a-f-]{36}$/i);
 	assert.equal(confirmation.total, 169100);
+	assert.equal(confirmation.subtotal, 178000);
+	assert.equal(confirmation.discount, 8900);
 	assert.equal(confirmation.items[0].quantity, 2);
 	assert.ok((await fsPromises.readFile(ordersPath, 'utf8')).includes(confirmation.orderId));
 
@@ -421,6 +425,8 @@ test('orders are saved before confirmation and can be looked up without exposing
 	const order = await lookupResponse.json();
 	assert.equal(order.orderId, confirmation.orderId);
 	assert.equal(order.total, 169100);
+	assert.equal(order.subtotal, 178000);
+	assert.equal(order.discount, 8900);
 	assert.equal(Object.hasOwn(order, 'phone'), false);
 	assert.equal(Object.hasOwn(order, 'address'), false);
 
@@ -428,6 +434,40 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(privateDataResponse.status, 404);
 	const serverSourceResponse = await fetch(`${baseUrl}/server.js`);
 	assert.equal(serverSourceResponse.status, 404);
+});
+
+test('coupon and account discounts use one rounded integer-money calculation', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-money-rounding-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+
+	const response = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Nguyễn Văn B',
+			address: '12 Đường Sách, Quận 1',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0.1,
+			couponCode: 'BOOKNEST10',
+			items: [{ title: 'Nhà giả kim', quantity: 1 }],
+		}),
+	});
+	assert.equal(response.status, 201);
+	const order = await response.json();
+	assert.deepEqual(
+		{ subtotal: order.subtotal, discount: order.discount, total: order.total },
+		{ subtotal: 89000, discount: 17800, total: 71200 },
+	);
 });
 
 test('customer PostgreSQL migration defines CRM tables, constraints and indexes', () => {

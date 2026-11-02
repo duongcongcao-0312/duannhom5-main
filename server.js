@@ -123,6 +123,12 @@ class RequestError extends Error {
   }
 }
 
+function roundMoney(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+  return Math.round(numericValue);
+}
+
 function sendJson(response, status, value) {
   response.writeHead(status, {
     "Cache-Control": "no-store",
@@ -340,12 +346,13 @@ function createOrder(payload, userId = null) {
 
   const orderItems = [...quantities].map(([title, quantity]) => {
     const book = bookCatalog.get(title);
+    const unitPrice = roundMoney(book.price);
     return {
       title: book.title,
       author: book.author,
-      unitPrice: book.price,
+      unitPrice,
       quantity,
-      lineTotal: book.price * quantity,
+      lineTotal: unitPrice * quantity,
     };
   });
   const subtotal = orderItems.reduce(
@@ -353,7 +360,7 @@ function createOrder(payload, userId = null) {
     0,
   );
   const couponRate = couponCode ? coupons.get(couponCode).rate : 0;
-  const discount = Math.round(
+  const discount = roundMoney(
     subtotal * Math.min(discountRate + couponRate, 0.3),
   );
 
@@ -389,6 +396,8 @@ function publicOrder(order) {
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
     couponCode: order.couponCode,
+    subtotal: order.subtotal,
+    discount: order.discount,
     total: order.total,
     items: order.items.map(({ title, quantity, lineTotal }) => ({
       title,

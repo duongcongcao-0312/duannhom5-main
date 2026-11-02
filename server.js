@@ -518,6 +518,7 @@ function createServer({
   const loginAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
+  let orderWriteQueue = Promise.resolve();
   const allowedOrigins = new Set(
     corsOrigins
       .split(",")
@@ -536,8 +537,35 @@ function createServer({
       console.error("Không thể tải sách quản trị:", error);
     });
 
-  async function persistOrder(order) {
-    await db.addOrder(order, ordersPath);
+  async function createAndPersistOrder(payload, userId) {
+    const operation = orderWriteQueue.then(async () => {
+      const order = createOrder(payload, userId);
+      const existingOrders = await db.getAllOrders(ordersPath);
+      const reserved = new Map();
+      for (const existingOrder of existingOrders) {
+        if (existingOrder.status === "cancelled") continue;
+        for (const item of existingOrder.items || []) {
+          reserved.set(
+            item.title,
+            (reserved.get(item.title) || 0) + Number(item.quantity || 0),
+          );
+        }
+      }
+      for (const item of order.items) {
+        const book = bookCatalog.get(item.title);
+        const stock =
+          Number.isInteger(book && book.stock) && book.stock >= 0
+            ? book.stock
+            : defaultBookStock;
+        if ((reserved.get(item.title) || 0) + item.quantity > stock) {
+          throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
+        }
+      }
+      await db.addOrder(order, ordersPath);
+      return order;
+    });
+    orderWriteQueue = operation.catch(() => {});
+    return operation;
   }
 
   function getAuthUser(request) {
@@ -1122,8 +1150,10 @@ function createServer({
       }
 
       const requester = getAuthUser(request);
-      const order = createOrder(await readJson(request), requester?.userId || null);
-      await persistOrder(order);
+      const order = await createAndPersistOrder(
+        await readJson(request),
+        requester?.userId || null,
+      );
       sendJson(response, 201, publicOrder(order));
       return;
     }

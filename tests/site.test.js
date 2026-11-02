@@ -655,3 +655,42 @@ test('zero and negative quantities are rejected on create and update without per
 	assert.match((await authenticatedUpdate.json()).error, /lớn hơn 0/i);
 	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
 });
+
+test('concurrent orders are serialized and cannot reserve the same stock twice', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-race-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const request = () => fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Nguyễn Văn C',
+			address: '12 Đường Sách, Quận 1',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity: 8 }],
+		}),
+	});
+
+	const responses = await Promise.all([request(), request()]);
+	assert.deepEqual(responses.map((response) => response.status).sort(), [201, 400]);
+	const failedResponse = responses.find((response) => response.status === 400);
+	assert.match((await failedResponse.json()).error, /vượt quá tồn kho/i);
+	const savedOrders = (await fsPromises.readFile(ordersPath, 'utf8'))
+		.trim()
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line));
+	assert.equal(savedOrders.length, 1);
+	assert.equal(savedOrders[0].items[0].quantity, 8);
+});

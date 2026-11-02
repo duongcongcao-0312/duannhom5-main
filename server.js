@@ -317,16 +317,14 @@ function createOrder(payload, userId = null) {
       Number.isInteger(book && book.stock) && book.stock >= 0
         ? book.stock
         : defaultBookStock;
-    if (
-      !book ||
-      !Number.isInteger(item.quantity) ||
-      item.quantity < 1 ||
-      item.quantity > stock
-    ) {
+    if (!book || !Number.isInteger(item.quantity) || item.quantity < 1) {
       throw new RequestError(
         400,
         "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.",
       );
+    }
+    if (item.quantity > stock) {
+      throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
     }
     quantities.set(
       book.title,

@@ -511,3 +511,44 @@ test('invalid books are rejected without saving an order', async (t) => {
 		throw error;
 	}), false);
 });
+
+test('orders exceeding stock are rejected without changing existing orders', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-stock-order-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const existingOrder = JSON.stringify({ orderId: 'existing-order', status: 'received' }) + '\n';
+	await fsPromises.writeFile(ordersPath, existingOrder);
+	const server = createServer({ ordersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+
+	const request = (items) => fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Nguyễn Văn A',
+			address: '12 Đường Sách, Quận 1',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items,
+		}),
+	});
+
+	const directOverflow = await request([{ title: 'Nhà giả kim', quantity: 13 }]);
+	assert.equal(directOverflow.status, 400);
+	assert.match((await directOverflow.json()).error, /vượt quá tồn kho/i);
+
+	const duplicateOverflow = await request([
+		{ title: 'Nhà giả kim', quantity: 7 },
+		{ title: 'Nhà giả kim', quantity: 6 },
+	]);
+	assert.equal(duplicateOverflow.status, 400);
+	assert.match((await duplicateOverflow.json()).error, /vượt quá tồn kho/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), existingOrder);
+});

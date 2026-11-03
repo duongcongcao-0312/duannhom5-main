@@ -230,6 +230,14 @@ test('each book category contains eight titles', () => {
 	});
 });
 
+test('book catalog exposes itself in browser globals', () => {
+
+	const context = { globalThis: {} };
+	vm.runInNewContext(read('books-data.js'), context, { filename: path.join(root, 'books-data.js') });
+	assert.equal(context.globalThis.BOOKNEST_BOOKS.length, 80);
+	assert.ok(context.globalThis.BOOKNEST_BOOKS.every((book) => book.tag));
+});
+
 test('book cards link to a detailed description page', () => {
 	const script = read('main.js');
 	assert.ok(fs.existsSync(path.join(root, 'book.html')));

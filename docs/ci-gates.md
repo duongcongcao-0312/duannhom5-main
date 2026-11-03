@@ -11,8 +11,8 @@ bước sau:
 1. Cài dependency bằng `npm ci` theo `package-lock.json`.
 2. Kiểm tra cú pháp JavaScript bằng `npm run check`.
 3. Chạy unit test, integration test và kiểm tra coverage bằng
-   `npm run test:coverage`. Gate yêu cầu ít nhất **60% line coverage, 60%
-   branch coverage và 45% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
+   `npm run test:coverage`. Gate yêu cầu ít nhất **70% line coverage, 65%
+   branch coverage và 60% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
    lệnh thất bại và chặn job CI. Báo cáo coverage dạng bảng được in trong log
    GitHub Actions; test output dạng `spec` cũng hiển thị rõ pass/fail. Báo cáo
    JUnit được tạo tại `test-results.xml` và LCOV tại `coverage/lcov.info`.

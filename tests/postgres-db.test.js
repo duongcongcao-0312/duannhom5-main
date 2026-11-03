@@ -150,3 +150,89 @@ test("connection failures from pool.connect are propagated", async (t) => {
   await assert.rejects(db.updateCollection("customers", () => null), /connection timeout/);
   t.after(() => db.close().catch(() => {}));
 });
+
+test("PostgresDatabase supports the shared persistence workflows", async (t) => {
+  withAdminConfig(t);
+  const records = new Map([
+    ["users", [{ id: "user-1", name: "Reader", email: "reader@example.com", password: "old", role: "user" }]],
+    ["customers", []],
+    ["orders", [{ orderId: "order-1", status: "received", total: 120 }]],
+    ["services", []],
+    ["books", []],
+  ]);
+  const queries = [];
+  const read = (collection) => records.get(collection) || [];
+  const write = (collection, value) => records.set(collection, JSON.parse(value));
+  const pool = {
+    async query(sql, values = []) {
+      queries.push({ sql, values });
+      if (sql.includes("SELECT records FROM booknest_data")) {
+        const collection = values[0] || "users";
+        return { rows: [{ records: read(collection) }] };
+      }
+      if (sql.includes("UPDATE booknest_data SET records")) write(values[0], values[1]);
+      return { rows: [] };
+    },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          queries.push({ sql, values });
+          if (sql.includes("INSERT INTO booknest_data")) {
+            if (!records.has(values[0])) records.set(values[0], []);
+          } else if (sql.includes("SELECT records FROM booknest_data")) {
+            return { rows: [{ records: read(values[0]) }] };
+          } else if (sql.includes("UPDATE booknest_data SET records")) {
+            write(values[0], values[1]);
+          }
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async end() {},
+  };
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  assert.equal((await db.getUsers()).length, 2);
+  assert.equal((await db.findUserByEmail(" READER@example.com ")).id, "user-1");
+  assert.equal((await db.findUserById("user-1")).email, "reader@example.com");
+  assert.equal(await db.findUserByEmail(""), null);
+  const reset = await db.createPasswordResetToken("reader@example.com", "hash-1", "2099-01-01T00:00:00.000Z");
+  assert.equal(reset.id, "user-1");
+  assert.equal(await db.clearPasswordResetToken("hash-1"), true);
+  await db.createPasswordResetToken("reader@example.com", "hash-2", "2099-01-01T00:00:00.000Z");
+  assert.equal(await db.resetPassword("hash-2", "new-password"), "user-1");
+  assert.equal(await db.clearPasswordResetToken("hash-2"), false);
+  const createdUser = await db.createUser({
+    name: "Second Reader", email: "second@example.com", password: "password-123", role: "support",
+  });
+  assert.equal(createdUser.role, "support");
+  await db.updateCustomerInfo("user-1", { phone: "0123" }, "staff");
+  assert.equal((await db.findOrCreateSocialUser({ email: "reader@example.com", authProvider: "google" })).id, "user-1");
+  const socialUser = await db.findOrCreateSocialUser({ email: "social@example.com", name: "Social Reader" });
+  assert.equal(socialUser.role, "user");
+
+  const customer = await db.createCustomer({ name: "A Customer", email: "customer@example.com", phone: "0901234567" }, "staff");
+  assert.equal((await db.getCustomerById(customer.id)).status, "new");
+  assert.equal((await db.updateCustomer(customer.id, { name: "Updated Customer" }, "staff")).name, "Updated Customer");
+  assert.equal((await db.updateCustomerStatus(customer.id, "lead", "staff")).status, "lead");
+  assert.equal((await db.updateCustomerStatus(customer.id, "customer", "staff")).status, "customer");
+  assert.equal(await db.softDeleteCustomer(customer.id, "staff"), true);
+  assert.equal((await db.getCustomers()).length, 0);
+
+  assert.equal((await db.getAllOrders()).length, 1);
+  await db.addOrder({ orderId: "order-2", status: "received", total: 50 });
+  assert.equal((await db.findOrderById("order-2")).total, 50);
+  assert.equal((await db.updateOrderStatus("order-2", { status: "processing", paymentStatus: "paid" })).status, "processing");
+  const service = await db.addServiceRequest({ service: "rent", bookTitle: "Book", name: "Reader", phone: "0902" });
+  assert.equal((await db.getServiceRequests()).length, 1);
+  assert.equal((await db.updateServiceRequestStatus(service.id, "completed")).status, "completed");
+
+  const book = await db.addCustomBook({ title: "Custom Book", author: "Author", price: 10 });
+  assert.equal((await db.getCustomBooks()).length, 1);
+  assert.equal((await db.updateCustomBook(book.id, { title: "Updated Book" })).title, "Updated Book");
+  assert.equal(await db.deleteCustomBook(book.id), true);
+  assert.equal((await db.getStats()).totalUsers >= 3, true);
+  assert.ok(queries.some(({ sql }) => sql.includes("COMMIT")));
+});

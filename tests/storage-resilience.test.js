@@ -26,6 +26,25 @@ test("missing JSON files recover as empty stores without changing the API", asyn
   assert.deepEqual(await db.getCustomers(), []);
 });
 
+test("custom book storage accepts valid arrays and recovers from invalid content", async (t) => {
+  const paths = await temporaryDatabase(t, "booknest-storage-books-");
+  const db = new Database(paths);
+  await fs.writeFile(paths.booksPath, JSON.stringify([{ id: "book-1", title: "Existing" }]));
+  assert.equal((await db.getCustomBooks())[0].title, "Existing");
+  const created = await db.addCustomBook({ title: "Added", author: "Author", category: "", stock: 4 });
+  assert.equal(created.stock, 4);
+  const updated = await db.updateCustomBook("Added", {
+    title: "Updated", author: "New Author", category: "", description: "Description", cover: "",
+  });
+  assert.equal(updated.title, "Updated");
+  assert.equal(await db.deleteCustomBook("missing"), false);
+
+  await fs.writeFile(paths.booksPath, JSON.stringify({ invalid: true }));
+  assert.deepEqual(await db.getCustomBooks(), []);
+  await fs.writeFile(paths.booksPath, "not-json");
+  assert.deepEqual(await db.getCustomBooks(), []);
+});
+
 test("corrupt JSON fails explicitly while malformed JSONL records are isolated", async (t) => {
   const paths = await temporaryDatabase(t, "booknest-storage-corrupt-");
   await fs.writeFile(paths.usersPath, '{"users":');

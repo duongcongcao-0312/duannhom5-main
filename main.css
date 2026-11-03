@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@600;700&display=swap');
 
-:root { --ink: #17231f; --muted: #52605a; --cream: #f7f3eb; --paper: #fffdf8; --green: #1d5545; --green-light: #dce8dd; --coral: #d85f4e; --gold: #d99c49; --line: #dfe2da; --shadow: 0 18px 45px #17231f14; }
+:root { --ink: #183137; --muted: #586a68; --cream: #f4f3ed; --paper: #fffefa; --green: #24584b; --green-light: #e2eee7; --coral: #b45139; --gold: #d9a64e; --line: #e1e5de; --shadow: 0 16px 38px #18313714; }
 * { box-sizing: border-box; }
 html, body { max-width: 100%; overflow-x: hidden; }
 html { scroll-behavior: smooth; }
@@ -332,4 +332,462 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
     color: var(--ink);
     font-size: 1.05rem;
     margin: 0;
+}
+
+/* BookNest storefront refresh */
+body {
+	background: var(--cream);
+	color: var(--ink);
+}
+
+.site-header {
+	backdrop-filter: blur(16px);
+	background: #fffefaed;
+	box-shadow: 0 1px 0 #1831370b;
+	gap: clamp(16px, 3vw, 42px);
+	padding: 15px clamp(22px, 6vw, 96px);
+}
+
+.brand {
+	letter-spacing: -.035em;
+}
+
+.brand-mark {
+	background: var(--green);
+	border: 0;
+	border-radius: 11px 4px 11px 4px;
+	box-shadow: 3px 4px 0 var(--gold);
+}
+
+.main-nav {
+	gap: clamp(16px, 2.2vw, 30px);
+}
+
+.main-nav a {
+	font-weight: 500;
+	transition: color .18s ease;
+}
+
+.main-nav a.active,
+.main-nav a:hover {
+	border-bottom-color: var(--coral);
+}
+
+.cart-button,
+.account-button {
+	border-radius: 8px;
+	padding: 11px 15px;
+	transition: background .18s ease, transform .18s ease;
+}
+
+.cart-button {
+	background: var(--green);
+}
+
+.cart-button:hover,
+.account-button:hover {
+	transform: translateY(-1px);
+}
+
+.account-button {
+	background: var(--green-light);
+	color: var(--green);
+}
+
+.hero {
+	background:
+		radial-gradient(ellipse at 82% 50%, #315c50 0, #23483f 28%, transparent 58%),
+		#183a36;
+	min-height: 510px;
+	padding: clamp(62px, 8vw, 110px) clamp(28px, 11vw, 170px);
+}
+
+.hero::before {
+	background: radial-gradient(#f3ead8 1.2px, transparent 1.5px);
+	background-size: 22px 22px;
+	inset: 0 0 0 46%;
+	mask-image: linear-gradient(90deg, transparent, #000 45%);
+	opacity: .13;
+}
+
+.hero::after {
+	border: 1px solid #f3ead833;
+	height: 480px;
+	right: -180px;
+	top: -210px;
+	width: 480px;
+}
+
+.hero-copy {
+	max-width: 610px;
+}
+
+.hero .eyebrow {
+	color: #e7b66b;
+	letter-spacing: .08em;
+	text-transform: none;
+}
+
+.hero h1 {
+	color: #fffdf7;
+	font-size: clamp(3rem, 6.2vw, 5.7rem);
+	letter-spacing: -.045em;
+	line-height: .99;
+}
+
+.hero-text {
+	color: #d9e3dc;
+	max-width: 430px;
+}
+
+.hero .primary-button {
+	background: #b95039;
+	border-radius: 8px;
+	box-shadow: 0 8px 22px #0e292c45;
+	padding: 14px 22px;
+}
+
+.hero .primary-button:hover {
+	background: #c85f43;
+	box-shadow: 0 12px 25px #0e292c52;
+}
+
+.hero-stack {
+	height: 300px;
+	margin-right: 1vw;
+}
+
+.hero-stack::before {
+	background: radial-gradient(circle, #e1ae61 0, #d49b50 52%, #c8894433 53%, transparent 70%);
+	border-radius: 50%;
+	content: '';
+	height: 370px;
+	position: absolute;
+	right: -64px;
+	top: -44px;
+	width: 370px;
+	z-index: -1;
+}
+
+.hero-book {
+	border-radius: 3px 8px 8px 3px;
+	box-shadow: 14px 20px 34px #102e2d55;
+	height: 238px;
+	padding: 30px 19px;
+}
+
+.hero-book::after {
+	border-left: 1px solid #ffffff55;
+	content: '';
+	inset: 8px auto 8px 8px;
+	position: absolute;
+}
+
+.book-blue {
+	background: linear-gradient(110deg, #193e4b, #315c70);
+	z-index: 1;
+}
+
+.book-red {
+	background: linear-gradient(110deg, #b8543e, #d97050);
+	z-index: 3;
+}
+
+.book-gold {
+	background: linear-gradient(110deg, #e4bc70, #cc9345);
+	z-index: 2;
+}
+
+.hero-book {
+	animation: none;
+}
+
+.season-strip {
+	background: #eeece3;
+	border-color: #e3e1d7;
+	gap: clamp(26px, 5vw, 72px);
+	padding: 58px clamp(28px, 8vw, 120px);
+}
+
+.season-strip::after {
+	display: none;
+}
+
+.season-intro h2,
+.section-heading h2,
+.services-heading h2,
+.category-band h2 {
+	letter-spacing: -.035em;
+}
+
+.season-list {
+	gap: 14px;
+}
+
+.season-card {
+	border: 1px solid #1831370b;
+	border-radius: 10px;
+	box-shadow: 0 5px 16px #1831370b;
+	min-height: 168px;
+}
+
+.season-card:hover {
+	box-shadow: 0 12px 25px #18313718;
+	transform: translateY(-4px);
+}
+
+.spring { background: #d9e6d5; }
+.summer { background: #f1d8a6; }
+.autumn { background: #e7c1aa; }
+.winter { background: #d0dfe0; }
+
+.section {
+	background: var(--paper);
+	border-color: #e9e9e2;
+	padding: clamp(58px, 7vw, 92px) clamp(28px, 8vw, 120px);
+}
+
+.section-heading {
+	align-items: end;
+	margin-bottom: 32px;
+}
+
+.eyebrow {
+	font-size: .76rem;
+	letter-spacing: .04em;
+	text-transform: none;
+}
+
+.section-heading h2,
+.services-heading h2,
+.season-intro h2 {
+	font-size: clamp(2rem, 3.4vw, 2.8rem);
+}
+
+.toolbar {
+	gap: 9px;
+}
+
+.search-box,
+.toolbar select {
+	background: #fff;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	min-height: 44px;
+}
+
+.search-box:focus-within,
+.toolbar select:focus-visible {
+	border-color: var(--green);
+}
+
+.search-box input {
+	min-width: 130px;
+}
+
+.book-grid {
+	gap: clamp(14px, 2vw, 24px);
+}
+
+.book-card {
+	background: #fff;
+	border: 1px solid #e6e8e1;
+	border-radius: 11px;
+	box-shadow: 0 4px 15px #18313708;
+	padding: 12px;
+}
+
+.book-card:hover {
+	border-color: #c7d7cc;
+	box-shadow: 0 14px 32px #18313716;
+}
+
+.cover {
+	border-radius: 7px;
+}
+
+.book-info h3 {
+	font-size: 1.03rem;
+	line-height: 1.35;
+}
+
+.book-bottom {
+	align-items: center;
+	display: grid;
+	gap: 4px 8px;
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.book-bottom .price {
+	grid-column: 1;
+	grid-row: 1;
+}
+
+.book-bottom .details-link {
+	font-size: .76rem;
+	grid-column: 1;
+	grid-row: 2;
+}
+
+.book-bottom .favorite-button {
+	grid-column: 2;
+	grid-row: 1;
+}
+
+.add-button {
+	border-radius: 7px;
+	font-weight: 600;
+	grid-column: 1 / -1;
+	grid-row: 3;
+	padding: 8px 11px;
+	text-align: center;
+	width: 100%;
+}
+
+.add-button:hover {
+	background: var(--green);
+}
+
+.category-band {
+	background: #183a36;
+	padding: 70px clamp(28px, 10vw, 150px);
+}
+
+.category-list {
+	gap: 8px;
+}
+
+.category-list button {
+	border-color: #ffffff3d;
+	border-radius: 7px;
+	padding: 13px 15px;
+}
+
+.category-list button:hover {
+	background: #ffffff12;
+	border-color: #e7b66b;
+}
+
+.services-section {
+	background: #f4f3ed;
+	gap: clamp(30px, 5vw, 72px);
+	padding: 72px clamp(28px, 8vw, 120px);
+}
+
+.service-grid {
+	gap: 12px;
+}
+
+.service-card {
+	background: #fffefa;
+	border-color: #e3e6df;
+	border-radius: 10px;
+	padding: 23px;
+}
+
+.service-card-highlight {
+	background: var(--green);
+	border-color: var(--green);
+}
+
+.service-button {
+	border-radius: 7px;
+}
+
+.quick-cart {
+	border-color: #e2e7df;
+	border-radius: 14px;
+	box-shadow: 0 10px 28px #18313720;
+}
+
+.quick-cart-icon {
+	background: var(--green);
+	border-radius: 10px;
+}
+
+footer {
+	background: #eeece3;
+	padding: 27px clamp(28px, 8vw, 120px);
+}
+
+@media (max-width: 800px) {
+	.site-header {
+		column-gap: 8px;
+		flex-wrap: wrap;
+		row-gap: 10px;
+	}
+
+	.brand {
+		margin-right: auto;
+	}
+
+	.site-header .cart-button,
+	.site-header .account-button {
+		font-size: .78rem;
+		padding: 9px 10px;
+	}
+
+	.hero {
+		background:
+			radial-gradient(ellipse at 75% 82%, #315c50 0, #23483f 24%, transparent 58%),
+			#183a36;
+		padding: 54px 7vw 34px;
+	}
+
+	.hero h1 {
+		max-width: 620px;
+	}
+
+	.hero-stack {
+		margin-top: 20px;
+	}
+
+	.hero-stack::before {
+		height: 310px;
+		right: -36px;
+		top: -25px;
+		width: 310px;
+	}
+
+	.season-strip,
+	.section,
+	.services-section {
+		padding-left: 6vw;
+		padding-right: 6vw;
+	}
+
+	.season-list {
+		gap: 10px;
+	}
+}
+
+@media (max-width: 480px) {
+	.hero {
+		padding: 46px 6vw 26px;
+	}
+
+	.hero h1 {
+		font-size: clamp(2.65rem, 12vw, 3.5rem);
+	}
+
+	.hero-stack {
+		margin-top: 12px;
+	}
+
+	.hero-stack::before {
+		height: 270px;
+		right: -12px;
+		top: -15px;
+		width: 270px;
+	}
+
+	.season-card {
+		border-radius: 8px;
+	}
+
+	.section-heading h2,
+	.services-heading h2,
+	.season-intro h2 {
+		font-size: 1.9rem;
+	}
 }

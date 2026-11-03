@@ -7,6 +7,7 @@ const books = require("./books-data");
 const {
   CustomerError,
   Database,
+  isOrderStatusTransitionAllowed,
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
@@ -264,17 +265,24 @@ function createOrder(payload, userId = null) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
+  if (
+    typeof payload.customerName !== "string" ||
+    typeof payload.address !== "string" ||
+    typeof payload.phone !== "string"
+  ) {
+    throw new RequestError(400, "Vui lòng kiểm tra thông tin nhận hàng.");
+  }
 
   const customerName = sanitizePlainText(
-    typeof payload.customerName === "string" ? payload.customerName : String(payload.customerName || ""),
+    payload.customerName,
     120,
   );
   const address = sanitizePlainText(
-    typeof payload.address === "string" ? payload.address : String(payload.address || ""),
+    payload.address,
     300,
   );
   const phone = sanitizePlainText(
-    typeof payload.phone === "string" ? payload.phone : String(payload.phone || ""),
+    payload.phone,
     20,
   );
   const paymentMethod = sanitizePlainText(
@@ -296,11 +304,21 @@ function createOrder(payload, userId = null) {
   if (!/^[0-9 +()-]{8,20}$/.test(phone)) {
     throw new RequestError(400, "Vui lòng kiểm tra số điện thoại.");
   }
+  if (phone.replace(/\D/g, "").length < 8 || phone.replace(/\D/g, "").length > 15) {
+    throw new RequestError(400, "Vui lòng kiểm tra số điện thoại.");
+  }
   if (!["transfer", "cod"].includes(paymentMethod)) {
     throw new RequestError(400, "Phương thức thanh toán không hợp lệ.");
   }
   if (!allowedDiscountRates.has(discountRate)) {
     throw new RequestError(400, "Mức giảm giá không hợp lệ.");
+  }
+  if (
+    payload.couponCode !== undefined &&
+    payload.couponCode !== null &&
+    typeof payload.couponCode !== "string"
+  ) {
+    throw new RequestError(400, "Mã ưu đãi không hợp lệ hoặc đã hết hạn.");
   }
   if (couponCode && !coupons.has(couponCode)) {
     throw new RequestError(400, "Mã ưu đãi không hợp lệ hoặc đã hết hạn.");
@@ -315,6 +333,9 @@ function createOrder(payload, userId = null) {
 
   const quantities = new Map();
   for (const item of payload.items) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new RequestError(400, "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.");
+    }
     const safeTitle = sanitizePlainText(
       item && typeof item.title === "string" ? item.title : "",
       200,
@@ -348,6 +369,14 @@ function createOrder(payload, userId = null) {
   const orderItems = [...quantities].map(([title, quantity]) => {
     const book = bookCatalog.get(title);
     const unitPrice = roundMoney(book.price);
+    if (
+      !Number.isFinite(book.price) ||
+      book.price < 0 ||
+      !Number.isSafeInteger(unitPrice) ||
+      !Number.isSafeInteger(unitPrice * quantity)
+    ) {
+      throw new RequestError(400, "Giá sách không hợp lệ.");
+    }
     return {
       title: book.title,
       author: book.author,
@@ -360,6 +389,9 @@ function createOrder(payload, userId = null) {
     (total, item) => total + item.lineTotal,
     0,
   );
+  if (!Number.isSafeInteger(subtotal)) {
+    throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
+  }
   const couponRate = couponCode ? coupons.get(couponCode).rate : 0;
   const discount = roundMoney(
     subtotal * Math.min(discountRate + couponRate, 0.3),

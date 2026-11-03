@@ -76,6 +76,97 @@ test("backend rejects invalid service and status payloads", async (t) => {
     },
   );
   assert.equal(invalidStatusRes.status, 400);
+
+  const invalidTransitionRes = await fetch(
+    `${baseUrl}/api/admin/orders/${order.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "shipping" }),
+    },
+  );
+  assert.equal(invalidTransitionRes.status, 400);
+
+  const validTransitionRes = await fetch(
+    `${baseUrl}/api/admin/orders/${order.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "processing" }),
+    },
+  );
+  assert.equal(validTransitionRes.status, 200);
+  assert.equal((await validTransitionRes.json()).status, "processing");
+});
+
+test("order creation calculates catalog prices and rejects invalid checkout data", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-order-pricing-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const validOrder = {
+    customerName: "Nguyễn Văn A",
+    address: "12 Đường Sách, Quận 1",
+    phone: "0901234567",
+    paymentMethod: "cod",
+    discountRate: 0.05,
+    couponCode: "BOOKNEST10",
+    subtotal: 1,
+    discount: 1,
+    total: 0,
+    items: [{ title: "Nhà giả kim", quantity: 1, price: 1, lineTotal: 1 }],
+  };
+  const submitOrder = (order) =>
+    fetch(`${baseUrl}/api/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(order),
+    });
+
+  const successResponse = await submitOrder(validOrder);
+  assert.equal(successResponse.status, 201);
+  const createdOrder = await successResponse.json();
+  assert.equal(createdOrder.subtotal, 89000);
+  assert.equal(createdOrder.discount, 13350);
+  assert.equal(createdOrder.total, 75650);
+  assert.equal(createdOrder.items[0].lineTotal, 89000);
+  assert.equal(createdOrder.paymentStatus, "cod_pending");
+
+  const invalidOrders = [
+    { ...validOrder, items: [{ title: "Unknown book", quantity: 1 }] },
+    { ...validOrder, items: [{ title: "Nhà giả kim", quantity: 0 }] },
+    { ...validOrder, items: [{ title: "Nhà giả kim", quantity: 1.5 }] },
+    { ...validOrder, items: [{ title: "Nhà giả kim", quantity: 13 }] },
+    { ...validOrder, couponCode: "NOT-A-COUPON" },
+    { ...validOrder, couponCode: 10 },
+    { ...validOrder, paymentMethod: "cash" },
+    { ...validOrder, customerName: undefined },
+    { ...validOrder, address: 123 },
+    { ...validOrder, phone: "abcdefghij" },
+    { ...validOrder, discountRate: 0.2 },
+  ];
+  for (const invalidOrder of invalidOrders) {
+    const response = await submitOrder(invalidOrder);
+    assert.equal(response.status, 400);
+  }
 });
 
 test("social auth registers and authenticates Google and Facebook accounts", async (t) => {

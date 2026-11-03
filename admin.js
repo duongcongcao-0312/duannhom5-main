@@ -287,11 +287,26 @@
             return;
         }
 
+        const orderStatusLabels = {
+            received: 'Mới nhận',
+            processing: 'Đang xử lý',
+            shipping: 'Đang giao',
+            completed: 'Hoàn tất',
+            cancelled: 'Đã huỷ'
+        };
+        const nextOrderStatuses = {
+            received: ['processing', 'cancelled'],
+            processing: ['shipping', 'cancelled'],
+            shipping: ['completed', 'cancelled'],
+            completed: [],
+            cancelled: []
+        };
         tbody.innerHTML = filtered.map((order) => {
             const date = new Date(order.createdAt).toLocaleString('vi-VN');
             const itemsSummary = (order.items || [])
                 .map((i) => `${escapeHtml(i.title)} (x${i.quantity})`)
                 .join('<br>');
+            const availableStatuses = [order.status, ...(nextOrderStatuses[order.status] || [])];
 
             return `
                 <tr data-order-id="${escapeHtml(order.orderId)}">
@@ -312,11 +327,7 @@
                     <td><span class="status-badge status-${escapeHtml(order.status)}">${escapeHtml(order.status)}</span></td>
                     <td>
                         <select class="form-select order-status-select" data-id="${escapeHtml(order.orderId)}">
-                            <option value="received" ${order.status === 'received' ? 'selected' : ''}>Mới nhận</option>
-                            <option value="processing" ${order.status === 'processing' ? 'selected' : ''}>Đang xử lý</option>
-                            <option value="shipping" ${order.status === 'shipping' ? 'selected' : ''}>Đang giao</option>
-                            <option value="completed" ${order.status === 'completed' ? 'selected' : ''}>Hoàn tất</option>
-                            <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>Đã huỷ</option>
+                            ${availableStatuses.map((status) => `<option value="${status}" ${order.status === status ? 'selected' : ''}>${orderStatusLabels[status]}</option>`).join('')}
                         </select>
                     </td>
                 </tr>
@@ -343,9 +354,11 @@
                         renderFilteredOrders();
                     } else {
                         showToast('Không thể cập nhật trạng thái đơn.', 'error');
+                        renderFilteredOrders();
                     }
                 } catch (err) {
                     showToast('Lỗi mạng khi cập nhật.', 'error');
+                    renderFilteredOrders();
                 }
             });
         });

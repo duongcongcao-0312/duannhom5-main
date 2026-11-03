@@ -101,6 +101,20 @@ const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
 const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
 const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
 const allowedServiceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
+const orderStatusTransitions = new Map([
+  ["received", new Set(["processing", "cancelled"])],
+  ["processing", new Set(["shipping", "cancelled"])],
+  ["shipping", new Set(["completed", "cancelled"])],
+  ["completed", new Set()],
+  ["cancelled", new Set()],
+]);
+
+function isOrderStatusTransitionAllowed(currentStatus, nextStatus) {
+  return (
+    currentStatus === nextStatus ||
+    orderStatusTransitions.get(currentStatus)?.has(nextStatus) === true
+  );
+}
 
 class Database {
   constructor(options = {}) {
@@ -573,19 +587,26 @@ class Database {
     let updatedOrder = null;
 
     const newLines = lines.map((line) => {
+      let order;
       try {
-        const order = JSON.parse(line);
-        if (order && order.orderId === orderId) {
-          if (status) order.status = status;
-          if (paymentStatus) order.paymentStatus = paymentStatus;
-          order.updatedAt = new Date().toISOString();
-          updatedOrder = order;
-          return JSON.stringify(order);
-        }
-        return line;
+        order = JSON.parse(line);
       } catch {
         return line;
       }
+      if (order && order.orderId === orderId) {
+        if (
+          status !== undefined &&
+          !isOrderStatusTransitionAllowed(order.status, status)
+        ) {
+          throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+        }
+        if (status) order.status = status;
+        if (paymentStatus) order.paymentStatus = paymentStatus;
+        order.updatedAt = new Date().toISOString();
+        updatedOrder = order;
+        return JSON.stringify(order);
+      }
+      return line;
     });
 
     if (!updatedOrder) return null;
@@ -760,4 +781,9 @@ class Database {
   }
 }
 
-module.exports = { CustomerError, Database, validateCustomerData };
+module.exports = {
+  CustomerError,
+  Database,
+  isOrderStatusTransitionAllowed,
+  validateCustomerData,
+};

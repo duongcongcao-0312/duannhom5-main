@@ -1,7 +1,11 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const { Pool } = require("pg");
-const { CustomerError, validateCustomerData } = require("./db");
+const {
+  CustomerError,
+  isOrderStatusTransitionAllowed,
+  validateCustomerData,
+} = require("./db");
 const { hashPassword } = require("./auth");
 
 const serviceTypes = new Set(["rent", "sell", "exchange"]);
@@ -457,6 +461,12 @@ class PostgresDatabase {
     return this.updateCollection("orders", (orders) => {
       const order = orders.find((entry) => entry.orderId === orderId);
       if (!order) return null;
+      if (
+        status !== undefined &&
+        !isOrderStatusTransitionAllowed(order.status, status)
+      ) {
+        throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+      }
       if (status) order.status = status;
       if (paymentStatus) order.paymentStatus = paymentStatus;
       order.updatedAt = new Date().toISOString();

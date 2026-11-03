@@ -132,7 +132,7 @@ test('responsive CSS includes tablet and mobile breakpoints', () => {
 	assert.match(css, /max-width: 1024px/);
 	assert.match(css, /max-width: 800px/);
 	assert.match(css, /max-width: 480px/);
-	assert.match(css, /overflow-x: hidden/);
+	assert.match(css, /overflow-x: (?:hidden|clip)/);
 });
 
 test('mobile checkout keeps delivery fields accessible before transfer details', () => {
@@ -156,6 +156,19 @@ test('homepage presents the four-season bookstore layout', () => {
 	assert.match(css, /\.summer/);
 	assert.match(css, /\.autumn/);
 	assert.match(css, /\.winter/);
+});
+
+test('homepage hero is a scroll-scrubbed scene with reduced-motion support', () => {
+	const html = read('index.html');
+	const css = read('main.css');
+	const script = read('main.js');
+	assert.match(html, /<section class="hero" data-scroll-cinema>/);
+	assert.match(html, /<div class="hero-scene">/);
+	assert.match(css, /\.has-scroll-cinema \.hero-scene\s*\{[^}]*position: sticky/s);
+	assert.match(css, /prefers-reduced-motion: reduce/);
+	assert.match(script, /function initializeScrollCinema\(\)/);
+	assert.match(script, /requestAnimationFrame\(updateScene\)/);
+	assert.match(script, /initializeScrollCinema\(\);/);
 });
 
 test('SEO, legal and deployment assets exist', () => {

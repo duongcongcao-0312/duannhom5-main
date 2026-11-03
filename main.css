@@ -2,7 +2,7 @@
 
 :root { --ink: #183137; --muted: #586a68; --cream: #f4f3ed; --paper: #fffefa; --green: #24584b; --green-light: #e2eee7; --coral: #b45139; --gold: #d9a64e; --line: #e1e5de; --shadow: 0 16px 38px #18313714; }
 * { box-sizing: border-box; }
-html, body { max-width: 100%; overflow-x: hidden; }
+html, body { max-width: 100%; overflow-x: clip; }
 html { scroll-behavior: smooth; }
 body { margin: 0; color: var(--ink); background-color: var(--cream); background-image: linear-gradient(115deg, #ffffff35 25%, transparent 25%, transparent 75%, #ffffff35 75%), radial-gradient(#d6cfc1 0.7px, transparent 0.7px), linear-gradient(180deg, #f7f3eb 0%, #f0ede5 100%); background-position: 0 0, 0 0, 0 0; background-size: 56px 56px, 18px 18px, 100% 100%; font-family: 'DM Sans', sans-serif; }
 a { color: inherit; text-decoration: none; }
@@ -789,5 +789,118 @@ footer {
 	.services-heading h2,
 	.season-intro h2 {
 		font-size: 1.9rem;
+	}
+}
+
+.has-scroll-cinema .hero {
+	display: block;
+	height: 190svh;
+	min-height: 0;
+	overflow: clip;
+	padding: 0;
+}
+
+.has-scroll-cinema .hero-scene {
+	align-items: center;
+	display: flex;
+	gap: 40px;
+	height: calc(100svh - var(--cinema-header-height, 72px));
+	justify-content: space-between;
+	min-height: 520px;
+	overflow: hidden;
+	padding: 40px clamp(28px, 11vw, 170px);
+	position: sticky;
+	top: var(--cinema-header-height, 72px);
+}
+
+.has-scroll-cinema .hero::before {
+	display: none;
+}
+
+.has-scroll-cinema .hero-scene::before {
+	background: radial-gradient(#f3ead8 1.2px, transparent 1.5px);
+	background-size: 22px 22px;
+	content: '';
+	inset: 0 0 0 46%;
+	mask-image: linear-gradient(90deg, transparent, #000 45%);
+	opacity: .13;
+	pointer-events: none;
+	position: absolute;
+}
+
+.has-scroll-cinema .hero-scene::after {
+	border: 1px solid #f3ead833;
+	border-radius: 50%;
+	content: '';
+	height: 480px;
+	pointer-events: none;
+	position: absolute;
+	right: -180px;
+	top: -210px;
+	width: 480px;
+}
+
+.has-scroll-cinema .hero-copy {
+	opacity: var(--cinema-copy-opacity, 1);
+	transform: translate3d(0, var(--cinema-copy-y, 0), 0);
+}
+
+.has-scroll-cinema .hero-stack {
+	flex: 0 0 300px;
+	transform: none;
+}
+
+.has-scroll-cinema .hero-book {
+	transform:
+		translate3d(var(--cinema-x, 0), var(--cinema-y, 0), 0)
+		rotate(calc(var(--book-angle, 0deg) + var(--cinema-rotation, 0deg)))
+		scale(var(--cinema-scale, 1));
+	transform-origin: center;
+}
+
+.has-scroll-cinema .book-blue { --book-angle: -10deg; }
+.has-scroll-cinema .book-red { --book-angle: 5deg; }
+.has-scroll-cinema .book-gold { --book-angle: 16deg; }
+
+@media (max-width: 800px) {
+	.has-scroll-cinema .hero-scene {
+		align-items: flex-start;
+		flex-direction: column;
+		height: calc(100svh - var(--cinema-header-height, 100px));
+		justify-content: center;
+		min-height: 570px;
+		padding: 42px 7vw 24px;
+	}
+
+	.has-scroll-cinema .hero-stack {
+		align-self: center;
+		flex-basis: 270px;
+		margin: 12px auto 0;
+		transform: none;
+	}
+}
+
+@media (max-width: 480px) {
+	.has-scroll-cinema .hero-scene {
+		padding: 34px 6vw 16px;
+	}
+
+	.has-scroll-cinema .hero-stack {
+		margin: 4px auto 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.has-scroll-cinema .hero {
+		height: auto;
+		min-height: 510px;
+		overflow: hidden;
+	}
+
+	.has-scroll-cinema .hero-scene {
+		height: auto;
+		min-height: 510px;
+		position: relative;
+		top: auto;
 	}
 }

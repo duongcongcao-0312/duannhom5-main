@@ -1253,6 +1253,69 @@ function askAi(question) {
 	window.setTimeout(() => addAiMessage(getAiAnswer(cleanQuestion), 'bot'), 250);
 }
 
+function initializeScrollCinema() {
+	const hero = document.querySelector('[data-scroll-cinema]');
+	const scene = hero?.querySelector('.hero-scene');
+	const booksInScene = [...(hero?.querySelectorAll('.hero-book') || [])];
+	const header = document.querySelector('.site-header');
+	const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+	if (!hero || !scene || !booksInScene.length || reducedMotion.matches) return;
+
+	const bookMotion = [
+		{ x: -1, y: -36, rotation: -7, scale: 0.04 },
+		{ x: 0, y: -92, rotation: 0, scale: 0.08 },
+		{ x: 1, y: -36, rotation: 8, scale: 0.04 }
+	];
+	const compactLayout = window.matchMedia('(max-width: 800px)');
+	let frame = 0;
+
+	function updateScene() {
+		frame = 0;
+		if (reducedMotion.matches) return;
+		const headerHeight = header?.getBoundingClientRect().height || 0;
+		document.documentElement.style.setProperty('--cinema-header-height', `${headerHeight}px`);
+		const scrollRange = hero.offsetHeight - scene.offsetHeight;
+		if (scrollRange <= 0) return;
+
+		const progress = Math.max(0, Math.min(1, (headerHeight - hero.getBoundingClientRect().top) / scrollRange));
+		const horizontalSpread = compactLayout.matches ? 16 : 40;
+		scene.style.setProperty('--cinema-copy-y', `${-42 * progress}px`);
+		scene.style.setProperty('--cinema-copy-opacity', `${1 - progress * 0.28}`);
+		booksInScene.forEach((book, index) => {
+			const motion = bookMotion[index];
+			if (!motion) return;
+			book.style.setProperty('--cinema-x', `${motion.x * horizontalSpread * progress}px`);
+			book.style.setProperty('--cinema-y', `${motion.y * progress}px`);
+			book.style.setProperty('--cinema-rotation', `${motion.rotation * progress}deg`);
+			book.style.setProperty('--cinema-scale', `${1 + motion.scale * progress}`);
+		});
+	}
+
+	function scheduleSceneUpdate() {
+		if (!frame) frame = window.requestAnimationFrame(updateScene);
+	}
+
+	window.addEventListener('scroll', scheduleSceneUpdate, { passive: true });
+	window.addEventListener('resize', scheduleSceneUpdate);
+	reducedMotion.addEventListener('change', (event) => {
+		if (event.matches) {
+			window.removeEventListener('scroll', scheduleSceneUpdate);
+			window.removeEventListener('resize', scheduleSceneUpdate);
+			window.cancelAnimationFrame(frame);
+			document.documentElement.classList.remove('has-scroll-cinema');
+			document.documentElement.style.removeProperty('--cinema-header-height');
+			scene.removeAttribute('style');
+			booksInScene.forEach((book) => book.removeAttribute('style'));
+			return;
+		}
+		document.documentElement.classList.add('has-scroll-cinema');
+		scheduleSceneUpdate();
+	});
+
+	document.documentElement.classList.add('has-scroll-cinema');
+	scheduleSceneUpdate();
+}
+
 document.querySelector('#aiLauncher').addEventListener('click', () => {
 	const open = !aiChat.classList.contains('open');
 	if (open) toggleCart(false);
@@ -1269,6 +1332,7 @@ document.querySelector('#aiForm').addEventListener('submit', (event) => {
 	askAi(aiInput.value);
 });
 document.querySelectorAll('[data-ai-question]').forEach((button) => button.addEventListener('click', () => askAi(button.dataset.aiQuestion)));
+initializeScrollCinema();
 renderAccount();
 fillSavedCustomerInfo();
 hydrateAuthenticatedUser();

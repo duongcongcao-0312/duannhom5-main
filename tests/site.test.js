@@ -10,6 +10,21 @@ const { createServer } = require('../server');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
+function configureTestAdmin(t) {
+	const previous = {
+		ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+		ADMIN_PASSWORD: process.env.ADMIN_PASSWORD
+	};
+	process.env.ADMIN_EMAIL = 'admin@example.com';
+	process.env.ADMIN_PASSWORD = 'local-test-admin-password-123';
+	t.after(() => {
+		for (const [key, value] of Object.entries(previous)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	});
+}
+
 test('payment UI contains COD and delivery fields', () => {
 	const html = read('index.html');
 	assert.match(html, /value="cod"/);
@@ -296,9 +311,12 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(html, /id="favoritesFilter"/);
 	assert.match(html, /id="couponInput"/);
 	assert.match(html, /id="trackOrderForm"/);
+	assert.match(html, /id="myOrdersButton"/);
 	assert.match(script, /FAVORITES_STORAGE_KEY/);
 	assert.match(script, /api\/coupons/);
 	assert.match(script, /trackOrderForm/);
+	assert.match(script, /booknestApiFetch\('\/api\/orders'/);
+	assert.match(script, /Authorization: `Bearer \$\{token\}`/);
 	assert.match(server, /BOOKNEST10/);
 	assert.match(server, /couponCode/);
 });
@@ -394,7 +412,7 @@ test('category cards show data-driven book counts without inventory management',
 test('orders are saved before confirmation and can be looked up without exposing delivery details', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-orders-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -447,7 +465,7 @@ test('orders are saved before confirmation and can be looked up without exposing
 test('retries with the same idempotency key return one saved order', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -488,7 +506,7 @@ test('retries with the same idempotency key return one saved order', async (t) =
 test('invalid idempotency keys are rejected before creating an order', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-invalid-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -512,7 +530,7 @@ test('invalid idempotency keys are rejected before creating an order', async (t)
 test('coupon and account discounts use one rounded integer-money calculation', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-money-rounding-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -563,6 +581,7 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	assert.equal(spec.openapi, '3.1.0');
 	assert.ok(spec.paths['/api/auth/register']);
 	assert.ok(spec.paths['/api/auth/password-reset']);
+	assert.ok(spec.paths['/api/orders'].get.security);
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
 	assert.ok(spec.paths['/api/customers/{id}']);
@@ -596,7 +615,7 @@ test('customer seed is repeatable and includes 10 to 20 synthetic customers', ()
 test('invalid books are rejected without saving an order', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-order-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -630,7 +649,7 @@ test('orders exceeding stock are rejected without changing existing orders', asy
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
 	const existingOrder = JSON.stringify({ orderId: 'existing-order', status: 'received' }) + '\n';
 	await fsPromises.writeFile(ordersPath, existingOrder);
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -667,9 +686,10 @@ test('orders exceeding stock are rejected without changing existing orders', asy
 });
 
 test('zero and negative quantities are rejected on create and update without persistence', async (t) => {
+	configureTestAdmin(t);
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-invalid-quantity-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -716,7 +736,7 @@ test('zero and negative quantities are rejected on create and update without per
 	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ email: 'admin@booknest.vn', password: 'admin123' }),
+		body: JSON.stringify({ email: 'admin@example.com', password: 'local-test-admin-password-123' }),
 	});
 	const token = (await loginResponse.json()).token;
 	const authenticatedUpdate = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
@@ -732,7 +752,7 @@ test('zero and negative quantities are rejected on create and update without per
 test('concurrent orders are serialized and cannot reserve the same stock twice', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-race-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });

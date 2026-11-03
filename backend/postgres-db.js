@@ -104,7 +104,10 @@ class PostgresDatabase {
         const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
         const password = process.env.ADMIN_PASSWORD || "";
         const hasAdminConfig = Boolean(email || password);
-        if (hasAdminConfig && (!email || password.length < 12)) {
+        if (
+          hasAdminConfig &&
+          (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 12)
+        ) {
           throw new Error(
             "Cấu hình ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) không hợp lệ.",
           );
@@ -143,10 +146,36 @@ class PostgresDatabase {
             admin.password = hashPassword(password);
             admin.role = "admin";
           }
+          const legacyDefaultAdmin = users.find(
+            (user) =>
+              user !== admin &&
+              String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
+              user.role === "admin",
+          );
+          if (legacyDefaultAdmin) {
+            legacyDefaultAdmin.role = "user";
+            legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+            legacyDefaultAdmin.updatedAt = new Date().toISOString();
+          }
           await this.pool.query(
             "INSERT INTO booknest_data (collection, records) VALUES ('users', $1::jsonb) ON CONFLICT (collection) DO UPDATE SET records = EXCLUDED.records, updated_at = NOW()",
             [JSON.stringify(users)],
           );
+        } else {
+          const legacyDefaultAdmin = users.find(
+            (user) =>
+              String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
+              user.role === "admin",
+          );
+          if (legacyDefaultAdmin) {
+            legacyDefaultAdmin.role = "user";
+            legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+            legacyDefaultAdmin.updatedAt = new Date().toISOString();
+            await this.pool.query(
+              "INSERT INTO booknest_data (collection, records) VALUES ('users', $1::jsonb) ON CONFLICT (collection) DO UPDATE SET records = EXCLUDED.records, updated_at = NOW()",
+              [JSON.stringify(users)],
+            );
+          }
         }
       }).catch((error) => {
         this.initialization = null;

@@ -146,7 +146,8 @@ class Database {
     const hasAdminConfig = Boolean(configuredEmail || configuredPassword);
     if (
       hasAdminConfig &&
-      (!configuredEmail || configuredPassword.length < 12)
+      (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configuredEmail) ||
+        configuredPassword.length < 12)
     ) {
       throw new Error(
         "Cấu hình ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) không hợp lệ.",
@@ -170,7 +171,6 @@ class Database {
     }
 
     const defaultAdminEmail = "admin@booknest.vn";
-    const defaultAdminPassword = "admin123";
     const configuredAdminName = String(process.env.ADMIN_NAME || "").trim() || "Quản trị viên BookNest";
 
     if (hasAdminConfig) {
@@ -196,21 +196,27 @@ class Database {
       admin.studentType = admin.studentType || "other";
       admin.studentId = String(admin.studentId || "").trim();
       admin.updatedAt = new Date().toISOString();
-    } else {
-      const adminUser = users.find(
-        (user) => user.role === "admin" || String(user.email || "").trim().toLowerCase() === defaultAdminEmail,
+      const legacyDefaultAdmin = users.find(
+        (user) =>
+          user !== admin &&
+          String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
+          user.role === "admin",
       );
-      if (!adminUser) {
-        users.push({
-          id: "admin-master",
-          name: configuredAdminName,
-          email: defaultAdminEmail,
-          password: hashPassword(defaultAdminPassword),
-          role: "admin",
-          studentType: "other",
-          studentId: "",
-          createdAt: new Date().toISOString(),
-        });
+      if (legacyDefaultAdmin) {
+        legacyDefaultAdmin.role = "user";
+        legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+        legacyDefaultAdmin.updatedAt = new Date().toISOString();
+      }
+    } else {
+      const defaultAdmin = users.find(
+        (user) =>
+          String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
+          user.role === "admin",
+      );
+      if (defaultAdmin) {
+        defaultAdmin.role = "user";
+        defaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+        defaultAdmin.updatedAt = new Date().toISOString();
       }
     }
 

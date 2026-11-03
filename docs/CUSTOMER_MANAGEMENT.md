@@ -70,21 +70,21 @@ Xem bảng trường, index, retention và consent tại
 
 ## 3. Xác thực và seed
 
-Khởi động server sẽ gọi `Database.init()`:
+Đặt `ADMIN_EMAIL` và `ADMIN_PASSWORD` (tối thiểu 12 ký tự) trong `.env` trước
+khi khởi động server:
 
 ```powershell
 npm start
 ```
 
-Nếu `data/users.json` chưa tồn tại, server seed tài khoản admin local:
+`Database.init()` tạo hoặc cập nhật tài khoản admin theo các biến môi trường:
 
 ```text
-Email: admin@booknest.vn
-Mật khẩu: admin123
+Thiết lập ADMIN_EMAIL và ADMIN_PASSWORD trong .env trước khi khởi động.
 ```
 
-Đổi hoặc vô hiệu hóa tài khoản này trước khi mở server ra mạng. Không commit
-file dữ liệu production.
+Không có tài khoản/mật khẩu mặc định. Chỉ tài khoản được cấu hình trong môi
+trường chạy mới được cấp role admin. Không commit file dữ liệu production.
 
 CRM hiện chưa có lệnh migration/seed riêng. Khi chạy local sạch, chỉ cần tạo
 thư mục `data/` và khởi động server; `users.json` được seed tự động,
@@ -112,7 +112,7 @@ Trong các ví dụ dưới đây, `$TOKEN` là token trả về từ
 POST /api/auth/login
 Content-Type: application/json
 
-{"email":"admin@booknest.vn","password":"admin123"}
+{"email":"<ADMIN_EMAIL>","password":"<ADMIN_PASSWORD>"}
 ```
 
 ```json
@@ -120,7 +120,7 @@ Content-Type: application/json
   "token": "session-token",
   "user": {
     "id": "admin-master",
-    "email": "admin@booknest.vn",
+    "email": "<ADMIN_EMAIL>",
     "role": "admin",
     "customerInfo": {}
   }

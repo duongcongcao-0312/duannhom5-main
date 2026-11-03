@@ -69,6 +69,193 @@ const allowedPaymentStatuses = new Set([
   "cod_pending",
   "refunded",
 ]);
+const payloadSchemas = {
+  passwordReset: {
+    allowed: ["email"],
+    required: ["email"],
+    types: { email: "string" },
+  },
+  passwordResetConfirm: {
+    allowed: ["token", "password"],
+    required: ["token", "password"],
+    types: { token: "string", password: "string" },
+  },
+  register: {
+    allowed: ["name", "email", "password", "studentType", "studentId"],
+    required: ["name", "email", "password"],
+    types: {
+      name: "string",
+      email: "string",
+      password: "string",
+      studentType: "string",
+      studentId: "string",
+    },
+  },
+  login: {
+    allowed: ["email", "password"],
+    required: ["email", "password"],
+    types: { email: "string", password: "string" },
+  },
+  socialAuth: {
+    allowed: [
+      "name",
+      "email",
+      "provider",
+      "providerId",
+      "firebaseUid",
+      "studentType",
+      "studentId",
+    ],
+    required: ["email"],
+    types: {
+      name: "string",
+      email: "string",
+      provider: "string",
+      providerId: "string",
+      firebaseUid: "string",
+      studentType: "string",
+      studentId: "string",
+    },
+  },
+  customerInfo: {
+    allowed: ["customerName", "name", "phone", "address"],
+    types: {
+      customerName: "string",
+      name: "string",
+      phone: "string",
+      address: "string",
+    },
+    minProperties: 1,
+  },
+  customer: {
+    allowed: ["name", "email", "phone"],
+    required: ["name", "email", "phone"],
+    types: { name: "string", email: "string", phone: "string" },
+  },
+  customerUpdate: {
+    allowed: ["name", "email", "phone", "status"],
+    types: {
+      name: "string",
+      email: "string",
+      phone: "string",
+      status: "string",
+    },
+    minProperties: 1,
+  },
+  order: {
+    allowed: [
+      "customerName",
+      "address",
+      "phone",
+      "paymentMethod",
+      "discountRate",
+      "couponCode",
+      "subtotal",
+      "discount",
+      "total",
+      "items",
+    ],
+    required: [
+      "customerName",
+      "address",
+      "phone",
+      "paymentMethod",
+      "discountRate",
+      "items",
+    ],
+    types: {
+      customerName: "string",
+      address: "string",
+      phone: "string",
+      paymentMethod: "string",
+      discountRate: "number",
+      couponCode: "string",
+      subtotal: "number",
+      discount: "number",
+      total: "number",
+      items: "array",
+    },
+  },
+  orderUpdate: {
+    allowed: ["status", "paymentStatus", "items"],
+    types: { status: "string", paymentStatus: "string", items: "array" },
+    minProperties: 1,
+  },
+  orderStatusUpdate: {
+    allowed: ["status", "paymentStatus"],
+    types: { status: "string", paymentStatus: "string" },
+    minProperties: 1,
+  },
+  service: {
+    allowed: ["bookTitle", "name", "phone", "service", "condition", "note"],
+    required: ["bookTitle", "name", "phone", "service"],
+    types: {
+      bookTitle: "string",
+      name: "string",
+      phone: "string",
+      service: "string",
+      condition: "string",
+      note: "string",
+    },
+  },
+  serviceStatus: {
+    allowed: ["status"],
+    required: ["status"],
+    types: { status: "string" },
+  },
+  book: {
+    allowed: [
+      "title",
+      "author",
+      "category",
+      "price",
+      "stock",
+      "cover",
+      "description",
+    ],
+    required: ["title", "author", "price"],
+    types: {
+      title: "string",
+      author: "string",
+      category: "string",
+      price: "number",
+      stock: "number",
+      cover: "string",
+      description: "string",
+    },
+  },
+  bookUpdate: {
+    allowed: [
+      "title",
+      "author",
+      "category",
+      "price",
+      "stock",
+      "cover",
+      "description",
+    ],
+    types: {
+      title: "string",
+      author: "string",
+      category: "string",
+      price: "number",
+      stock: "number",
+      cover: "string",
+      description: "string",
+    },
+    minProperties: 1,
+  },
+};
+const customerQuerySchema = {
+  search: { type: "string", maxLength: 100 },
+  status: {
+    type: "string",
+    maxLength: 16,
+    values: ["new", "lead", "customer"],
+  },
+  page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
+  limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
+};
 const allowedServiceStatuses = new Set([
   "pending",
   "processing",
@@ -221,11 +408,13 @@ async function readJson(request) {
     chunks.push(chunk);
   }
 
+  let payload;
   try {
-    return sanitizePayload(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
+  return sanitizePayload(payload);
 }
 
 function sanitizePlainText(value, maxLength = 0) {
@@ -280,7 +469,11 @@ function sanitizePayload(value) {
   return value;
 }
 
-function requireJsonObject(payload, message = "Dữ liệu yêu cầu không hợp lệ.") {
+function requireJsonObject(
+  payload,
+  message = "Dữ liệu yêu cầu không hợp lệ.",
+  schema,
+) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, message);
   }
@@ -291,7 +484,82 @@ function requireJsonObject(payload, message = "Dữ liệu yêu cầu không h�
     throw new RequestError(400, message);
   }
 
+  if (schema) {
+    const allowedFields = new Set(schema.allowed);
+    if (Object.keys(sanitized).some((field) => !allowedFields.has(field))) {
+      throw new RequestError(400, message);
+    }
+    if (schema.required?.some((field) => !Object.hasOwn(sanitized, field))) {
+      throw new RequestError(400, message);
+    }
+    if (
+      Number.isInteger(schema.minProperties) &&
+      Object.keys(sanitized).length < schema.minProperties
+    ) {
+      throw new RequestError(400, message);
+    }
+    for (const [field, type] of Object.entries(schema.types || {})) {
+      if (
+        Object.hasOwn(sanitized, field) &&
+        (type === "array"
+          ? !Array.isArray(sanitized[field])
+          : typeof sanitized[field] !== type)
+      ) {
+        throw new RequestError(400, message);
+      }
+    }
+  }
+
   return sanitized;
+}
+
+function validateQuery(requestUrl, schema, message) {
+  const values = {};
+  for (const [field, value] of requestUrl.searchParams) {
+    const definition = schema[field];
+    if (!definition || Object.hasOwn(values, field) || value.length > definition.maxLength) {
+      throw new RequestError(400, message);
+    }
+    if (definition.type === "integer") {
+      if (!/^\d+$/.test(value)) throw new RequestError(400, message);
+      const number = Number(value);
+      if (
+        !Number.isSafeInteger(number) ||
+        number < definition.min ||
+        number > definition.max
+      ) {
+        throw new RequestError(400, message);
+      }
+      values[field] = number;
+      continue;
+    }
+    if (definition.values && !definition.values.includes(value)) {
+      throw new RequestError(400, message);
+    }
+    values[field] = value;
+  }
+  return values;
+}
+
+function validateApiPath(pathname) {
+  if (!pathname.startsWith("/api/")) return;
+  for (const segment of pathname.split("/")) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new RequestError(400, "Đường dẫn yêu cầu không hợp lệ.");
+    }
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      /[\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      throw new RequestError(400, "Đường dẫn yêu cầu không hợp lệ.");
+    }
+  }
 }
 
 function createOrder(payload, userId = null) {
@@ -710,7 +978,13 @@ function createServer({
   }
 
   async function handleRequest(request, response) {
-    const requestUrl = new URL(request.url, "http://localhost");
+    let requestUrl;
+    try {
+      requestUrl = new URL(request.url, "http://localhost");
+    } catch {
+      throw new RequestError(400, "Đường dẫn yêu cầu không hợp lệ.");
+    }
+    validateApiPath(requestUrl.pathname);
     const origin = request.headers.origin;
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
@@ -773,6 +1047,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Email không hợp lệ.",
+        payloadSchemas.passwordReset,
       );
       const email = sanitizePlainText(
         typeof payload.email === "string" ? payload.email : String(payload.email || ""),
@@ -865,6 +1140,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Yêu cầu đặt lại mật khẩu không hợp lệ.",
+        payloadSchemas.passwordResetConfirm,
       );
       const token = sanitizePlainText(
         typeof payload.token === "string" ? payload.token : String(payload.token || ""),
@@ -896,6 +1172,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
+        payloadSchemas.register,
       );
       const name = sanitizePlainText(
         typeof payload.name === "string" ? payload.name : String(payload.name || ""),
@@ -954,6 +1231,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu đăng nhập không hợp lệ.",
+        payloadSchemas.login,
       );
       const now = Date.now();
       for (const [address, attempt] of loginAttempts) {
@@ -996,6 +1274,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu xác thực không hợp lệ.",
+        payloadSchemas.socialAuth,
       );
       const email = sanitizePlainText(
         typeof payload.email === "string" ? payload.email : String(payload.email || ""),
@@ -1059,10 +1338,11 @@ function createServer({
     ) {
       const session = getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      const payload = await readJson(request);
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
-      }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Thông tin khách hàng không hợp lệ.",
+        payloadSchemas.customerInfo,
+      );
 
       const customerInfo = {};
       for (const field of ["customerName", "name", "phone", "address"]) {
@@ -1105,11 +1385,13 @@ function createServer({
     if (requestUrl.pathname === "/api/customers" && request.method === "GET") {
       requireCustomerPermission(request, "view");
       const customers = await db.getCustomers();
+      const filters = validateQuery(
+        requestUrl,
+        customerQuerySchema,
+        "Bộ lọc khách hàng không hợp lệ.",
+      );
       const pagedCustomers = applyCustomerFilters(customers, {
-        search: requestUrl.searchParams.get("search"),
-        status: requestUrl.searchParams.get("status"),
-        page: requestUrl.searchParams.get("page"),
-        limit: requestUrl.searchParams.get("limit"),
+        ...filters,
       });
       sendJson(response, 200, pagedCustomers);
       return;
@@ -1117,7 +1399,11 @@ function createServer({
 
     if (requestUrl.pathname === "/api/customers" && request.method === "POST") {
       const user = requireCustomerPermission(request, "create");
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu khách hàng không hợp lệ.",
+        payloadSchemas.customer,
+      );
       const customer = await db.createCustomer(
         validateCustomerData(payload),
         user.userId,
@@ -1132,11 +1418,13 @@ function createServer({
     ) {
       requireCustomerPermission(request, "view");
       const customers = await db.getCustomers();
+      const filters = validateQuery(
+        requestUrl,
+        customerQuerySchema,
+        "Bộ lọc khách hàng không hợp lệ.",
+      );
       const pagedCustomers = applyCustomerFilters(customers, {
-        search: requestUrl.searchParams.get("search"),
-        status: requestUrl.searchParams.get("status"),
-        page: requestUrl.searchParams.get("page"),
-        limit: requestUrl.searchParams.get("limit"),
+        ...filters,
       });
       sendJson(response, 200, pagedCustomers);
       return;
@@ -1147,8 +1435,13 @@ function createServer({
       request.method === "POST"
     ) {
       const user = requireCustomerPermission(request, "create");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu khách hàng không hợp lệ.",
+        payloadSchemas.customer,
+      );
       const customer = await db.createCustomer(
-        validateCustomerData(await readJson(request)),
+        validateCustomerData(payload),
         user.userId,
       );
       sendJson(response, 201, customer);
@@ -1156,7 +1449,7 @@ function createServer({
     }
 
     const customerMatch = requestUrl.pathname.match(
-      /^\/api\/(?:admin\/)?customers\/([0-9a-f-]{36})$/i,
+      /^\/api\/(?:admin\/)?customers\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
     );
     if (
       customerMatch &&
@@ -1186,7 +1479,11 @@ function createServer({
       }
 
       const user = requireCustomerPermission(request, "update");
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật khách hàng không hợp lệ.",
+        payloadSchemas.customerUpdate,
+      );
       const updated =
         payload && payload.status !== undefined
           ? await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId)
@@ -1200,6 +1497,23 @@ function createServer({
     }
 
     // --- API: Orders ---
+    if (requestUrl.pathname === "/api/orders" && request.method === "GET") {
+      validateQuery(requestUrl, {}, "Bộ lọc đơn hàng không hợp lệ.");
+      const requester = getAuthUser(request);
+      if (!requester) {
+        throw new RequestError(401, "Vui lòng đăng nhập để tra cứu đơn hàng.");
+      }
+      const orders = await db.getAllOrders(ordersPath);
+      sendJson(
+        response,
+        200,
+        orders
+          .filter((order) => order.userId === requester.userId)
+          .map(publicOrder),
+      );
+      return;
+    }
+
     if (requestUrl.pathname === "/api/orders" && request.method === "POST") {
       if (
         request.headers["content-type"]?.split(";")[0] !== "application/json"
@@ -1221,8 +1535,13 @@ function createServer({
         );
       }
       const idempotencyKey = suppliedIdempotencyKey || randomUUID();
-      const { order, replayed } = await createAndPersistOrder(
+      const payload = requireJsonObject(
         await readJson(request),
+        "Dữ liệu đơn hàng không hợp lệ.",
+        payloadSchemas.order,
+      );
+      const { order, replayed } = await createAndPersistOrder(
+        payload,
         requester?.userId || null,
         idempotencyKey,
       );
@@ -1231,7 +1550,7 @@ function createServer({
     }
 
     const orderMatch = requestUrl.pathname.match(
-      /^\/api\/orders\/([0-9a-f-]+)$/i,
+      /^\/api\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
     );
     if (orderMatch && request.method === "GET") {
       const order = await db.findOrderById(orderMatch[1], ordersPath);
@@ -1280,6 +1599,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
+        payloadSchemas.orderUpdate,
       );
       if (payload.items !== undefined) {
         if (!Array.isArray(payload.items) || payload.items.length === 0) {
@@ -1327,6 +1647,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu yêu cầu dịch vụ không hợp lệ.",
+        payloadSchemas.service,
       );
       const bookTitle = sanitizePlainText(
         typeof payload.bookTitle === "string" ? payload.bookTitle : String(payload.bookTitle || ""),
@@ -1403,7 +1724,7 @@ function createServer({
     }
 
     const adminOrderMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/orders\/([0-9a-f-]+)$/i,
+      /^\/api\/admin\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
     );
     if (
       adminOrderMatch &&
@@ -1413,6 +1734,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
+        payloadSchemas.orderStatusUpdate,
       );
       const safePayload = {
         ...payload,
@@ -1459,19 +1781,20 @@ function createServer({
     }
 
     const adminServiceMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/services\/([0-9a-f-]+)$/i,
+      /^\/api\/admin\/services\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
     );
     if (
       adminServiceMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
       requireRole(request, "write:services");
-      const payload = await readJson(request);
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật yêu cầu dịch vụ không hợp lệ.",
+        payloadSchemas.serviceStatus,
+      );
       const status =
-        payload && typeof payload === "object" ? sanitizePlainText(
-          typeof payload.status === "string" ? payload.status : String(payload.status || ""),
-          32,
-        ) : undefined;
+        sanitizePlainText(payload.status, 32);
       if (
         status !== undefined &&
         !allowedServiceStatuses.has(status)
@@ -1498,6 +1821,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu sách không hợp lệ.",
+        payloadSchemas.book,
       );
       const title = sanitizePlainText(
         typeof payload.title === "string" ? payload.title : String(payload.title || ""),
@@ -1531,7 +1855,7 @@ function createServer({
     }
 
     const adminBookMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/books\/([A-Za-z0-9_-]+)$/i,
+      /^\/api\/admin\/books\/([A-Za-z0-9_-]{1,128})$/i,
     );
     if (
       adminBookMatch &&
@@ -1541,6 +1865,7 @@ function createServer({
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật sách không hợp lệ.",
+        payloadSchemas.bookUpdate,
       );
       const updated = await db.updateCustomBook(adminBookMatch[1], payload);
       if (!updated) {
@@ -1608,7 +1933,7 @@ function createServer({
     await serveStatic(request, response, requestUrl.pathname, staticRoot);
   }
 
-  return http.createServer((request, response) => {
+  const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
     response.setHeader("X-Request-Id", requestId);
     void handleRequest(request, response).catch((error) => {
@@ -1634,6 +1959,9 @@ function createServer({
         return;
       }
       const isApiRequest = (() => {
+        if (typeof request.url === "string" && request.url.startsWith("/api/")) {
+          return true;
+        }
         try {
           return new URL(request.url, "http://localhost").pathname.startsWith("/api/");
         } catch {
@@ -1651,12 +1979,48 @@ function createServer({
       void sendHtmlError(response, status, status === 404 ? "404" : "500");
     });
   });
+  server.once("close", () => {
+    sessionStore.close();
+    if (typeof db.close !== "function") return;
+    try {
+      Promise.resolve(db.close()).catch((error) => {
+        console.error(JSON.stringify({
+          level: "error",
+          message: "Failed to close the database pool",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        process.exitCode = 1;
+      });
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: "error",
+        message: "Failed to close the database pool",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      process.exitCode = 1;
+    }
+  });
+  return server;
 }
 
 if (require.main === module) {
   const port = Number(process.env.PORT || 8000);
   const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
-  createServer().listen(port, host, () => {
+  const server = createServer();
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Nhận ${signal}, đang dừng server an toàn.`);
+    server.close((error) => {
+      if (!error) return;
+      console.error(`Không thể dừng server an toàn: ${error.message}`);
+      process.exitCode = 1;
+    });
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  server.listen(port, host, () => {
     console.log(`BookNest đang chạy tại http://${host}:${port}`);
   });
 }

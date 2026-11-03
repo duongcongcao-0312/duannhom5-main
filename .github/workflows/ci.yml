@@ -58,4 +58,4 @@ jobs:
       - name: Build application
         run: npm run build:pages
       - name: Security audit
-        run: npm audit --omit=dev
+        run: npm audit

@@ -27,7 +27,7 @@ bước sau:
    `DATABASE_URL`, test tích hợp này được skip; có thể chạy riêng bằng
    `DATABASE_URL=... npm run test:postgres-integration`.
 4. Build frontend tĩnh bằng `npm run build:pages`.
-5. Kiểm tra dependency có lỗ hổng production bằng `npm audit --omit=dev`.
+5. Kiểm tra toàn bộ dependency, bao gồm cả công cụ test, bằng `npm audit`.
 
 ## Quy tắc deploy
 

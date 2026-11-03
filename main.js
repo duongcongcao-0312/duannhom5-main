@@ -332,7 +332,7 @@ function renderBooks() {
 		const bookTag = getBookTag(book);
 		const matchesTag = selectedTag === 'all' || bookTag === selectedTag;
 
-		return matchesQuery && matchesFavorite && (category === 'all' || book.category === category) && matchesPrice && matchesTag;
+		return matchesQuery && matchesFavorite && matchesCategory && matchesPrice && matchesTag;
 	});
 
 	if (sortFilter?.value === 'price-asc') visibleBooks.sort((a, b) => a.price - b.price);
@@ -744,6 +744,7 @@ function setAccountView(view) {
 
 function renderAccount() {
 	const logoutButton = document.querySelector('#logoutButton');
+	const myOrdersButton = document.querySelector('#myOrdersButton');
 	if (state.user) {
 		accountButton.textContent = state.user.name;
 		document.querySelector('#logoutButton').hidden = false;
@@ -751,6 +752,7 @@ function renderAccount() {
 		accountButton.textContent = 'Đăng nhập';
 		document.querySelector('#logoutButton').hidden = true;
 	}
+	if (myOrdersButton) myOrdersButton.hidden = !state.user;
 }
 
 function showAccountError(id, message) {
@@ -1185,6 +1187,28 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 		result.hidden = false;
 	} catch (trackError) {
 		error.textContent = trackError instanceof Error ? trackError.message : 'Không thể tra cứu đơn hàng.';
+		error.hidden = false;
+	}
+});
+document.querySelector('#myOrdersButton')?.addEventListener('click', async () => {
+	const error = document.querySelector('#trackOrderError');
+	const result = document.querySelector('#orderResult');
+	error.hidden = true;
+	result.hidden = true;
+	try {
+		const token = localStorage.getItem('booknest-auth-token');
+		if (!token) throw new Error('Vui lòng đăng nhập để tra cứu đơn hàng.');
+		const response = await window.booknestApiFetch('/api/orders', {
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		const orders = await response.json();
+		if (!response.ok) throw new Error(orders.error || 'Không thể tải đơn hàng.');
+		result.innerHTML = orders.length
+			? `<h3>Đơn hàng của tôi</h3>${orders.map((order) => `<article><p>Mã đơn: <strong>${escapeHtml(order.orderId)}</strong></p><p>Trạng thái: <strong>${escapeHtml(order.status)}</strong></p><p>Tổng tiền: <strong>${formatPrice(order.total)}</strong></p></article>`).join('')}`
+			: '<h3>Đơn hàng của tôi</h3><p>Bạn chưa có đơn hàng nào.</p>';
+		result.hidden = false;
+	} catch (historyError) {
+		error.textContent = historyError instanceof Error ? historyError.message : 'Không thể tải đơn hàng.';
 		error.hidden = false;
 	}
 });

@@ -188,6 +188,42 @@ test("configured admin credentials restore the admin account in file storage", a
   assert.equal(verifyPassword("old-password", admin.password), false);
 });
 
+test("file storage does not create or retain the insecure default administrator", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-default-admin-removal-"),
+  );
+  const originalEnvironment = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  delete process.env.ADMIN_EMAIL;
+  delete process.env.ADMIN_PASSWORD;
+  t.after(async () => {
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  const emptyDb = new Database({ usersPath: path.join(temporaryDirectory, "empty-users.json") });
+  await emptyDb.init();
+  assert.deepEqual(await emptyDb.getUsers(), []);
+
+  const usersPath = path.join(temporaryDirectory, "legacy-users.json");
+  await fsPromises.writeFile(usersPath, JSON.stringify([{
+    id: "legacy-admin",
+    email: "admin@booknest.vn",
+    password: hashPassword("admin" + "123"),
+    role: "admin",
+  }]));
+  const legacyDb = new Database({ usersPath });
+  await legacyDb.init();
+  const legacyAdmin = await legacyDb.findUserByEmail("admin@booknest.vn");
+  assert.equal(legacyAdmin.role, "user");
+  assert.equal(verifyPassword("admin" + "123", legacyAdmin.password), false);
+});
+
 test("configured admin credentials restore the admin account in PostgreSQL", async (t) => {
   const originalAdminEmail = process.env.ADMIN_EMAIL;
   const originalAdminPassword = process.env.ADMIN_PASSWORD;

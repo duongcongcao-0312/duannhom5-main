@@ -21,7 +21,7 @@ async function temporaryDatabase(t, prefix) {
 test("missing JSON files recover as empty stores without changing the API", async (t) => {
   const paths = await temporaryDatabase(t, "booknest-storage-missing-");
   const db = new Database(paths);
-  assert.equal((await db.getUsers()).some((user) => user.role === "admin"), true);
+  assert.deepEqual(await db.getUsers(), []);
   assert.deepEqual(await db.getAllOrders(), []);
   assert.deepEqual(await db.getCustomers(), []);
 });

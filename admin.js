@@ -95,7 +95,7 @@
             if (res.ok) {
                 const data = await res.json();
                 const user = data.user;
-                if (user && (user.role === 'admin' || user.email === 'admin@booknest.vn')) {
+                if (user && user.role === 'admin') {
                     currentAdmin = user;
                     document.getElementById('adminUserName').textContent = currentAdmin.name || 'Quản trị viên';
                     hideLoginOverlay();
@@ -130,7 +130,7 @@
             }
 
             const user = data.user;
-            const isAdmin = user && (user.role === 'admin' || user.email === 'admin@booknest.vn');
+            const isAdmin = user && user.role === 'admin';
             if (!isAdmin) {
                 adminLoginError.textContent = 'Tài khoản này không có quyền quản trị viên.';
                 adminLoginError.hidden = false;

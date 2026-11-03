@@ -231,7 +231,7 @@ Header: 'Authorization: Bearer {token}'
 ```
 
 **Roles**:
-- `admin` - Quản trị viên (admin@booknest.vn)
+- `admin` - Quản trị viên được cấu hình qua `ADMIN_EMAIL`
 - `user` - Người dùng thường
 
 ### 3.3 Data Layer
@@ -299,7 +299,7 @@ coupons = {
 
 ### 4.3 Quy trình Quản trị
 ```
-1. Admin đăng nhập (admin@booknest.vn)
+1. Admin đăng nhập bằng tài khoản được cấu hình trong môi trường chạy
    ↓
 2. Truy cập admin.html
    ↓
@@ -329,11 +329,11 @@ DELETE /api/books/{id}         → Xóa sách (Admin)
 
 ### 5.2 Orders API
 ```
-GET /api/orders                → Lấy tất cả đơn (Admin)
+GET /api/orders                → Lấy đơn của tài khoản hiện tại
 GET /api/orders/{id}           → Lấy chi tiết đơn
 POST /api/orders               → Tạo đơn hàng mới
-PUT /api/orders/{id}/status    → Cập nhật trạng thái (Admin)
-DELETE /api/orders/{id}        → Huỷ đơn hàng
+GET /api/admin/orders          → Lấy tất cả đơn (Admin)
+PATCH /api/admin/orders/{id}   → Cập nhật trạng thái (Admin)
 ```
 
 ### 5.3 Auth API

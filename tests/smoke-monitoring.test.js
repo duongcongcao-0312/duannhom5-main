@@ -17,12 +17,15 @@ async function startServer(database) {
 
 test("health and readiness smoke paths return useful status without writes", async (t) => {
   const calls = [];
+  let closeCalls = 0;
   const { directory, server, baseUrl } = await startServer({
     async init() { calls.push("init"); },
     async getCustomBooks() { return []; },
+    async close() { closeCalls += 1; },
   });
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    assert.equal(closeCalls, 1);
     await fsPromises.rm(directory, { recursive: true, force: true });
   });
 

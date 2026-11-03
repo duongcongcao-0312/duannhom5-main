@@ -37,6 +37,15 @@
       }
     },
     "/api/orders": {
+      "get": {
+        "tags": ["Store"],
+        "summary": "Danh sách đơn hàng thuộc tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Các đơn hàng của người dùng đang đăng nhập", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PublicOrder" } } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
       "post": {
         "tags": ["Store"],
         "summary": "Tạo đơn hàng",
@@ -234,7 +243,7 @@
       "PasswordResetConfirm": { "type": "object", "required": ["token", "password"], "properties": { "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "password": { "type": "string", "minLength": 6, "maxLength": 128 } } },
       "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
       "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
-      "CreateOrder": { "type": "object", "required": ["customerName", "address", "phone", "paymentMethod", "discountRate", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": ["string", "null"] }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
+      "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "discountRate", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
       "PublicOrder": { "type": "object", "properties": { "orderId": { "type": "string", "format": "uuid" }, "createdAt": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "paymentStatus": { "type": "string" }, "paymentMethod": { "type": "string" }, "couponCode": { "type": ["string", "null"] }, "subtotal": { "type": "integer", "minimum": 0 }, "discount": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "lineTotal": { "type": "integer", "minimum": 0 } } } } } },
       "ServiceRequest": { "type": "object", "required": ["service", "bookTitle", "name", "phone"], "properties": { "service": { "type": "string", "enum": ["rent", "sell", "exchange"] }, "bookTitle": { "type": "string" }, "condition": { "type": "string" }, "name": { "type": "string" }, "phone": { "type": "string" }, "note": { "type": "string" } } },
       "CustomerInput": { "type": "object", "required": ["name", "email", "phone"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "phone": { "type": "string" }, "status": { "type": "string", "enum": ["new", "lead", "customer"] } } }

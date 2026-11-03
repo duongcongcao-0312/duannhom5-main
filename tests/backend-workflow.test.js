@@ -5,8 +5,23 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 
+function configureTestAdmin(t) {
+  const previous = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  process.env.ADMIN_EMAIL = "admin@example.com";
+  process.env.ADMIN_PASSWORD = "local-test-admin-password-123";
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
+  configureTestAdmin(t);
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-backend-test-"),
   );
@@ -53,14 +68,14 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const couponData = await couponRes.json();
   assert.equal(couponData.rate, 0.1);
 
-  // 2. Auth: Admin login with seeded default account
+  // 2. Auth: Admin login with explicitly configured credentials
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Origin: "https://shop.example",
     },
-    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
   });
   assert.equal(adminLoginRes.status, 200);
   assert.equal(
@@ -264,6 +279,21 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
   });
   assert.equal(orderRes.status, 201);
   const orderId = (await orderRes.json()).orderId;
+
+  const anonymousHistory = await fetch(`${baseUrl}/api/orders`);
+  assert.equal(anonymousHistory.status, 401);
+
+  const aliceHistory = await fetch(`${baseUrl}/api/orders`, {
+    headers: { Authorization: `Bearer ${aliceToken}` },
+  });
+  assert.equal(aliceHistory.status, 200);
+  assert.deepEqual((await aliceHistory.json()).map((order) => order.orderId), [orderId]);
+
+  const bobHistory = await fetch(`${baseUrl}/api/orders`, {
+    headers: { Authorization: `Bearer ${bobToken}` },
+  });
+  assert.equal(bobHistory.status, 200);
+  assert.deepEqual(await bobHistory.json(), []);
 
   const bobView = await fetch(`${baseUrl}/api/orders/${orderId}`, {
     headers: { Authorization: `Bearer ${bobToken}` },

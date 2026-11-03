@@ -290,9 +290,10 @@ test("password reset reports missing email configuration instead of accepting th
   });
   assert.equal(response.status, 503);
   assert.match((await response.json()).error, /chưa được cấu hình email/i);
-  assert.deepEqual(JSON.parse(
-    await fsPromises.readFile(path.join(temporaryDirectory, "users.json"), "utf8"),
-  )[0].passwordReset, undefined);
+  await assert.rejects(
+    fsPromises.access(path.join(temporaryDirectory, "users.json")),
+    { code: "ENOENT" },
+  );
 });
 
 test("auth customer-info rejects null or malformed payloads without crashing", async (t) => {
@@ -319,7 +320,6 @@ test("auth customer-info rejects null or malformed payloads without crashing", a
     name: "Test User",
     email: "test-user@example.com",
     password: "password123",
-    role: "user",
   };
 
   await fetch(`${baseUrl}/api/auth/register`, {

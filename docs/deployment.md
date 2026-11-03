@@ -92,8 +92,10 @@ Quy trình backup, restore và ứng phó sự cố chi tiết nằm trong
 [runbook backup/restore](./backup-restore-incident-runbook.md). Dùng
 `node scripts/backup.js verify` sau mỗi lần tạo backup và trước khi restore.
 
-Tài khoản `admin@booknest.vn` / `admin123` chỉ được seed trong môi trường không
-phải production. Production cần credentials riêng ngay từ lần khởi động đầu.
+Không có tài khoản admin hoặc mật khẩu mặc định. Cấu hình `ADMIN_EMAIL` và
+`ADMIN_PASSWORD` (tối thiểu 12 ký tự) trước khi tạo quyền quản trị; production
+bắt buộc có credentials hợp lệ ngay từ lần khởi động đầu. Tài khoản admin mặc
+định cũ được hạ quyền và mật khẩu bị vô hiệu hóa khi khởi tạo dữ liệu.
 Phiên đăng nhập lưu trong bộ nhớ sẽ bị vô hiệu khi tiến trình khởi động lại.
 
 ## Kiểm tra sau deploy

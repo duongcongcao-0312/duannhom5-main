@@ -5,8 +5,23 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 
+function configureTestAdmin(t) {
+  const previous = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  process.env.ADMIN_EMAIL = "admin@example.com";
+  process.env.ADMIN_PASSWORD = "local-test-admin-password-123";
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 test("backend rejects invalid service and status payloads", async (t) => {
+  configureTestAdmin(t);
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-invalid-payloads-"),
   );
@@ -41,7 +56,7 @@ test("backend rejects invalid service and status payloads", async (t) => {
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
   });
   assert.equal(adminLoginRes.status, 200);
   const adminToken = (await adminLoginRes.json()).token;
@@ -103,6 +118,83 @@ test("backend rejects invalid service and status payloads", async (t) => {
   );
   assert.equal(validTransitionRes.status, 200);
   assert.equal((await validTransitionRes.json()).status, "processing");
+});
+
+test("shared API validation rejects malformed, oversized, unknown and unsafe inputs", async (t) => {
+  configureTestAdmin(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-shared-validation-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const jsonHeaders = { "Content-Type": "application/json" };
+
+  for (const body of ["null", "[]", JSON.stringify({ email: 12, password: "pass123" })]) {
+    const response = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body,
+    });
+    assert.equal(response.status, 400);
+  }
+
+  const unknownOrderField = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn A",
+      address: "12 Đường Sách, Quận 1",
+      phone: "0901234567",
+      paymentMethod: "cod",
+      discountRate: 0,
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+      unexpected: true,
+    }),
+  });
+  assert.equal(unknownOrderField.status, 400);
+
+  const oversized = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ email: "reader@example.com", password: "x".repeat(1024 * 1024) }),
+  });
+  assert.equal(oversized.status, 413);
+
+  const unsafePath = await fetch(`${baseUrl}/api/orders/%2F`);
+  assert.equal(unsafePath.status, 400);
+
+  const invalidToken = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: "Bearer not-a-session-token" },
+  });
+  assert.equal(invalidToken.status, 401);
+
+  const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      email: "admin@example.com",
+      password: "local-test-admin-password-123",
+    }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const { token } = await adminLogin.json();
+  for (const query of ["?unknown=value", "?page=1&page=2", "?limit=0"]) {
+    const response = await fetch(`${baseUrl}/api/customers${query}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(response.status, 400);
+  }
 });
 
 test("order creation calculates catalog prices and rejects invalid checkout data", async (t) => {

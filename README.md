@@ -75,15 +75,15 @@ copy .env.example .env
 
 Để dùng tài khoản quản trị của riêng bạn, đặt `ADMIN_EMAIL` và
 `ADMIN_PASSWORD` (ít nhất 12 ký tự) trong `.env`. Backend sẽ tạo hoặc khôi phục
-quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Nếu không đặt biến này,
-backend sẽ tự tạo tài khoản mặc định `admin@booknest.vn` với mật khẩu `admin123`
-cho môi trường local/demo. Không dùng thông tin mẫu làm thông tin thật.
+quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Không có tài khoản quản
+trị hoặc mật khẩu mặc định; nếu chưa cấu hình thông tin này, bạn chỉ có thể dùng
+các tính năng không yêu cầu quyền quản trị.
 
 ```env
 PORT=8000
 HOST=127.0.0.1
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=your-unique-password-at-least-12-characters
+ADMIN_EMAIL=<your-admin-email>
+ADMIN_PASSWORD=<set-a-unique-password-at-least-12-characters>
 ```
 
 Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:
@@ -139,7 +139,7 @@ Nếu PostgreSQL/Supabase báo lỗi TLS `SELF_SIGNED_CERT_IN_CHAIN`, tải CA c
 | `npm run build:pages` | Tạo thư mục `dist/` cho frontend tĩnh. |
 | `npm run migrate` | Chạy migration PostgreSQL khi có `DATABASE_URL`. |
 | `npm run seed:customers` | Seed dữ liệu CRM mẫu cho development; không chạy trên production có dữ liệu thật. |
-| `npm run audit` | Chạy `npm audit --omit=dev`. |
+| `npm run audit` | Kiểm tra lỗ hổng trong toàn bộ dependency, gồm cả công cụ phát triển. |
 
 ## API
 
@@ -150,7 +150,8 @@ Các endpoint chính hiện có:
 | `GET` | `/api/books` | Công khai | Lấy danh mục sách. |
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi. |
 | `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng. |
-| `GET` | `/api/orders/:id` | Công khai | Tra cứu trạng thái và thông tin cơ bản của đơn. |
+| `GET` | `/api/orders` | Người dùng | Tra cứu các đơn thuộc tài khoản đang đăng nhập. |
+| `GET` | `/api/orders/:id` | Công khai/Chủ đơn | Tra cứu trạng thái và thông tin cơ bản của đơn. |
 | `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua hoặc trao đổi sách. |
 | `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản. |
 | `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận phiên xác thực. |

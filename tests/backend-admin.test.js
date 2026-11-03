@@ -5,8 +5,23 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 
+function configureTestAdmin(t) {
+  const previous = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  process.env.ADMIN_EMAIL = "admin@example.com";
+  process.env.ADMIN_PASSWORD = "local-test-admin-password-123";
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 test("admin order updates reject null payloads without crashing", async (t) => {
+  configureTestAdmin(t);
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-admin-order-null-test-"),
   );
@@ -30,7 +45,7 @@ test("admin order updates reject null payloads without crashing", async (t) => {
   const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "admin@booknest.vn", password: "admin123" }),
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
   });
   assert.equal(adminLoginRes.status, 200);
   const adminToken = (await adminLoginRes.json()).token;

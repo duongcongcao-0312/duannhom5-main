@@ -51,7 +51,7 @@ test("PostgresDatabase initializes once and creates the configured admin", async
 test("initialization failure is propagated and can be retried", async () => {
   let attempts = 0;
   const pool = {
-    async query(sql) {
+    async query(sql, values = []) {
       if (sql.includes("CREATE TABLE")) {
         attempts += 1;
         if (attempts === 1) throw new Error("connection refused");
@@ -70,7 +70,7 @@ test("initialization failure is propagated and can be retried", async () => {
 test("query timeout and query failure are surfaced without fallback data", async (t) => {
   withAdminConfig(t);
   const timeoutPool = {
-    async query(sql) {
+    async query(sql, values = []) {
       if (sql.includes("SELECT records")) throw new Error("query timeout");
       return { rows: [] };
     },
@@ -133,6 +133,103 @@ test("transaction rolls back on query failure and always releases the client", a
     "RELEASE",
   ]);
   t.after(() => db.close().catch(() => {}));
+});
+
+test("customer transaction rolls back mutations and retry initialization remains possible", async (t) => {
+  withAdminConfig(t);
+  const records = new Map([["users", []], ["customers", []]]);
+  let initialized = false;
+  let failInitialization = true;
+  const pool = {
+    async query(sql, values = []) {
+      if (sql.includes("CREATE TABLE")) {
+        if (failInitialization) {
+          failInitialization = false;
+          throw new Error("temporary database outage");
+        }
+        initialized = true;
+      }
+      if (sql.includes("SELECT records")) {
+        return { rows: [{ records: records.get(values[0] || "users") || [] }] };
+      }
+      return { rows: [] };
+    },
+    async connect() {
+      const snapshot = JSON.stringify(records.get("customers") || []);
+      return {
+        async query(sql, values = []) {
+          if (sql.includes("INSERT INTO")) {
+            if (!records.has(values[0])) records.set(values[0], []);
+          } else if (sql.includes("SELECT records")) {
+            return { rows: [{ records: records.get(values[0]) || [] }] };
+          } else if (sql.includes("UPDATE booknest_data SET records")) {
+            records.set(values[0], JSON.parse(values[1]));
+          } else if (sql === "ROLLBACK") {
+            records.set("customers", JSON.parse(snapshot));
+          }
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async end() {},
+  };
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  await assert.rejects(db.init(), /temporary database outage/);
+  await db.init();
+  assert.equal(initialized, true);
+
+  await assert.rejects(
+    db.updateCollection("customers", (customers) => {
+      customers.push({ id: "customer-rollback" });
+      throw new Error("customer write failed");
+    }),
+    /customer write failed/,
+  );
+  assert.deepEqual(await db.getCustomers(), []);
+});
+
+test("order persistence is idempotent by order ID and idempotency key", async (t) => {
+  withAdminConfig(t);
+  const records = new Map([["orders", []]]);
+  const pool = {
+    async query(sql, values = []) {
+      if (sql.includes("SELECT records")) {
+        return { rows: [{ records: records.get(values[0]) || [] }] };
+      }
+      return { rows: [] };
+    },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          if (sql.includes("INSERT INTO")) {
+            if (!records.has(values[0])) records.set(values[0], []);
+          } else if (sql.includes("SELECT records")) {
+            return { rows: [{ records: records.get(values[0]) || [] }] };
+          } else if (sql.includes("UPDATE booknest_data SET records")) {
+            records.set(values[0], JSON.parse(values[1]));
+          }
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async end() {},
+  };
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  const order = { orderId: "order-idempotent", idempotencyKey: "request-1", total: 10 };
+  assert.equal((await db.addOrder(order)).orderId, order.orderId);
+  assert.equal((await db.addOrder({ ...order, total: 20 })).total, 10);
+  assert.equal((await db.addOrder({
+    orderId: "different-id",
+    idempotencyKey: "request-1",
+    total: 30,
+  })).orderId, order.orderId);
+  assert.equal((await db.getAllOrders()).length, 1);
 });
 
 test("connection failures from pool.connect are propagated", async (t) => {

@@ -19,6 +19,19 @@ const {
 } = require("./backend/auth");
 const { createEmailMailer } = require("./backend/email");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
+const {
+  hasPermission,
+  requireCustomerPermission: requireCustomerPermissionMiddleware,
+  requireRole: requireRoleMiddleware,
+} = require("./backend/authorization");
+const {
+  CUSTOMER_STATUSES,
+  ORDER_STATUSES,
+  PAYMENT_STATUSES,
+  ROLES,
+  SERVICE_STATUSES,
+  SERVICE_TYPES,
+} = require("./backend/business-constants");
 
 const root = __dirname;
 const defaultOrdersPath = path.join(root, "data", "orders.jsonl");
@@ -56,20 +69,9 @@ const publicRootFiles = new Set([
 ]);
 const bookCatalog = new Map(books.map((book) => [book.title, book]));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
-const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
-const allowedOrderStatuses = new Set([
-  "received",
-  "processing",
-  "shipping",
-  "completed",
-  "cancelled",
-]);
-const allowedPaymentStatuses = new Set([
-  "pending",
-  "paid",
-  "cod_pending",
-  "refunded",
-]);
+const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
+const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
+const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
 const payloadSchemas = {
   passwordReset: {
     allowed: ["email"],
@@ -252,60 +254,18 @@ const customerQuerySchema = {
   status: {
     type: "string",
     maxLength: 16,
-    values: ["new", "lead", "customer"],
+    values: Object.values(CUSTOMER_STATUSES),
   },
   page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
   limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
 };
-const allowedServiceStatuses = new Set([
-  "pending",
-  "processing",
-  "completed",
-  "cancelled",
-]);
-const rolePermissions = {
-  admin: [
-    "read:dashboard",
-    "read:orders",
-    "write:orders",
-    "read:services",
-    "write:services",
-    "read:books",
-    "write:books",
-    "read:users",
-    "read:customers",
-    "write:customers",
-    "delete:customers",
-  ],
-  sales: [
-    "read:dashboard",
-    "read:orders",
-    "write:orders",
-    "read:services",
-    "write:services",
-    "read:customers",
-    "write:customers",
-  ],
-  support: [
-    "read:services",
-    "write:services",
-    "read:customers",
-    "write:customers",
-  ],
-  user: [],
-};
+const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
 const coupons = new Map([
   ["BOOKNEST10", { rate: 0.1, label: "Ưu đãi BookNest" }],
   ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
 ]);
 const maxRequestBytes = 1024 * 1024;
 const defaultBookStock = 12;
-const customerRolePermissions = {
-  admin: new Set(["view", "create", "update", "delete"]),
-  sales: new Set(["view", "create", "update"]),
-  support: new Set(["view"]),
-};
-
 class RequestError extends Error {
   constructor(status, message, cause) {
     super(message);
@@ -924,38 +884,16 @@ function createServer({
   }
 
   function requireCustomerPermission(request, permission) {
-    const user = getAuthUser(request);
-    if (!user) {
-      throw new RequestError(401, "Chưa đăng nhập.");
-    }
-    if (!customerRolePermissions[user.role]?.has(permission)) {
-      const messages = {
-        view: "Bạn không có quyền xem dữ liệu khách hàng.",
-        create: "Bạn không có quyền tạo khách hàng.",
-        update: "Bạn không có quyền cập nhật khách hàng.",
-        delete: "Bạn không có quyền xoá khách hàng.",
-      };
-      throw new RequestError(403, messages[permission]);
-    }
-    return user;
+    return requireCustomerPermissionMiddleware(
+      request,
+      permission,
+      sessionStore,
+      RequestError,
+    );
   }
 
   function requireRole(request, permission) {
-    const user = getAuthUser(request);
-    if (!user) {
-      throw new RequestError(401, "Chưa đăng nhập.");
-    }
-    const role = String(user.role || "user")
-      .trim()
-      .toLowerCase();
-    const allowedPermissions = rolePermissions[role] || [];
-    if (!allowedPermissions.includes(permission)) {
-      throw new RequestError(
-        403,
-        "Bạn không có quyền thực hiện hành động này.",
-      );
-    }
-    return user;
+    return requireRoleMiddleware(request, permission, sessionStore, RequestError);
   }
 
   function requireAdmin(request) {
@@ -1305,7 +1243,7 @@ function createServer({
         throw new RequestError(401, "Thông tin Firebase chưa được xác minh đầy đủ.");
       }
       const existingUser = await db.findUserByEmail(email);
-      if (existingUser?.role === "admin") {
+      if (existingUser?.role === ROLES.ADMIN) {
         throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
       }
       if (existingUser?.providerId && existingUser.providerId !== providerId) {
@@ -1565,7 +1503,7 @@ function createServer({
         return;
       }
       const requester = getAuthUser(request);
-      if (requester && requester.role !== "admin") {
+      if (requester && requester.role !== ROLES.ADMIN) {
         if (order.userId && order.userId !== requester.userId) {
           throw new RequestError(
             403,
@@ -1596,7 +1534,7 @@ function createServer({
       if (!order) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
       }
-      if (requester.role !== "admin" && (!order.userId || order.userId !== requester.userId)) {
+      if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
         throw new RequestError(
           403,
           "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
@@ -1618,7 +1556,7 @@ function createServer({
         }
       }
       const safePayload = { ...payload };
-      if (requester.role !== "admin" && safePayload.paymentStatus !== undefined) {
+      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
         throw new RequestError(
           403,
           "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
@@ -1932,7 +1870,7 @@ function createServer({
       if (!permission) {
         throw new RequestError(403, "API quản trị không tồn tại hoặc bạn không có quyền truy cập.");
       }
-      if (!rolePermissions[String(requester.role || "user").trim().toLowerCase()]?.includes(permission)) {
+      if (!hasPermission(requester, permission)) {
         throw new RequestError(403, "Bạn không có quyền truy cập API quản trị.");
       }
       throw new RequestError(404, "Không tìm thấy API quản trị.");

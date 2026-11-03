@@ -2,6 +2,16 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
+const {
+  CUSTOMER_STATUSES,
+  ORDER_STATUSES,
+  PAYMENT_STATUSES,
+  ROLES,
+  SERVICE_STATUSES,
+  SERVICE_TYPES,
+  customerStatusValues,
+  isOrderStatusTransitionAllowed,
+} = require("./business-constants");
 
 async function atomicWriteFile(filePath, contents) {
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -22,10 +32,10 @@ async function atomicWriteFile(filePath, contents) {
   }
 }
 
-const customerStatuses = ["new", "lead", "customer"];
+const customerStatuses = customerStatusValues;
 const nextCustomerStatus = new Map([
-  ["new", "lead"],
-  ["lead", "customer"],
+  [CUSTOMER_STATUSES.NEW, CUSTOMER_STATUSES.LEAD],
+  [CUSTOMER_STATUSES.LEAD, CUSTOMER_STATUSES.CUSTOMER],
 ]);
 
 class CustomerError extends Error {
@@ -97,24 +107,10 @@ function validateCustomerActor(actorId) {
   return actorId.trim();
 }
 
-const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
-const allowedOrderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
-const allowedPaymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
-const allowedServiceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
-const orderStatusTransitions = new Map([
-  ["received", new Set(["processing", "cancelled"])],
-  ["processing", new Set(["shipping", "cancelled"])],
-  ["shipping", new Set(["completed", "cancelled"])],
-  ["completed", new Set()],
-  ["cancelled", new Set()],
-]);
-
-function isOrderStatusTransitionAllowed(currentStatus, nextStatus) {
-  return (
-    currentStatus === nextStatus ||
-    orderStatusTransitions.get(currentStatus)?.has(nextStatus) === true
-  );
-}
+const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
+const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
+const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
+const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
 
 class Database {
   constructor(options = {}) {
@@ -182,7 +178,7 @@ class Database {
           id: "admin-master",
           name: configuredAdminName,
           email: configuredEmail,
-          role: "admin",
+          role: ROLES.ADMIN,
           studentType: "other",
           studentId: "",
           createdAt: new Date().toISOString(),
@@ -200,7 +196,7 @@ class Database {
         (user) =>
           user !== admin &&
           String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
-          user.role === "admin",
+          user.role === ROLES.ADMIN,
       );
       if (legacyDefaultAdmin) {
         legacyDefaultAdmin.role = "user";
@@ -211,7 +207,7 @@ class Database {
       const defaultAdmin = users.find(
         (user) =>
           String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
-          user.role === "admin",
+          user.role === ROLES.ADMIN,
       );
       if (defaultAdmin) {
         defaultAdmin.role = "user";
@@ -370,7 +366,7 @@ class Database {
         name: sanitizeTextValue(data.name || email.split("@")[0] || "Thành viên BookNest", { maxLength: 120, allowEmpty: true, fieldName: "Họ tên" }),
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
-        role: "user",
+        role: ROLES.USER,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
         studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
         authProvider: sanitizeTextValue(data.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google",
@@ -556,9 +552,16 @@ class Database {
 
   async addOrder(order, ordersPathOverride) {
     const filePath = ordersPathOverride || this.ordersPath;
-    await this.enqueueFileWrite(filePath, async () => {
+    return this.enqueueFileWrite(filePath, async () => {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
+      const existingOrders = await this.getAllOrders(filePath);
+      const duplicate = existingOrders.find((entry) => (
+        entry.orderId === order.orderId ||
+        (order.idempotencyKey && entry.idempotencyKey === order.idempotencyKey)
+      ));
+      if (duplicate) return duplicate;
       await fs.appendFile(filePath, `${JSON.stringify(order)}\n`, "utf8");
+      return order;
     });
   }
 

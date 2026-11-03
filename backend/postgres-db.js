@@ -7,15 +7,26 @@ const {
   validateCustomerData,
 } = require("./db");
 const { hashPassword } = require("./auth");
+const {
+  CUSTOMER_STATUSES,
+  ORDER_STATUSES,
+  PAYMENT_STATUSES,
+  ROLES,
+  SERVICE_STATUSES,
+  SERVICE_TYPES,
+} = require("./business-constants");
 
 const databaseConnectionTimeoutMs = 5_000;
 const databaseQueryTimeoutMs = 10_000;
-const serviceTypes = new Set(["rent", "sell", "exchange"]);
-const orderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
-const paymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
-const serviceStatuses = new Set(["pending", "processing", "completed", "cancelled"]);
-const customerStatuses = new Set(["new", "lead", "customer"]);
-const nextCustomerStatus = new Map([["new", "lead"], ["lead", "customer"]]);
+const serviceTypes = new Set(Object.values(SERVICE_TYPES));
+const orderStatuses = new Set(Object.values(ORDER_STATUSES));
+const paymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
+const serviceStatuses = new Set(Object.values(SERVICE_STATUSES));
+const customerStatuses = new Set(Object.values(CUSTOMER_STATUSES));
+const nextCustomerStatus = new Map([
+  [CUSTOMER_STATUSES.NEW, CUSTOMER_STATUSES.LEAD],
+  [CUSTOMER_STATUSES.LEAD, CUSTOMER_STATUSES.CUSTOMER],
+]);
 const collections = new Set(["users", "customers", "orders", "services", "books"]);
 
 function validateActor(actorId) {
@@ -135,7 +146,7 @@ class PostgresDatabase {
               name: "Quản trị viên BookNest",
               email,
               password: hashPassword(password),
-              role: "admin",
+              role: ROLES.ADMIN,
               studentType: "other",
               studentId: "",
               customerInfo: {},
@@ -150,7 +161,7 @@ class PostgresDatabase {
             (user) =>
               user !== admin &&
               String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
-              user.role === "admin",
+              user.role === ROLES.ADMIN,
           );
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
@@ -165,7 +176,7 @@ class PostgresDatabase {
           const legacyDefaultAdmin = users.find(
             (user) =>
               String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
-              user.role === "admin",
+              user.role === ROLES.ADMIN,
           );
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
@@ -343,7 +354,7 @@ class PostgresDatabase {
         name: String(data.name || email.split("@")[0] || "Thành viên BookNest").trim(),
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
-        role: "user",
+        role: ROLES.USER,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
         authProvider: data.authProvider || "google",

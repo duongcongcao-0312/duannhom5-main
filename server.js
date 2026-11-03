@@ -19,6 +19,14 @@ const {
 } = require("./backend/auth");
 const { createEmailMailer } = require("./backend/email");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
+const {
+  CUSTOMER_STATUSES,
+  ORDER_STATUSES,
+  PAYMENT_STATUSES,
+  ROLES,
+  SERVICE_STATUSES,
+  SERVICE_TYPES,
+} = require("./backend/business-constants");
 
 const root = __dirname;
 const defaultOrdersPath = path.join(root, "data", "orders.jsonl");
@@ -56,20 +64,9 @@ const publicRootFiles = new Set([
 ]);
 const bookCatalog = new Map(books.map((book) => [book.title, book]));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
-const allowedServiceTypes = new Set(["rent", "sell", "exchange"]);
-const allowedOrderStatuses = new Set([
-  "received",
-  "processing",
-  "shipping",
-  "completed",
-  "cancelled",
-]);
-const allowedPaymentStatuses = new Set([
-  "pending",
-  "paid",
-  "cod_pending",
-  "refunded",
-]);
+const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
+const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
+const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
 const payloadSchemas = {
   passwordReset: {
     allowed: ["email"],
@@ -252,17 +249,12 @@ const customerQuerySchema = {
   status: {
     type: "string",
     maxLength: 16,
-    values: ["new", "lead", "customer"],
+    values: Object.values(CUSTOMER_STATUSES),
   },
   page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
   limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
 };
-const allowedServiceStatuses = new Set([
-  "pending",
-  "processing",
-  "completed",
-  "cancelled",
-]);
+const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
 const rolePermissions = {
   admin: [
     "read:dashboard",
@@ -1305,7 +1297,7 @@ function createServer({
         throw new RequestError(401, "Thông tin Firebase chưa được xác minh đầy đủ.");
       }
       const existingUser = await db.findUserByEmail(email);
-      if (existingUser?.role === "admin") {
+      if (existingUser?.role === ROLES.ADMIN) {
         throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
       }
       if (existingUser?.providerId && existingUser.providerId !== providerId) {
@@ -1565,7 +1557,7 @@ function createServer({
         return;
       }
       const requester = getAuthUser(request);
-      if (requester && requester.role !== "admin") {
+      if (requester && requester.role !== ROLES.ADMIN) {
         if (order.userId && order.userId !== requester.userId) {
           throw new RequestError(
             403,
@@ -1596,7 +1588,7 @@ function createServer({
       if (!order) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
       }
-      if (requester.role !== "admin" && (!order.userId || order.userId !== requester.userId)) {
+      if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
         throw new RequestError(
           403,
           "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
@@ -1618,7 +1610,7 @@ function createServer({
         }
       }
       const safePayload = { ...payload };
-      if (requester.role !== "admin" && safePayload.paymentStatus !== undefined) {
+      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
         throw new RequestError(
           403,
           "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",

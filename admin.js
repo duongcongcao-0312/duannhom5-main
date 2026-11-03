@@ -294,7 +294,7 @@
             completed: 'Hoàn tất',
             cancelled: 'Đã huỷ'
         };
-        const nextOrderStatuses = {
+        const orderStatusTransitions = {
             received: ['processing', 'cancelled'],
             processing: ['shipping', 'cancelled'],
             shipping: ['completed', 'cancelled'],
@@ -306,7 +306,7 @@
             const itemsSummary = (order.items || [])
                 .map((i) => `${escapeHtml(i.title)} (x${i.quantity})`)
                 .join('<br>');
-            const availableStatuses = [order.status, ...(nextOrderStatuses[order.status] || [])];
+            const availableStatuses = [order.status, ...(orderStatusTransitions[order.status] || [])];
 
             return `
                 <tr data-order-id="${escapeHtml(order.orderId)}">

@@ -298,6 +298,14 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
 });
 
 test("registration returns a JSON service error when user persistence is unavailable", async (t) => {
+  const originalEnvironment = {
+    NODE_ENV: process.env.NODE_ENV,
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  process.env.NODE_ENV = "production";
+  process.env.ADMIN_EMAIL = "admin@example.com";
+  process.env.ADMIN_PASSWORD = "secure-test-password-123";
   const server = createServer({
     database: {
       async getCustomBooks() {
@@ -311,6 +319,10 @@ test("registration returns a JSON service error when user persistence is unavail
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   await new Promise((resolve, reject) => {
@@ -318,16 +330,36 @@ test("registration returns a JSON service error when user persistence is unavail
     server.listen(0, "127.0.0.1", resolve);
   });
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: "New Reader",
-      email: "new-reader@example.com",
-      password: "password123",
-    }),
-  });
-  assert.equal(response.status, 503);
-  assert.match(response.headers.get("content-type"), /application\/json/);
-  assert.match((await response.json()).error, /không thể lưu tài khoản/i);
+  const requestId = "issue56-registration-failure";
+  const loggedErrors = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => loggedErrors.push(args.join(" "));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/register`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Request-Id": requestId,
+      },
+      body: JSON.stringify({
+        name: "New Reader",
+        email: "new-reader@example.com",
+        password: "password123",
+      }),
+    });
+    assert.equal(response.status, 503);
+    assert.match(response.headers.get("content-type"), /application\/json/);
+    assert.equal(response.headers.get("x-request-id"), requestId);
+    const body = await response.json();
+    assert.match(body.error, /không thể lưu tài khoản/i);
+    assert.doesNotMatch(JSON.stringify(body), /database connection unavailable|stack/i);
+    assert.ok(loggedErrors.some((line) =>
+      line.includes(requestId) &&
+      line.includes("POST") &&
+      line.includes("/api/auth/register") &&
+      line.includes("database connection unavailable"),
+    ));
+  } finally {
+    console.error = originalConsoleError;
+  }
 });

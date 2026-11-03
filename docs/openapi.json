@@ -222,7 +222,7 @@
     "responses": {
       "Ok": { "description": "Yêu cầu thành công", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
       "Created": { "description": "Đã tạo dữ liệu", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
-      "Error": { "description": "Yêu cầu thất bại", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+      "Error": { "description": "Yêu cầu thất bại", "headers": { "X-Request-Id": { "description": "ID yêu cầu để đối chiếu log.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
     },
     "schemas": {
       "Error": { "type": "object", "properties": { "error": { "type": "string" } }, "required": ["error"] },

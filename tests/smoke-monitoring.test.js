@@ -28,7 +28,12 @@ test("health and readiness smoke paths return useful status without writes", asy
 
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
+  assert.match(health.headers.get("x-request-id"), /^[0-9a-f-]{36}$/);
   assert.deepEqual(await health.json(), { status: "ok", service: "booknest" });
+  const correlatedHealth = await fetch(`${baseUrl}/health`, {
+    headers: { "X-Request-Id": "issue56-health-check" },
+  });
+  assert.equal(correlatedHealth.headers.get("x-request-id"), "issue56-health-check");
   const ready = await fetch(`${baseUrl}/ready`);
   assert.equal(ready.status, 200);
   assert.deepEqual(await ready.json(), { status: "ready", service: "booknest" });

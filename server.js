@@ -119,10 +119,43 @@ const customerRolePermissions = {
 };
 
 class RequestError extends Error {
-  constructor(status, message) {
+  constructor(status, message, cause) {
     super(message);
     this.status = status;
+    this.cause = cause;
   }
+}
+
+function getRequestId(request) {
+  const suppliedId = request.headers["x-request-id"];
+  return typeof suppliedId === "string" &&
+    suppliedId.length <= 128 &&
+    /^[A-Za-z0-9._:-]+$/.test(suppliedId)
+    ? suppliedId
+    : randomUUID();
+}
+
+function logRequestError(request, requestId, error, message) {
+  let pathname = "/";
+  try {
+    pathname = new URL(request.url, "http://localhost").pathname;
+  } catch {
+    pathname = "<invalid-url>";
+  }
+  const cause = error && typeof error === "object" ? error.cause : undefined;
+  const loggedError = cause || error;
+  console.error(JSON.stringify({
+    level: "error",
+    message,
+    requestId,
+    method: request.method,
+    path: pathname,
+    error: {
+      name: loggedError instanceof Error ? loggedError.name : "UnknownError",
+      message: loggedError instanceof Error ? loggedError.message : String(loggedError),
+      stack: loggedError instanceof Error ? loggedError.stack : undefined,
+    },
+  }));
 }
 
 function roundMoney(value) {
@@ -683,12 +716,13 @@ function createServer({
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Vary", "Origin");
       response.setHeader("Access-Control-Allow-Credentials", "true");
+      response.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
     }
 
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, X-Request-Id",
       });
       response.end();
       return;
@@ -704,7 +738,12 @@ function createServer({
         await db.init();
         sendJson(response, 200, { status: "ready", service: "booknest" });
       } catch (error) {
-        console.error("Readiness check failed:", error);
+        logRequestError(
+          request,
+          response.getHeader("X-Request-Id"),
+          error,
+          "Readiness check failed",
+        );
         sendJson(response, 503, { status: "not_ready", service: "booknest" });
       }
       return;
@@ -901,10 +940,10 @@ function createServer({
         if (err instanceof Error && err.message === "Email này đã được đăng ký trên hệ thống.") {
           throw new RequestError(409, err.message);
         }
-        console.error("Không thể lưu tài khoản đăng ký:", err);
         throw new RequestError(
           503,
           "Hệ thống hiện không thể lưu tài khoản. Vui lòng thử lại sau hoặc liên hệ quản trị viên.",
+          err,
         );
       }
       return;
@@ -1572,23 +1611,46 @@ function createServer({
   }
 
   return http.createServer((request, response) => {
+    const requestId = getRequestId(request);
+    response.setHeader("X-Request-Id", requestId);
     void handleRequest(request, response).catch((error) => {
-      if (error instanceof RequestError || error instanceof CustomerError) {
-        sendJson(response, error.status, { error: error.message });
+      const isExpectedError =
+        error instanceof RequestError || error instanceof CustomerError;
+      const status =
+        isExpectedError &&
+        Number.isInteger(error.status) &&
+        error.status >= 400 &&
+        error.status <= 599
+          ? error.status
+          : 500;
+      if (status >= 500) {
+        logRequestError(
+          request,
+          requestId,
+          error,
+          "Request failed",
+        );
+      }
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
         return;
       }
-      console.error("Không thể xử lý yêu cầu:", error);
-      if (!response.headersSent) {
-        if (request.url?.startsWith("/api/")) {
-          sendJson(response, 500, {
-            error: "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.",
-          });
-          return;
+      const isApiRequest = (() => {
+        try {
+          return new URL(request.url, "http://localhost").pathname.startsWith("/api/");
+        } catch {
+          return false;
         }
-        void sendHtmlError(response, 500, "500");
+      })();
+      if (isApiRequest) {
+        const message =
+          (status < 500 || error instanceof RequestError) && isExpectedError
+            ? error.message
+            : "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.";
+        sendJson(response, status, { error: message });
         return;
       }
-      response.destroy(error);
+      void sendHtmlError(response, status, status === 404 ? "404" : "500");
     });
   });
 }

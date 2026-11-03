@@ -173,7 +173,31 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
   const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-social-auth-"));
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
-  const server = createServer({ ordersPath, usersPath });
+  const server = createServer({
+    ordersPath,
+    usersPath,
+    socialTokenVerifier: async (token) => {
+      if (token === "valid-google-token") {
+        return {
+          email: "google.reader@gmail.com",
+          name: "Nguyễn Văn Google",
+          emailVerified: true,
+          uid: "google-uid-12345",
+          provider: "google.com",
+        };
+      }
+      if (token === "valid-facebook-token") {
+        return {
+          email: "tran.fb@facebook.com",
+          name: "Trần Facebook",
+          emailVerified: true,
+          uid: "fb-uid-99999",
+          provider: "facebook.com",
+        };
+      }
+      throw new Error("invalid test token");
+    },
+  });
 
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
@@ -189,7 +213,10 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
 
   const googleRes = await fetch(`${baseUrl}/api/auth/social`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer valid-google-token",
+    },
     body: JSON.stringify({
       name: "Nguyễn Văn Google",
       email: "google.reader@gmail.com",
@@ -206,7 +233,10 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
 
   const fbRes = await fetch(`${baseUrl}/api/auth/social`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer valid-facebook-token",
+    },
     body: JSON.stringify({
       name: "Trần Facebook",
       email: "tran.fb@facebook.com",
@@ -221,7 +251,10 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
 
   const repeatGoogleRes = await fetch(`${baseUrl}/api/auth/social`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer valid-google-token",
+    },
     body: JSON.stringify({
       name: "Nguyễn Văn Google Mới",
       email: "google.reader@gmail.com",
@@ -237,5 +270,5 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: "No Email", email: "invalid-email" })
   });
-  assert.equal(invalidRes.status, 400);
+  assert.equal(invalidRes.status, 401);
 });

@@ -85,6 +85,28 @@ test("email delivery retries transient Resend responses and bounds timeouts", as
   assert.equal(timeoutAttempts, 3);
 });
 
+test("email delivery surfaces exhausted HTTP 429 and 500 failures after bounded retries", async () => {
+  for (const status of [429, 500]) {
+    let attempts = 0;
+    const mailer = createEmailMailer(
+      { RESEND_API_KEY: "test-api-key", RESEND_FROM: "no-reply@example.com" },
+      async () => {
+        attempts += 1;
+        return new Response(`injected HTTP ${status}`, { status });
+      },
+    );
+    await assert.rejects(
+      mailer.sendPasswordReset({
+        to: "reader@example.com",
+        name: "Reader",
+        url: "https://example.com/",
+      }),
+      new RegExp(`HTTP ${status}: injected HTTP ${status}`),
+    );
+    assert.equal(attempts, 3, `HTTP ${status} should stop after the configured retry limit`);
+  }
+});
+
 test("production server requires explicit admin credentials", () => {
   const result = spawnSync(
     process.execPath,

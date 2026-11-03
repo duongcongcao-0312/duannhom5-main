@@ -281,7 +281,7 @@ test('account discounts and AI assistant are wired without membership cards', ()
 	assert.match(html, /data-social-provider="facebook"/);
 	assert.match(css, /\.account-form\[hidden\]\s*\{\s*display:\s*none;/);
 	assert.match(html, /id="aiChat"/);
-	assert.match(script, /signInWithPopup\(provider\)/);
+	assert.match(script, /signInWithPopup\(providerObject\)/);
 	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
 	assert.match(script, /getDiscountRate/);
 	assert.match(script, /getAiAnswer/);
@@ -512,7 +512,8 @@ test('invalid idempotency keys are rejected before creating an order', async (t)
 test('coupon and account discounts use one rounded integer-money calculation', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-money-rounding-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
-	const server = createServer({ ordersPath });
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const server = createServer({ ordersPath, usersPath });
 	t.after(async () => {
 		await new Promise((resolve) => server.close(resolve));
 		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
@@ -521,10 +522,26 @@ test('coupon and account discounts use one rounded integer-money calculation', a
 		server.once('error', reject);
 		server.listen(0, '127.0.0.1', resolve);
 	});
-
-	const response = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const student = await fetch(`${baseUrl}/api/auth/register`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			name: 'Nguyễn Văn B',
+			email: 'money-rounding@example.com',
+			password: 'password123',
+			studentType: 'student',
+		}),
+	});
+	assert.equal(student.status, 201);
+	const studentToken = (await student.json()).token;
+
+	const response = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${studentToken}`,
+		},
 		body: JSON.stringify({
 			customerName: 'Nguyễn Văn B',
 			address: '12 Đường Sách, Quận 1',

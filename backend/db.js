@@ -552,9 +552,16 @@ class Database {
 
   async addOrder(order, ordersPathOverride) {
     const filePath = ordersPathOverride || this.ordersPath;
-    await this.enqueueFileWrite(filePath, async () => {
+    return this.enqueueFileWrite(filePath, async () => {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
+      const existingOrders = await this.getAllOrders(filePath);
+      const duplicate = existingOrders.find((entry) => (
+        entry.orderId === order.orderId ||
+        (order.idempotencyKey && entry.idempotencyKey === order.idempotencyKey)
+      ));
+      if (duplicate) return duplicate;
       await fs.appendFile(filePath, `${JSON.stringify(order)}\n`, "utf8");
+      return order;
     });
   }
 

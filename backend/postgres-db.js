@@ -487,7 +487,13 @@ class PostgresDatabase {
 
   async addOrder(order) {
     return this.updateCollection("orders", (orders) => {
+      const duplicate = orders.find((entry) => (
+        entry.orderId === order.orderId ||
+        (order.idempotencyKey && entry.idempotencyKey === order.idempotencyKey)
+      ));
+      if (duplicate) return duplicate;
       orders.push(order);
+      return order;
     });
   }
 

@@ -25,6 +25,14 @@ test("PostgreSQL TLS keeps standard certificate verification without a custom CA
   assert.equal(createDatabaseSslConfig(""), true);
 });
 
+test("PostgreSQL pool applies bounded connection and query timeouts", () => {
+  const config = createDatabasePoolConfig("postgresql://db.example.test:5432/app", "");
+
+  assert.equal(config.connectionTimeoutMillis, 5_000);
+  assert.equal(config.statement_timeout, 10_000);
+  assert.equal(config.query_timeout, 10_000);
+});
+
 test("PostgreSQL TLS reports an unreadable configured CA", () => {
   assert.throws(
     () => createDatabaseSslConfig(path.join(os.tmpdir(), "missing-supabase-ca.crt")),

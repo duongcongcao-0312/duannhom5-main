@@ -8,6 +8,8 @@ const {
 } = require("./db");
 const { hashPassword } = require("./auth");
 
+const databaseConnectionTimeoutMs = 5_000;
+const databaseQueryTimeoutMs = 10_000;
 const serviceTypes = new Set(["rent", "sell", "exchange"]);
 const orderStatuses = new Set(["received", "processing", "shipping", "completed", "cancelled"]);
 const paymentStatuses = new Set(["pending", "paid", "cod_pending", "refunded"]);
@@ -45,6 +47,9 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
       Boolean(process.env.RENDER) && !databaseHost.includes(".");
     return {
       connectionString,
+      connectionTimeoutMillis: databaseConnectionTimeoutMs,
+      statement_timeout: databaseQueryTimeoutMs,
+      query_timeout: databaseQueryTimeoutMs,
       ssl: isRenderInternalDatabase
         ? { rejectUnauthorized: false }
         : true,
@@ -71,6 +76,9 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
 
   return {
     connectionString: parsedUrl.toString(),
+    connectionTimeoutMillis: databaseConnectionTimeoutMs,
+    statement_timeout: databaseQueryTimeoutMs,
+    query_timeout: databaseQueryTimeoutMs,
     ssl: createDatabaseSslConfig(caPath),
   };
 }

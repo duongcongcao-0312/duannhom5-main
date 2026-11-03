@@ -845,8 +845,6 @@ function createServer({
           });
         } catch (error) {
           await db.clearPasswordResetToken(tokenHash);
-          passwordResetAttempts.delete(address);
-          passwordResetEmailAttempts.delete(email);
           console.error("Không thể gửi email khôi phục mật khẩu:", error);
           throw new RequestError(
             503,

@@ -145,6 +145,25 @@ test("successful login resets failed attempts for the source address", async (t)
   assert.equal((await login("wrong-password")).status, 401);
 });
 
+test("password reset requests are rate limited by source address and email", async (t) => {
+  const baseUrl = await startAuthTestServer(t, {
+    appBaseUrl: "https://shop.example/",
+    passwordResetMailer: { async sendPasswordReset() {} },
+  });
+  const requestReset = () => fetch(`${baseUrl}/api/auth/password-reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "limited-reset@example.com" }),
+  });
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal((await requestReset()).status, 200);
+  }
+  const limitedResponse = await requestReset();
+  assert.equal(limitedResponse.status, 429);
+  assert.match((await limitedResponse.json()).error, /quá nhiều lần/i);
+});
+
 test("password reset emails a single-use link and replaces the account password", async (t) => {
   const temporaryDirectory = await fsPromises.mkdtemp(
     path.join(os.tmpdir(), "booknest-password-reset-test-"),

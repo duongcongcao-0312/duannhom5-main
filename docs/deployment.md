@@ -36,6 +36,9 @@ chấm); các hostname database bên ngoài vẫn xác thực chứng thư TLS.
 - Khuyến nghị dùng API email qua HTTPS: cấu hình `RESEND_API_KEY` và
   `RESEND_FROM` (địa chỉ gửi đã xác minh trong Resend). Khi các biến này có
   giá trị, backend ưu tiên Resend thay vì SMTP.
+- Mỗi yêu cầu Resend có timeout 10 giây và tối đa 3 lần thử với backoff tăng
+  dần cho lỗi mạng, HTTP 429 và lỗi HTTP 5xx. Kết nối PostgreSQL có timeout 5
+  giây; truy vấn được giới hạn ở 10 giây.
 
 Liên kết khôi phục có hiệu lực một giờ, chỉ dùng được một lần; sau khi đổi mật
 khẩu, các phiên đăng nhập hiện có bị thu hồi. Nếu chưa cấu hình email hoặc URL

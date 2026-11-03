@@ -1,23 +1,47 @@
 const nodemailer = require("nodemailer");
 
+const resendRequestTimeoutMs = 10_000;
+const resendMaxAttempts = 3;
+const resendBackoffBaseMs = 100;
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function createResendMailer(apiKey, from, fetchImpl = fetch) {
   return {
     async sendPasswordReset({ to, name, url }) {
-      const response = await fetchImpl("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from,
-          to: [to],
-          subject: "Khôi phục mật khẩu BookNest",
-          text: `Xin chào ${name},\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\n${url}\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.`,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) {
+      for (let attempt = 0; attempt < resendMaxAttempts; attempt += 1) {
+        let response;
+        try {
+          response = await fetchImpl("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from,
+              to: [to],
+              subject: "Khôi phục mật khẩu BookNest",
+              text: `Xin chào ${name},\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\n${url}\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.`,
+            }),
+            signal: AbortSignal.timeout(resendRequestTimeoutMs),
+          });
+        } catch (error) {
+          if (attempt === resendMaxAttempts - 1) throw error;
+          await wait(resendBackoffBaseMs * (2 ** attempt));
+          continue;
+        }
+        if (response.ok) return;
+
+        const retryable = response.status === 429 ||
+          (response.status >= 500 && response.status <= 599);
+        if (retryable && attempt < resendMaxAttempts - 1) {
+          await wait(resendBackoffBaseMs * (2 ** attempt));
+          continue;
+        }
+
         const detail = await response.text();
         throw new Error(`Resend trả về HTTP ${response.status}: ${detail.slice(0, 500)}`);
       }

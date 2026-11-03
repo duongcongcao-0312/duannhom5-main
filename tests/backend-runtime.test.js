@@ -45,6 +45,46 @@ test("email delivery uses the HTTPS provider and exposes provider errors", async
   );
 });
 
+test("email delivery retries transient Resend responses and bounds timeouts", async () => {
+  let responseAttempts = 0;
+  const retryingMailer = createEmailMailer(
+    { RESEND_API_KEY: "test-api-key", RESEND_FROM: "no-reply@example.com" },
+    async (_url, options) => {
+      responseAttempts += 1;
+      assert.ok(options.signal instanceof AbortSignal);
+      if (responseAttempts === 1) return new Response("rate limited", { status: 429 });
+      if (responseAttempts === 2) return new Response("provider unavailable", { status: 503 });
+      return new Response("", { status: 202 });
+    },
+  );
+  await retryingMailer.sendPasswordReset({
+    to: "reader@example.com",
+    name: "Reader",
+    url: "https://example.com/",
+  });
+  assert.equal(responseAttempts, 3);
+
+  let timeoutAttempts = 0;
+  const timeoutMailer = createEmailMailer(
+    { RESEND_API_KEY: "test-api-key", RESEND_FROM: "no-reply@example.com" },
+    async () => {
+      timeoutAttempts += 1;
+      const error = new Error("request timed out");
+      error.name = "TimeoutError";
+      throw error;
+    },
+  );
+  await assert.rejects(
+    timeoutMailer.sendPasswordReset({
+      to: "reader@example.com",
+      name: "Reader",
+      url: "https://example.com/",
+    }),
+    { name: "TimeoutError" },
+  );
+  assert.equal(timeoutAttempts, 3);
+});
+
 test("production server requires explicit admin credentials", () => {
   const result = spawnSync(
     process.execPath,

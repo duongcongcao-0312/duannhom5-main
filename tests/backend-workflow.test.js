@@ -146,7 +146,11 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   // 6. Place an order
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // Student discounts are derived from the authenticated account, not the request body.
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${regData.token}`,
+    },
     body: JSON.stringify({
       customerName: "Trần Minh",
       address: "123 Phố Sách Hà Nội",
@@ -315,13 +319,22 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
   });
   assert.equal(aliceView.status, 200);
 
-  const alicePatch = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+  const forbiddenPaymentUpdate = await fetch(`${baseUrl}/api/orders/${orderId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${aliceToken}`,
     },
     body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
+  });
+  assert.equal(forbiddenPaymentUpdate.status, 403);
+  const alicePatch = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aliceToken}`,
+    },
+    body: JSON.stringify({ status: "processing" }),
   });
   assert.equal(alicePatch.status, 200);
   assert.equal((await alicePatch.json()).status, "processing");

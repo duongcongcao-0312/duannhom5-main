@@ -171,6 +171,31 @@ const resetFiltersBtn = document.querySelector('#resetFiltersBtn');
 let showFavoritesOnly = false;
 const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 
+async function hydrateCatalog() {
+	if (typeof window.booknestApiFetch !== 'function') return;
+	try {
+		const response = await window.booknestApiFetch('/api/books');
+		if (!response.ok) throw new Error('Không thể tải danh mục sách.');
+		const remoteBooks = await response.json();
+		if (!Array.isArray(remoteBooks)) throw new Error('Danh mục sách trả về không hợp lệ.');
+		const savedCartTitles = state.cart.map((book) => book.title);
+		books.splice(0, books.length, ...remoteBooks.filter((book) =>
+			book && typeof book.title === 'string' && typeof book.author === 'string' &&
+			Number.isFinite(Number(book.price))
+		));
+		state.cart = savedCartTitles
+			.map((title) => books.find((book) => book.title === title))
+			.filter(Boolean);
+		if (hasCatalogShell) {
+			renderCategories();
+			renderBooks();
+		}
+		renderCart();
+	} catch (error) {
+		console.error('Không thể đồng bộ danh mục sách:', error);
+	}
+}
+
 function removeVietnameseAccents(str) {
 	return String(str || '')
 		.normalize('NFD')
@@ -762,10 +787,13 @@ function showAccountError(id, message) {
 }
 
 async function saveFederatedAccount(socialUser) {
+	const idToken = socialUser.idToken ||
+		(typeof socialUser.getIdToken === 'function' ? await socialUser.getIdToken() : '');
+	if (!idToken) throw new Error('Không thể xác minh tài khoản social. Vui lòng thử lại.');
 	const email = String(socialUser.email || '').trim().toLowerCase();
 	const name = String(socialUser.displayName || socialUser.name || (email ? email.split('@')[0] : 'Thành viên BookNest')).trim();
 	const provider = socialUser.providerData?.[0]?.providerId || socialUser.authProvider || socialUser.provider || 'google.com';
-	const providerId = socialUser.uid || socialUser.providerId || ('soc-' + Date.now());
+	const providerId = socialUser.uid || socialUser.providerId || '';
 	const isFirebaseSession = Boolean(socialUser.providerData && socialUser.uid);
 
 	const previousUser = state.user?.email === email ? state.user : null;
@@ -785,27 +813,22 @@ async function saveFederatedAccount(socialUser) {
 	try {
 		const response = await window.booknestApiFetch('/api/auth/social', {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${idToken}`
+			},
 			body: JSON.stringify({
-				name,
-				email,
-				provider,
-				providerId,
-				studentType: user.studentType,
-				studentId: user.studentId
+				idToken
 			})
 		});
-		if (response.ok) {
-			const data = await response.json();
-			if (data.token) {
-				localStorage.setItem('booknest-auth-token', data.token);
-			}
-			if (data.user) {
-				user = { ...user, ...data.user };
-			}
-		}
-	} catch {
-		// Server offline fallback
+		const data = await response.json().catch(() => ({}));
+		if (!response.ok) throw new Error(data.error || 'Không thể xác minh tài khoản social.');
+		if (data.token) localStorage.setItem('booknest-auth-token', data.token);
+		if (data.user) user = { ...user, ...data.user };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Không thể xác minh tài khoản social.';
+		showAccountError('#socialCustomError', message);
+		return;
 	}
 
 	state.user = user;
@@ -930,10 +953,13 @@ document.querySelector('#registerForm select[name="studentType"]').addEventListe
 	document.querySelector('.student-id-field').hidden = event.target.value === 'other';
 });
 async function signInWithFirebase(provider) {
-	if (firebaseAuth && window.firebase && window.firebase.auth) {
-		return await firebaseAuth.signInWithPopup(provider);
+	if (!firebaseAuth || !window.firebase?.auth) {
+		throw new Error('Đăng nhập social chưa được cấu hình.');
 	}
-	return null;
+	const providerObject = provider === 'facebook.com'
+		? new window.firebase.auth.FacebookAuthProvider()
+		: new window.firebase.auth.GoogleAuthProvider();
+	return firebaseAuth.signInWithPopup(providerObject);
 }
 
 function openSocialAuthModal(provider) {
@@ -977,10 +1003,12 @@ function openSocialAuthModal(provider) {
 
 document.querySelectorAll('.social-quick-card').forEach((card) => {
 	card.addEventListener('click', async () => {
-		const email = card.dataset.quickEmail;
-		const name = card.dataset.quickName;
 		const provider = card.dataset.provider || 'google.com';
-		await saveFederatedAccount({ email, name, authProvider: provider });
+		try {
+			await signInWithFirebase(provider);
+		} catch (error) {
+			showAccountError('#socialCustomError', getSocialAuthError(error));
+		}
 	});
 });
 
@@ -988,25 +1016,18 @@ const socialAuthForm = document.querySelector('#socialAuthForm');
 if (socialAuthForm) {
 	socialAuthForm.addEventListener('submit', async (event) => {
 		event.preventDefault();
-		const nameInput = document.querySelector('#socialCustomName');
-		const emailInput = document.querySelector('#socialCustomEmail');
 		const provInput = document.querySelector('#socialCustomProvider');
 		const errEl = document.querySelector('#socialCustomError');
 		if (errEl) errEl.hidden = true;
-
-		const name = nameInput ? nameInput.value.trim() : '';
-		const email = emailInput ? emailInput.value.trim().toLowerCase() : '';
 		const provider = provInput ? provInput.value : 'google.com';
-
-		if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+		try {
+			await signInWithFirebase(provider);
+		} catch (error) {
 			if (errEl) {
-				errEl.textContent = 'Vui lòng cung cấp email hợp lệ.';
+				errEl.textContent = getSocialAuthError(error);
 				errEl.hidden = false;
 			}
-			return;
 		}
-
-		await saveFederatedAccount({ name, email, authProvider: provider });
 	});
 }
 
@@ -1251,6 +1272,7 @@ document.querySelectorAll('[data-ai-question]').forEach((button) => button.addEv
 renderAccount();
 fillSavedCustomerInfo();
 hydrateAuthenticatedUser();
+hydrateCatalog();
 if (hasCatalogShell) {
 	renderCategories();
 	renderBooks();

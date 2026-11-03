@@ -18,6 +18,7 @@ const {
   verifyPassword,
 } = require("./backend/auth");
 const { createEmailMailer } = require("./backend/email");
+const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
 
 const root = __dirname;
 const defaultOrdersPath = path.join(root, "data", "orders.jsonl");
@@ -562,7 +563,7 @@ function validateApiPath(pathname) {
   }
 }
 
-function createOrder(payload, userId = null) {
+function createOrder(payload, userId = null, requester = null) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
@@ -590,7 +591,12 @@ function createOrder(payload, userId = null) {
     typeof payload.paymentMethod === "string" ? payload.paymentMethod : "",
     32,
   );
-  const discountRate = payload.discountRate;
+  const requestedDiscountRate = payload.discountRate;
+  const isVerifiedStudent = requester?.studentType === "student" ||
+    requester?.studentType === "university";
+  const discountRate = isVerifiedStudent
+    ? requestedDiscountRate
+    : Math.min(Number(requestedDiscountRate), 0.05);
   const couponCode = sanitizePlainText(
     typeof payload.couponCode === "string" ? payload.couponCode : "",
     32,
@@ -611,7 +617,8 @@ function createOrder(payload, userId = null) {
   if (!["transfer", "cod"].includes(paymentMethod)) {
     throw new RequestError(400, "Phương thức thanh toán không hợp lệ.");
   }
-  if (!allowedDiscountRates.has(discountRate)) {
+  if (!allowedDiscountRates.has(requestedDiscountRate) ||
+      (requestedDiscountRate === 0.1 && !isVerifiedStudent)) {
     throw new RequestError(400, "Mức giảm giá không hợp lệ.");
   }
   if (
@@ -814,6 +821,7 @@ function createServer({
     ? Number(process.env.SESSION_TTL_MS)
     : 7 * 24 * 60 * 60 * 1000,
   passwordResetMailer = createEmailMailer(),
+  socialTokenVerifier = createFirebaseIdTokenVerifier(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
   corsOrigins = process.env.CORS_ORIGINS || (
     process.env.RENDER
@@ -871,7 +879,7 @@ function createServer({
       console.error("Không thể tải sách quản trị:", error);
     });
 
-  async function createAndPersistOrder(payload, userId, idempotencyKey) {
+  async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     const operation = orderWriteQueue.then(async () => {
       const existingOrders = await db.getAllOrders(ordersPath);
       const existingOrder = existingOrders.find(
@@ -880,7 +888,7 @@ function createServer({
       if (existingOrder) {
         return { order: existingOrder, replayed: true };
       }
-      const order = createOrder(payload, userId);
+      const order = createOrder(payload, userId, requester);
       const reserved = new Map();
       for (const existingOrder of existingOrders) {
         if (existingOrder.status === "cancelled") continue;
@@ -1276,27 +1284,32 @@ function createServer({
         "Dữ liệu xác thực không hợp lệ.",
         payloadSchemas.socialAuth,
       );
-      const email = sanitizePlainText(
-        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
-        254,
-      ).toLowerCase();
-      const name = sanitizePlainText(
-        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
-        120,
-      ) || email.split("@")[0];
-      const provider = sanitizePlainText(
-        typeof payload.provider === "string" ? payload.provider : "google",
-        32,
-      ) || "google";
-      const providerId = sanitizePlainText(
-        typeof payload.providerId === "string"
-          ? payload.providerId
-          : typeof payload.firebaseUid === "string" ? payload.firebaseUid : "",
-        128,
-      );
+      const authHeader = request.headers["authorization"] || "";
+      const idToken = authHeader.replace(/^Bearer\s+/i, "").trim() ||
+        (typeof payload.idToken === "string" ? payload.idToken.trim() : "");
+      if (!idToken) throw new RequestError(401, "Thiếu Firebase ID Token.");
 
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new RequestError(400, "Vui lòng cung cấp email hợp lệ.");
+      let verified;
+      try {
+        verified = await socialTokenVerifier(idToken);
+      } catch (error) {
+        throw new RequestError(401, error.message || "Firebase ID Token không hợp lệ.");
+      }
+      const email = sanitizePlainText(String(verified?.email || ""), 254).toLowerCase();
+      const name = sanitizePlainText(String(verified?.name || ""), 120) ||
+        email.split("@")[0];
+      const provider = sanitizePlainText(String(verified?.provider || "firebase"), 32);
+      const providerId = sanitizePlainText(String(verified?.uid || ""), 128);
+      if (!verified?.emailVerified || !email || !providerId ||
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new RequestError(401, "Thông tin Firebase chưa được xác minh đầy đủ.");
+      }
+      const existingUser = await db.findUserByEmail(email);
+      if (existingUser?.role === "admin") {
+        throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
+      }
+      if (existingUser?.providerId && existingUser.providerId !== providerId) {
+        throw new RequestError(403, "Tài khoản social không khớp với tài khoản đã liên kết.");
       }
 
       const user = await db.findOrCreateSocialUser({
@@ -1304,14 +1317,6 @@ function createServer({
         email,
         authProvider: provider,
         providerId,
-        studentType: sanitizePlainText(
-          typeof payload.studentType === "string" ? payload.studentType : "other",
-          32,
-        ) || "other",
-        studentId: sanitizePlainText(
-          typeof payload.studentId === "string" ? payload.studentId : "",
-          64,
-        ),
       });
 
       const session = sessionStore.createSession(user);
@@ -1543,6 +1548,7 @@ function createServer({
       const { order, replayed } = await createAndPersistOrder(
         payload,
         requester?.userId || null,
+        requester,
         idempotencyKey,
       );
       sendJson(response, replayed ? 200 : 201, publicOrder(order));
@@ -1612,6 +1618,12 @@ function createServer({
         }
       }
       const safePayload = { ...payload };
+      if (requester.role !== "admin" && safePayload.paymentStatus !== undefined) {
+        throw new RequestError(
+          403,
+          "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
+        );
+      }
       if (safePayload.status !== undefined) {
         safePayload.status = sanitizePlainText(
           typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
@@ -1862,6 +1874,8 @@ function createServer({
       (request.method === "PUT" || request.method === "PATCH")
     ) {
       requireRole(request, "write:books");
+      const previousBooks = await db.getCustomBooks();
+      const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật sách không hợp lệ.",
@@ -1871,6 +1885,9 @@ function createServer({
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy sách.");
       }
+      if (previous?.title && previous.title !== updated.title) {
+        bookCatalog.delete(previous.title);
+      }
       if (updated.title) bookCatalog.set(updated.title, updated);
       sendJson(response, 200, updated);
       return;
@@ -1878,7 +1895,10 @@ function createServer({
 
     if (adminBookMatch && request.method === "DELETE") {
       requireRole(request, "write:books");
+      const previousBooks = await db.getCustomBooks();
+      const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
       const deleted = await db.deleteCustomBook(adminBookMatch[1]);
+      if (deleted && previous?.title) bookCatalog.delete(previous.title);
       sendJson(response, 200, { success: deleted });
       return;
     }

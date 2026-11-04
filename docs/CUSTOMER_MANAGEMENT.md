@@ -86,10 +86,11 @@ Thiết lập ADMIN_EMAIL và ADMIN_PASSWORD trong .env trước khi khởi đ�
 Không có tài khoản/mật khẩu mặc định. Chỉ tài khoản được cấu hình trong môi
 trường chạy mới được cấp role admin. Không commit file dữ liệu production.
 
-CRM hiện chưa có lệnh migration/seed riêng. Khi chạy local sạch, chỉ cần tạo
-thư mục `data/` và khởi động server; `users.json` được seed tự động,
-`customers.json` được tạo khi gọi `POST /api/customers`. Khi chuyển sang
-PostgreSQL/SQLite, migration phải:
+Backend CRM runtime hiện vẫn lưu dữ liệu bằng file JSON. Schema PostgreSQL
+đích và lệnh migration hiện có thể triển khai độc lập bằng `npm run migrate`
+khi đặt `DATABASE_URL`; lệnh này không chuyển backend runtime từ JSON sang
+PostgreSQL và không import JSON/JSONL. Khi cần import dữ liệu file, migration
+riêng phải:
 
 1. Tạo bảng và index theo schema đích.
 2. Import `users.json`, `orders.jsonl` và `service-requests.jsonl` theo

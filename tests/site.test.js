@@ -648,6 +648,9 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
 	assert.ok(fs.existsSync(schemaPath));
 	const schema = fs.readFileSync(schemaPath, 'utf8');
+	const initialMigration = read('data/migrations/001_customer_crm.sql');
+	const alignmentMigration = read('data/migrations/002_align_customer_crm_schema.sql');
+	const migrationRunner = read('scripts/migrate.js');
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customers/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_interactions/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_orders/);
@@ -657,6 +660,12 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	assert.match(schema, /WHERE is_active/);
 	assert.match(schema, /CHECK \(status IN \('new', 'lead', 'customer'\)\)/);
 	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
+	assert.match(initialMigration, /CREATE TABLE IF NOT EXISTS customers/);
+	assert.match(alignmentMigration, /ALTER TABLE customers/);
+	assert.match(alignmentMigration, /UPDATE customer_orders/);
+	assert.match(alignmentMigration, /CREATE TABLE IF NOT EXISTS consent_records/);
+	assert.match(migrationRunner, /schema_migrations/);
+	assert.match(migrationRunner, /pg_advisory_lock/);
 });
 
 test('OpenAPI documents the current core API routes and CRM statuses', () => {

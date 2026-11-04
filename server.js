@@ -164,7 +164,6 @@ const payloadSchemas = {
       "address",
       "phone",
       "paymentMethod",
-      "discountRate",
       "items",
     ],
     types: {
@@ -177,6 +176,15 @@ const payloadSchemas = {
       subtotal: "number",
       discount: "number",
       total: "number",
+      items: "array",
+    },
+  },
+  orderQuote: {
+    allowed: ["discountRate", "couponCode", "items"],
+    required: ["items"],
+    types: {
+      discountRate: "number",
+      couponCode: "string",
       items: "array",
     },
   },
@@ -570,12 +578,9 @@ function createOrder(payload, userId = null, requester = null) {
     typeof payload.paymentMethod === "string" ? payload.paymentMethod : "",
     32,
   );
-  const requestedDiscountRate = payload.discountRate;
-  const isVerifiedStudent = requester?.studentType === "student" ||
+  const isStudentAccount = requester?.studentType === "student" ||
     requester?.studentType === "university";
-  const discountRate = isVerifiedStudent
-    ? requestedDiscountRate
-    : Math.min(Number(requestedDiscountRate), 0.05);
+  const discountRate = requester ? (isStudentAccount ? 0.1 : 0.05) : 0;
   const couponCode = sanitizePlainText(
     typeof payload.couponCode === "string" ? payload.couponCode : "",
     32,
@@ -596,8 +601,10 @@ function createOrder(payload, userId = null, requester = null) {
   if (!["transfer", "cod"].includes(paymentMethod)) {
     throw new RequestError(400, "Phương thức thanh toán không hợp lệ.");
   }
-  if (!allowedDiscountRates.has(requestedDiscountRate) ||
-      (requestedDiscountRate === 0.1 && !isVerifiedStudent)) {
+  if (
+    payload.discountRate !== undefined &&
+    !allowedDiscountRates.has(payload.discountRate)
+  ) {
     throw new RequestError(400, "Mức giảm giá không hợp lệ.");
   }
   if (
@@ -1502,6 +1509,46 @@ function createServer({
     }
 
     // --- API: Orders ---
+    if (
+      requestUrl.pathname === "/api/orders/quote" &&
+      request.method === "POST"
+    ) {
+      if (
+        request.headers["content-type"]?.split(";")[0] !== "application/json"
+      ) {
+        throw new RequestError(415, "Báo giá cần được gửi ở định dạng JSON.");
+      }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu báo giá không hợp lệ.",
+        payloadSchemas.orderQuote,
+      );
+      const requester = getAuthUser(request);
+      const quote = createOrder({
+        customerName: "Báo giá",
+        address: "Xem trước đơn hàng",
+        phone: "00000000",
+        paymentMethod: "cod",
+        couponCode: payload.couponCode,
+        discountRate: payload.discountRate,
+        items: payload.items,
+      }, requester?.userId || null, requester);
+      sendJson(response, 200, {
+        discountRate: quote.discountRate,
+        couponCode: quote.couponCode,
+        subtotal: quote.subtotal,
+        discount: quote.discount,
+        total: quote.total,
+        items: quote.items.map(({ title, quantity, unitPrice, lineTotal }) => ({
+          title,
+          quantity,
+          unitPrice,
+          lineTotal,
+        })),
+      });
+      return;
+    }
+
     if (requestUrl.pathname === "/api/orders" && request.method === "GET") {
       validateQuery(requestUrl, {}, "Bộ lọc đơn hàng không hợp lệ.");
       const requester = getAuthUser(request);

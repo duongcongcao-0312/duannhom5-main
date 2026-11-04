@@ -364,7 +364,7 @@ test('account discounts and AI assistant are wired without membership cards', ()
 	assert.match(html, /id="aiChat"/);
 	assert.match(script, /signInWithPopup\(providerObject\)/);
 	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
-	assert.match(script, /getDiscountRate/);
+	assert.match(script, /api\/orders\/quote/);
 	assert.match(script, /getAiAnswer/);
 	assert.doesNotMatch(script, /memberNumber/);
 });
@@ -382,6 +382,7 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(script, /api\/coupons/);
 	assert.match(script, /trackOrderForm/);
 	assert.match(script, /booknestApiFetch\('\/api\/orders'/);
+	assert.match(script, /booknestApiFetch\('\/api\/orders\/quote'/);
 	assert.match(script, /Authorization: `Bearer \$\{token\}`/);
 	assert.match(server, /BOOKNEST10/);
 	assert.match(server, /couponCode/);
@@ -425,7 +426,7 @@ test('issue #39 - search, category filter, price filter, tag filter and sorting 
 	assert.match(script, /priceRange === '100k-200k'/);
 	assert.match(script, /priceRange === 'above-200k'/);
 	assert.match(script, /function roundMoney/);
-	assert.match(script, /Math\.min\(getDiscountRate\(\) \+ getCouponRate\(\), 0\.3\)/);
+	assert.doesNotMatch(script, /discountRate:\s*getDiscountRate\(\)/);
 	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.title\.localeCompare\(a\.title, 'vi'\)\)/);
 	assert.match(script, /resetFiltersBtn/);
 
@@ -506,9 +507,9 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(response.status, 201);
 	const confirmation = await response.json();
 	assert.match(confirmation.orderId, /^[0-9a-f-]{36}$/i);
-	assert.equal(confirmation.total, 169100);
+	assert.equal(confirmation.total, 178000);
 	assert.equal(confirmation.subtotal, 178000);
-	assert.equal(confirmation.discount, 8900);
+	assert.equal(confirmation.discount, 0);
 	assert.equal(confirmation.items[0].quantity, 2);
 	assert.ok((await fsPromises.readFile(ordersPath, 'utf8')).includes(confirmation.orderId));
 
@@ -516,9 +517,9 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(lookupResponse.status, 200);
 	const order = await lookupResponse.json();
 	assert.equal(order.orderId, confirmation.orderId);
-	assert.equal(order.total, 169100);
+	assert.equal(order.total, 178000);
 	assert.equal(order.subtotal, 178000);
-	assert.equal(order.discount, 8900);
+	assert.equal(order.discount, 0);
 	assert.equal(Object.hasOwn(order, 'phone'), false);
 	assert.equal(Object.hasOwn(order, 'address'), false);
 

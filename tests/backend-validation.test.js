@@ -237,10 +237,114 @@ test("order creation calculates catalog prices and rejects invalid checkout data
   assert.equal(successResponse.status, 201);
   const createdOrder = await successResponse.json();
   assert.equal(createdOrder.subtotal, 89000);
-  assert.equal(createdOrder.discount, 13350);
-  assert.equal(createdOrder.total, 75650);
+  assert.equal(createdOrder.discount, 8900);
+  assert.equal(createdOrder.total, 80100);
   assert.equal(createdOrder.items[0].lineTotal, 89000);
   assert.equal(createdOrder.paymentStatus, "cod_pending");
+
+  const anonymousDiscountAttempt = await submitOrder({
+    ...validOrder,
+    discountRate: 0.1,
+    couponCode: "",
+  });
+  assert.equal(anonymousDiscountAttempt.status, 201);
+  const anonymousOrder = await anonymousDiscountAttempt.json();
+  assert.equal(anonymousOrder.discount, 0);
+  assert.equal(anonymousOrder.total, 89000);
+
+  const anonymousQuoteResponse = await fetch(`${baseUrl}/api/orders/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      discountRate: 0.1,
+      couponCode: "BOOKNEST10",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(anonymousQuoteResponse.status, 200);
+  const anonymousQuote = await anonymousQuoteResponse.json();
+  assert.equal(anonymousQuote.discountRate, 0);
+  assert.equal(anonymousQuote.discount, createdOrder.discount);
+  assert.equal(anonymousQuote.total, createdOrder.total);
+
+  const registerUser = async (email, studentType = "other") => {
+    const response = await fetch(`${baseUrl}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Nguyễn Văn A",
+        email,
+        password: "password123",
+        studentType,
+        studentId: studentType === "other" ? "" : "HS-1234",
+      }),
+    });
+    assert.equal(response.status, 201);
+    return (await response.json()).token;
+  };
+  const regularToken = await registerUser("regular-discount@example.com");
+  const regularOrderResponse = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${regularToken}`,
+    },
+    body: JSON.stringify({
+      ...validOrder,
+      discountRate: 0.1,
+      couponCode: "",
+    }),
+  });
+  assert.equal(regularOrderResponse.status, 201);
+  const regularOrder = await regularOrderResponse.json();
+  assert.equal(regularOrder.discount, 4450);
+  const regularQuoteResponse = await fetch(`${baseUrl}/api/orders/quote`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${regularToken}`,
+    },
+    body: JSON.stringify({
+      couponCode: "",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(regularQuoteResponse.status, 200);
+  assert.equal((await regularQuoteResponse.json()).total, regularOrder.total);
+
+  const studentToken = await registerUser(
+    "student-discount@example.com",
+    "student",
+  );
+  const studentOrderResponse = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${studentToken}`,
+    },
+    body: JSON.stringify({
+      ...validOrder,
+      discountRate: 0,
+      couponCode: "",
+    }),
+  });
+  assert.equal(studentOrderResponse.status, 201);
+  const studentOrder = await studentOrderResponse.json();
+  assert.equal(studentOrder.discount, 8900);
+  const studentQuoteResponse = await fetch(`${baseUrl}/api/orders/quote`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${studentToken}`,
+    },
+    body: JSON.stringify({
+      discountRate: 0,
+      couponCode: "",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(studentQuoteResponse.status, 200);
+  assert.equal((await studentQuoteResponse.json()).total, studentOrder.total);
 
   const invalidOrders = [
     { ...validOrder, items: [{ title: "Unknown book", quantity: 1 }] },

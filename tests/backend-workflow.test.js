@@ -156,12 +156,14 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
       address: "123 Phố Sách Hà Nội",
       phone: "0912345678",
       paymentMethod: "transfer",
-      discountRate: 0.1,
+      discountRate: 0,
       items: [{ title: "Nhà giả kim", quantity: 1 }],
     }),
   });
   assert.equal(orderRes.status, 201);
   const orderData = await orderRes.json();
+  assert.equal(orderData.discount, 8900);
+  assert.equal(orderData.total, 80100);
 
   // 7. Profile includes saved customer information
   const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {

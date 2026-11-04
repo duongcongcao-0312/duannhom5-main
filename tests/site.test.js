@@ -97,6 +97,59 @@ test('admin API authentication uses bearer tokens without cross-origin cookies',
 	assert.doesNotMatch(script, /credentials:\s*['"]include['"]/);
 });
 
+test('authentication tokens use tab-scoped storage and expire consistently', async () => {
+	const apiClient = read('assets/api-client.js');
+	const main = read('main.js');
+	const admin = read('admin.js');
+	assert.match(apiClient, /sessionStorage\.setItem\(AUTH_TOKEN_KEY, token\)/);
+	assert.match(apiClient, /localStorage\.removeItem\(AUTH_TOKEN_KEY\)/);
+	assert.doesNotMatch(main, /localStorage\.(?:getItem|setItem|removeItem)\(['"]booknest-(?:admin-)?auth-token/);
+	assert.doesNotMatch(admin, /localStorage\.(?:getItem|setItem|removeItem)\(['"]booknest-(?:admin-)?auth-token/);
+
+	const createStorage = () => {
+		const values = new Map();
+		return {
+			getItem: (key) => values.get(key) || null,
+			setItem: (key, value) => values.set(key, String(value)),
+			removeItem: (key) => values.delete(key)
+		};
+	};
+	const localStorage = createStorage();
+	const sessionStorage = createStorage();
+	const events = [];
+	const context = {
+		window: { dispatchEvent: (event) => events.push(event.type) },
+		localStorage,
+		sessionStorage,
+		Event: class TestEvent { constructor(type) { this.type = type; } },
+		AbortController,
+		Headers,
+		setTimeout,
+		clearTimeout,
+		fetch: async () => ({ status: 401 }),
+		document: { body: null }
+	};
+	vm.runInNewContext(apiClient, context);
+
+	context.window.booknestAuth.setToken('temporary-token', Date.now() + 60_000);
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), 'temporary-token');
+	assert.equal(localStorage.getItem('booknest-auth-token'), null);
+	await context.window.booknestApiFetch('/api/auth/me', {
+		headers: { Authorization: 'Bearer temporary-token' }
+	});
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), null);
+	assert.deepEqual(events, ['booknest:auth-expired']);
+
+	localStorage.setItem('booknest-admin-token', 'legacy-token');
+	assert.equal(context.window.booknestAuth.getToken(), 'legacy-token');
+	assert.equal(localStorage.getItem('booknest-admin-token'), null);
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), 'legacy-token');
+
+	context.window.booknestAuth.setToken('expired-token', Date.now() - 1);
+	assert.equal(context.window.booknestAuth.getToken(), null);
+	assert.deepEqual(events, ['booknest:auth-expired', 'booknest:auth-expired']);
+});
+
 test('account registration only reports duplicates for an explicit conflict response', () => {
 	const script = read('main.js');
 	assert.match(script, /response\.status === 409/);

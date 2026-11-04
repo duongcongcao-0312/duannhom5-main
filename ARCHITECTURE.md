@@ -243,8 +243,9 @@ Header: 'Authorization: Bearer {token}'
 'booknest-users' → JSON object of registered users
 'booknest-current-user' → Current logged-in user object
 'booknest-coupon' → Applied coupon code
-'booknest-auth-token' → Authentication token
 ```
+Authentication tokens are scoped to the current browser tab in `sessionStorage`;
+the server remains authoritative for session expiration and revocation.
 
 #### 3.3.2 **Server-side File Storage**
 ```

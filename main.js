@@ -87,7 +87,7 @@ function saveCustomerInfo(info) {
 }
 
 async function saveCustomerInfoToAccount(info) {
-	const token = localStorage.getItem('booknest-auth-token');
+	const token = window.booknestAuth.getToken();
 	if (!token) return;
 	const response = await window.booknestApiFetch('/api/auth/customer-info', {
 		method: 'PATCH',
@@ -107,15 +107,14 @@ function applyAccountCustomerInfo(user) {
 }
 
 async function hydrateAuthenticatedUser() {
-	const token = localStorage.getItem('booknest-auth-token');
+	const token = window.booknestAuth.getToken();
 	if (!token) return;
 	try {
 		const response = await window.booknestApiFetch('/api/auth/me', {
 			headers: { Authorization: `Bearer ${token}` }
 		});
 		if (response.status === 401) {
-			localStorage.removeItem('booknest-auth-token');
-			localStorage.removeItem('booknest-admin-token');
+			window.booknestAuth.clearToken();
 			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			state.user = null;
 			renderAccount();
@@ -133,6 +132,13 @@ async function hydrateAuthenticatedUser() {
 		console.error('Không thể đồng bộ hồ sơ khách hàng:', error);
 	}
 }
+
+window.addEventListener('booknest:auth-expired', () => {
+	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+	state.user = null;
+	renderAccount();
+	renderCart();
+});
 
 function fillSavedCustomerInfo() {
 	const saved = loadCustomerInfo();
@@ -823,7 +829,7 @@ async function saveFederatedAccount(socialUser) {
 		});
 		const data = await response.json().catch(() => ({}));
 		if (!response.ok) throw new Error(data.error || 'Không thể xác minh tài khoản social.');
-		if (data.token) localStorage.setItem('booknest-auth-token', data.token);
+		if (data.token) window.booknestAuth.setToken(data.token, data.expiresAt);
 		if (data.user) user = { ...user, ...data.user };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Không thể xác minh tài khoản social.';
@@ -1067,8 +1073,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 		});
 		if (response.ok) {
 			const data = await response.json();
-			if (data.token) localStorage.setItem('booknest-auth-token', data.token);
-			if (data.user && data.user.role === 'admin') localStorage.setItem('booknest-admin-token', data.token);
+			if (data.token) window.booknestAuth.setToken(data.token, data.expiresAt);
 			state.user = data.user;
 			applyAccountCustomerInfo(data.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
@@ -1126,7 +1131,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 		});
 		if (response.ok) {
 			const resData = await response.json();
-			if (resData.token) localStorage.setItem('booknest-auth-token', resData.token);
+			if (resData.token) window.booknestAuth.setToken(resData.token, resData.expiresAt);
 			state.user = resData.user || user;
 			applyAccountCustomerInfo(state.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
@@ -1169,16 +1174,17 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 		}
 	}
 	try {
-		const token = localStorage.getItem('booknest-auth-token');
+		const token = window.booknestAuth.getToken();
 		if (token) {
 			await window.booknestApiFetch('/api/auth/logout', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` }
 			});
 		}
-	} catch {}
-	localStorage.removeItem('booknest-auth-token');
-	localStorage.removeItem('booknest-admin-token');
+	} catch (error) {
+		console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
+	}
+	window.booknestAuth.clearToken();
 	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
 	renderAccount();
@@ -1217,7 +1223,7 @@ document.querySelector('#myOrdersButton')?.addEventListener('click', async () =>
 	error.hidden = true;
 	result.hidden = true;
 	try {
-		const token = localStorage.getItem('booknest-auth-token');
+		const token = window.booknestAuth.getToken();
 		if (!token) throw new Error('Vui lòng đăng nhập để tra cứu đơn hàng.');
 		const response = await window.booknestApiFetch('/api/orders', {
 			headers: { Authorization: `Bearer ${token}` }

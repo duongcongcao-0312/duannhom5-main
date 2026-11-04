@@ -24,6 +24,21 @@ async function withServer(t, options = {}) {
   return { baseUrl: `http://127.0.0.1:${server.address().port}`, directory };
 }
 
+function configureTestAdmin(t) {
+  const previous = {
+    ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  };
+  process.env.ADMIN_EMAIL = "admin@booknest.vn";
+  process.env.ADMIN_PASSWORD = "fuzz-test-admin-password";
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
 test("fuzzed JSON bodies and checkout quantities fail safely while valid checkout remains compatible", async (t) => {
   const { baseUrl } = await withServer(t);
   const post = (body) => fetch(`${baseUrl}/api/orders`, {
@@ -65,6 +80,7 @@ test("fuzzed JSON bodies and checkout quantities fail safely while valid checkou
 });
 
 test("fuzzed emails, reset tokens, static paths and order statuses stay within API contracts", async (t) => {
+  configureTestAdmin(t);
   const { baseUrl } = await withServer(t, { appBaseUrl: "https://shop.example/" });
   const jsonPost = (url, value) => fetch(`${baseUrl}${url}`, {
     method: "POST",
@@ -95,7 +111,7 @@ test("fuzzed emails, reset tokens, static paths and order statuses stay within A
 
   const login = await jsonPost("/api/auth/login", {
     email: "admin@booknest.vn",
-    password: "admin123",
+    password: "fuzz-test-admin-password",
   });
   assert.equal(login.status, 200);
   const { token } = await login.json();

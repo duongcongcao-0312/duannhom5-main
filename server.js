@@ -249,6 +249,24 @@ const payloadSchemas = {
     minProperties: 1,
   },
 };
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self' https://www.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: https:",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "connect-src 'self' https://duannhom5-main.onrender.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com",
+    "frame-src https://*.firebaseapp.com https://accounts.google.com",
+  ].join("; "),
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
 const customerQuerySchema = {
   search: { type: "string", maxLength: 100 },
   status: {
@@ -1155,6 +1173,7 @@ function createServer({
         const session = sessionStore.createSession(user);
         sendJson(response, 201, {
           token: session.token,
+          expiresAt: session.expiresAt,
           user: publicUser(user),
         });
       } catch (err) {
@@ -1208,6 +1227,7 @@ function createServer({
       const session = sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,
+        expiresAt: session.expiresAt,
         user: publicUser(user),
       });
       return;
@@ -1260,6 +1280,7 @@ function createServer({
       const session = sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,
+        expiresAt: session.expiresAt,
         user: publicUser(user),
       });
       return;
@@ -1894,6 +1915,9 @@ function createServer({
   const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
     response.setHeader("X-Request-Id", requestId);
+    for (const [name, value] of Object.entries(securityHeaders)) {
+      response.setHeader(name, value);
+    }
     void handleRequest(request, response).catch((error) => {
       const isExpectedError =
         error instanceof RequestError || error instanceof CustomerError;

@@ -51,6 +51,18 @@ test("expired sessions are rejected by every protected endpoint", async (t) => {
   assert.equal(customersResponse.status, 401);
 });
 
+test("profile endpoint rejects missing and invalid bearer tokens", async (t) => {
+  const baseUrl = await startAuthTestServer(t);
+  const missingTokenResponse = await fetch(`${baseUrl}/api/auth/me`);
+  assert.equal(missingTokenResponse.status, 401);
+
+  const invalidTokenResponse = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: "Bearer invalid-token" },
+  });
+  assert.equal(invalidTokenResponse.status, 401);
+  assert.deepEqual(await invalidTokenResponse.json(), await missingTokenResponse.json());
+});
+
 test("logging out revokes the token for subsequent protected requests", async (t) => {
   const baseUrl = await startAuthTestServer(t);
   const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {

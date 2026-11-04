@@ -11,6 +11,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
   hashPasswordResetToken,
@@ -859,35 +860,59 @@ function createServer({
 
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     const operation = orderWriteQueue.then(async () => {
+      const order = createOrder(payload, userId, requester);
+      const requestHash = hashOrderRequest(order);
+      order.idempotencyKey = idempotencyKey;
+      order.idempotencyHash = requestHash;
+
+      const validateStock = (existingOrders) => {
+        const reserved = new Map();
+        for (const existingOrder of existingOrders) {
+          if (existingOrder.status === "cancelled") continue;
+          for (const item of existingOrder.items || []) {
+            reserved.set(
+              item.title,
+              (reserved.get(item.title) || 0) + Number(item.quantity || 0),
+            );
+          }
+        }
+        for (const item of order.items) {
+          const book = bookCatalog.get(item.title);
+          const stock =
+            Number.isInteger(book && book.stock) && book.stock >= 0
+              ? book.stock
+              : defaultBookStock;
+          if ((reserved.get(item.title) || 0) + item.quantity > stock) {
+            throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
+          }
+        }
+      };
+
+      if (typeof db.addOrderIdempotently === "function") {
+        const result = await db.addOrderIdempotently(order, requestHash, validateStock);
+        if (result.conflict) {
+          throw new RequestError(
+            409,
+            "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
+          );
+        }
+        return result;
+      }
+
       const existingOrders = await db.getAllOrders(ordersPath);
       const existingOrder = existingOrders.find(
         (entry) => entry.idempotencyKey === idempotencyKey,
       );
       if (existingOrder) {
-        return { order: existingOrder, replayed: true };
-      }
-      const order = createOrder(payload, userId, requester);
-      const reserved = new Map();
-      for (const existingOrder of existingOrders) {
-        if (existingOrder.status === "cancelled") continue;
-        for (const item of existingOrder.items || []) {
-          reserved.set(
-            item.title,
-            (reserved.get(item.title) || 0) + Number(item.quantity || 0),
+        if (existingOrder.idempotencyHash && existingOrder.idempotencyHash !== requestHash) {
+          throw new RequestError(
+            409,
+            "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
           );
         }
+        return { order: existingOrder, replayed: true };
       }
-      for (const item of order.items) {
-        const book = bookCatalog.get(item.title);
-        const stock =
-          Number.isInteger(book && book.stock) && book.stock >= 0
-            ? book.stock
-            : defaultBookStock;
-        if ((reserved.get(item.title) || 0) + item.quantity > stock) {
-          throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
-        }
-      }
-      order.idempotencyKey = idempotencyKey;
+      validateStock(existingOrders);
       await db.addOrder(order, ordersPath);
       return { order, replayed: false };
     });

@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { PostgresDatabase } = require("../backend/postgres-db");
+const { hashOrderRequest } = require("../backend/order-idempotency");
 
 function withAdminConfig(t, email = "admin@example.com", password = "strong-password-123") {
   const originalEmail = process.env.ADMIN_EMAIL;
@@ -230,6 +231,97 @@ test("order persistence is idempotent by order ID and idempotency key", async (t
     total: 30,
   })).orderId, order.orderId);
   assert.equal((await db.getAllOrders()).length, 1);
+});
+
+test("separate PostgreSQL database instances share atomic idempotent order results", async (t) => {
+  withAdminConfig(t);
+  const idempotencyRecords = new Map();
+  const collections = new Map([["users", []], ["orders", []]]);
+  let transactionTail = Promise.resolve();
+  const pool = {
+    async query(sql) {
+      if (sql.includes("SELECT records")) return { rows: [{ records: collections.get("users") }] };
+      return { rows: [] };
+    },
+    async connect() {
+      let releaseTransaction;
+      return {
+        async query(sql, values = []) {
+          if (sql === "BEGIN") {
+            const previous = transactionTail;
+            transactionTail = new Promise((resolve) => { releaseTransaction = resolve; });
+            await previous;
+            return { rows: [], rowCount: 0 };
+          }
+          if (sql.startsWith("INSERT INTO order_idempotency")) {
+            const [key, requestHash, serializedOrder] = values;
+            if (idempotencyRecords.has(key)) return { rows: [], rowCount: 0 };
+            const order = JSON.parse(serializedOrder);
+            idempotencyRecords.set(key, { request_hash: requestHash, order_record: order });
+            return { rows: [{ order_record: order }], rowCount: 1 };
+          }
+          if (sql.includes("SELECT request_hash, order_record")) {
+            return { rows: [idempotencyRecords.get(values[0])], rowCount: 1 };
+          }
+          if (sql.startsWith("UPDATE order_idempotency SET request_hash")) {
+            idempotencyRecords.get(values[0]).request_hash = values[1];
+          } else if (sql.includes("INSERT INTO booknest_data")) {
+            if (!collections.has("orders")) collections.set("orders", []);
+          } else if (sql.includes("SELECT records FROM booknest_data")) {
+            return { rows: [{ records: collections.get("orders") }], rowCount: 1 };
+          } else if (sql.startsWith("UPDATE booknest_data")) {
+            collections.set("orders", JSON.parse(values[0]));
+          } else if (sql === "COMMIT" || sql === "ROLLBACK") {
+            releaseTransaction();
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() {},
+      };
+    },
+    async end() {},
+  };
+  const firstInstance = new PostgresDatabase({ pool });
+  const secondInstance = new PostgresDatabase({ pool });
+  t.after(() => Promise.all([firstInstance.close(), secondInstance.close()]));
+
+  const order = {
+    orderId: "shared-order",
+    idempotencyKey: "shared-request-key",
+    userId: "user-1",
+    customerName: "Shared User",
+    phone: "0901234567",
+    address: "123 Shared User Test Address",
+    paymentMethod: "cod",
+    discountRate: 0,
+    couponCode: null,
+    subtotal: 25,
+    discount: 0,
+    total: 25,
+    items: [],
+  };
+  const requestHash = hashOrderRequest(order);
+  const [first, concurrentRetry] = await Promise.all([
+    firstInstance.addOrderIdempotently(order, requestHash),
+    secondInstance.addOrderIdempotently({ ...order, orderId: "retry-order-id" }, requestHash),
+  ]);
+  assert.equal(first.conflict, false);
+  assert.equal(concurrentRetry.replayed, true);
+  assert.equal(concurrentRetry.order.orderId, "shared-order");
+  assert.equal(collections.get("orders").length, 1);
+
+  idempotencyRecords.get(order.idempotencyKey).request_hash = null;
+  const migratedRetry = await secondInstance.addOrderIdempotently(order, requestHash);
+  assert.equal(migratedRetry.replayed, true);
+  assert.equal(idempotencyRecords.get(order.idempotencyKey).request_hash, requestHash);
+
+  const changedOrder = { ...order, orderId: "changed-order", total: 99 };
+  const changedPayload = await secondInstance.addOrderIdempotently(
+    changedOrder,
+    hashOrderRequest(changedOrder),
+  );
+  assert.equal(changedPayload.conflict, true);
+  assert.equal(collections.get("orders").length, 1);
 });
 
 test("connection failures from pool.connect are propagated", async (t) => {

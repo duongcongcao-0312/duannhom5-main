@@ -528,7 +528,7 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(serverSourceResponse.status, 404);
 });
 
-test('retries with the same idempotency key return one saved order', async (t) => {
+test('retries with the same idempotency key return one saved order and reject changed payloads', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
 	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
@@ -565,6 +565,13 @@ test('retries with the same idempotency key return one saved order', async (t) =
 	assert.equal(retry.status, 200);
 	assert.equal(retryBody.orderId, firstBody.orderId);
 	assert.equal(retryBody.total, firstBody.total);
+	const mismatched = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ ...payload, customerName: 'Another Customer' }),
+	});
+	assert.equal(mismatched.status, 409);
+	assert.match((await mismatched.json()).error, /Idempotency-Key.*nội dung đơn hàng khác/i);
 	const saved = (await fsPromises.readFile(ordersPath, 'utf8')).trim().split(/\r?\n/);
 	assert.equal(saved.length, 1);
 });
@@ -666,6 +673,8 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	assert.match(alignmentMigration, /CREATE TABLE IF NOT EXISTS consent_records/);
 	assert.match(migrationRunner, /schema_migrations/);
 	assert.match(migrationRunner, /pg_advisory_lock/);
+	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /PRIMARY KEY/);
+	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /ON CONFLICT \(idempotency_key\) DO NOTHING/);
 });
 
 test('OpenAPI documents the current core API routes and CRM statuses', () => {

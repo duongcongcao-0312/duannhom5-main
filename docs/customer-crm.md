@@ -173,6 +173,12 @@ migration sau khi đã đánh giá các thay đổi phát sinh kể từ lúc ba
 chạy seed trên production. Không lưu URL có thông tin xác thực vào Git hoặc
 log; dùng secret manager cho môi trường triển khai.
 
+Migration 003 tạo khóa chính dùng chung `order_idempotency` cho các yêu cầu
+đặt hàng và giữ lại các khóa đã được lưu trong collection JSONB. Khi chạy
+PostgreSQL nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với
+cùng `Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ
+nhận HTTP 409. Các instance phải cùng trỏ tới database PostgreSQL đó.
+
 Kiểm tra dữ liệu sau khi chạy:
 
 ```powershell

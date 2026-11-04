@@ -7,6 +7,7 @@ const {
   validateCustomerData,
 } = require("./db");
 const { hashPassword } = require("./auth");
+const { hashOrderRequest } = require("./order-idempotency");
 const {
   CUSTOMER_STATUSES,
   ORDER_STATUSES,
@@ -495,6 +496,72 @@ class PostgresDatabase {
       orders.push(order);
       return order;
     });
+  }
+
+  async addOrderIdempotently(order, requestHash, validateOrder = () => {}) {
+    if (!order?.idempotencyKey || !/^[a-f0-9]{64}$/.test(requestHash || "")) {
+      throw new Error("A valid idempotency key and request hash are required.");
+    }
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query(
+        `INSERT INTO order_idempotency (idempotency_key, request_hash, order_record)
+         VALUES ($1, $2, $3::jsonb)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING order_record`,
+        [order.idempotencyKey, requestHash, JSON.stringify(order)],
+      );
+      if (!inserted.rowCount) {
+        const existing = await client.query(
+          `SELECT request_hash, order_record
+           FROM order_idempotency
+           WHERE idempotency_key = $1
+           FOR UPDATE`,
+          [order.idempotencyKey],
+        );
+        const existingRecord = existing.rows[0];
+        const existingHash = existingRecord.request_hash ||
+          hashOrderRequest(existingRecord.order_record);
+        if (existingHash !== requestHash) {
+          await client.query("COMMIT");
+          return { order: existingRecord.order_record, replayed: false, conflict: true };
+        }
+        if (!existingRecord.request_hash) {
+          await client.query(
+            "UPDATE order_idempotency SET request_hash = $2 WHERE idempotency_key = $1",
+            [order.idempotencyKey, requestHash],
+          );
+        }
+        await client.query("COMMIT");
+        return { order: existingRecord.order_record, replayed: true, conflict: false };
+      }
+
+      await client.query(
+        "INSERT INTO booknest_data (collection, records) VALUES ('orders', '[]'::jsonb) ON CONFLICT (collection) DO NOTHING",
+      );
+      const { rows } = await client.query(
+        "SELECT records FROM booknest_data WHERE collection = 'orders' FOR UPDATE",
+      );
+      const orders = rows[0].records;
+      if (!Array.isArray(orders)) {
+        throw new Error('PostgreSQL collection "orders" must contain a JSON array.');
+      }
+      await validateOrder(orders);
+      if (!orders.some((entry) => entry.orderId === order.orderId)) orders.push(order);
+      await client.query(
+        "UPDATE booknest_data SET records = $1::jsonb, updated_at = NOW() WHERE collection = 'orders'",
+        [JSON.stringify(orders)],
+      );
+      await client.query("COMMIT");
+      return { order, replayed: false, conflict: false };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async findOrderById(orderId) {

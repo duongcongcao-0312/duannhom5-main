@@ -736,6 +736,56 @@ function createOrder(payload, userId = null, requester = null) {
   return order;
 }
 
+function createUpdatedOrderItems(items) {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+    throw new RequestError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+  }
+  const quantities = new Map();
+  for (const item of items) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      Array.isArray(item) ||
+      Object.keys(item).some((field) => !["title", "quantity"].includes(field))
+    ) {
+      throw new RequestError(400, "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.");
+    }
+    const title = sanitizePlainText(typeof item.title === "string" ? item.title : "", 200);
+    const book = title ? bookCatalog.get(title) : null;
+    if (!book) {
+      throw new RequestError(400, "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.");
+    }
+    if (!Number.isSafeInteger(item.quantity) || item.quantity < 1) {
+      throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
+    }
+    const quantity = (quantities.get(book.title) || 0) + item.quantity;
+    if (!Number.isSafeInteger(quantity)) {
+      throw new RequestError(400, "Số lượng sách không hợp lệ.");
+    }
+    quantities.set(book.title, quantity);
+  }
+
+  return [...quantities].map(([title, quantity]) => {
+    const book = bookCatalog.get(title);
+    const unitPrice = roundMoney(book.price);
+    if (
+      !Number.isFinite(book.price) ||
+      book.price < 0 ||
+      !Number.isSafeInteger(unitPrice) ||
+      !Number.isSafeInteger(unitPrice * quantity)
+    ) {
+      throw new RequestError(400, "Giá sách không hợp lệ.");
+    }
+    return {
+      title: book.title,
+      author: book.author,
+      unitPrice,
+      quantity,
+      lineTotal: unitPrice * quantity,
+    };
+  });
+}
+
 function publicOrder(order) {
   return {
     orderId: order.orderId,
@@ -1814,17 +1864,80 @@ function createServer({
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
         payloadSchemas.orderUpdate,
       );
-      if (payload.items !== undefined) {
-        if (!Array.isArray(payload.items) || payload.items.length === 0) {
-          throw new RequestError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
-        }
-        for (const item of payload.items) {
-          if (!Number.isInteger(item?.quantity) || item.quantity < 1) {
-            throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
-          }
-        }
-      }
       const safePayload = { ...payload };
+      let orderUpdateOptions = {};
+      if (payload.items !== undefined) {
+        if (order.status === "cancelled" || payload.status === "cancelled") {
+          throw new RequestError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
+        }
+        const items = createUpdatedOrderItems(payload.items);
+        const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+        if (!Number.isSafeInteger(subtotal)) {
+          throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
+        }
+        if (!allowedDiscountRates.has(order.discountRate)) {
+          throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
+        }
+        const couponRate = order.couponCode ? coupons.get(order.couponCode)?.rate : 0;
+        if (order.couponCode && couponRate === undefined) {
+          throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
+        }
+        const discount = roundMoney(
+          subtotal * Math.min(order.discountRate + couponRate, 0.3),
+        );
+        const total = subtotal - discount;
+        if (!Number.isSafeInteger(discount) || !Number.isSafeInteger(total)) {
+          throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
+        }
+        safePayload.items = items;
+
+        const inventoryTitles = new Set([
+          ...(order.items || []).map((item) => item.title),
+          ...items.map((item) => item.title),
+        ]);
+        const inventory = [...inventoryTitles].map((title) => {
+          const book = bookCatalog.get(title);
+          return {
+            title,
+            stock:
+              Number.isInteger(book && book.stock) && book.stock >= 0
+                ? book.stock
+                : defaultBookStock,
+          };
+        });
+        const validateOrder = (existingOrders) => {
+          const reservedByOthers = new Map();
+          for (const existingOrder of existingOrders) {
+            if (
+              existingOrder.orderId === orderMatch[1] ||
+              existingOrder.status === "cancelled"
+            ) {
+              continue;
+            }
+            for (const item of existingOrder.items || []) {
+              reservedByOthers.set(
+                item.title,
+                (reservedByOthers.get(item.title) || 0) + Number(item.quantity || 0),
+              );
+            }
+          }
+          for (const item of items) {
+            const book = bookCatalog.get(item.title);
+            const stock =
+              Number.isInteger(book && book.stock) && book.stock >= 0
+                ? book.stock
+                : defaultBookStock;
+            if ((reservedByOthers.get(item.title) || 0) + item.quantity > stock) {
+              throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
+            }
+          }
+        };
+        orderUpdateOptions = {
+          inventory,
+          totals: { subtotal, discount, total },
+          validateOrder,
+        };
+      }
       if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
         throw new RequestError(
           403,
@@ -1853,6 +1966,7 @@ function createServer({
         orderMatch[1],
         safePayload,
         ordersPath,
+        orderUpdateOptions,
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");

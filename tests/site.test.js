@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { createServer } = require('../server');
+const { Database } = require('../backend/db');
 
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -687,6 +688,15 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	assert.ok(spec.paths['/api/orders'].get.security);
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
+	assert.ok(spec.paths['/api/orders/{id}'].patch.security);
+	assert.equal(
+		spec.paths['/api/orders/{id}'].patch.requestBody.content['application/json'].schema.$ref,
+		'#/components/schemas/OrderUpdateRequest'
+	);
+	assert.equal(
+		spec.components.schemas.OrderUpdateRequest.properties.items.items.additionalProperties,
+		false
+	);
 	assert.ok(spec.paths['/api/customers/{id}']);
 	assert.ok(spec.paths['/api/admin/customers']);
 	assert.ok(spec.paths['/api/admin/customers/{id}']);
@@ -849,6 +859,138 @@ test('zero and negative quantities are rejected on create and update without per
 	});
 	assert.equal(authenticatedUpdate.status, 400);
 	assert.match((await authenticatedUpdate.json()).error, /lớn hơn 0/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
+});
+
+test('order product updates recalculate totals and preserve order and stock on failures', async (t) => {
+	configureTestAdmin(t);
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-update-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const database = new Database({ ordersPath, usersPath });
+	const server = createServer({ database, ordersPath, usersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const orderRequest = (quantity) => fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Order Update User',
+			address: '1 Đường Sách',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity }],
+		}),
+	});
+	const createdResponse = await orderRequest(1);
+	assert.equal(createdResponse.status, 201);
+	const createdOrder = await createdResponse.json();
+	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'admin@example.com', password: 'local-test-admin-password-123' }),
+	});
+	const token = (await loginResponse.json()).token;
+	const update = (orderId, items) => fetch(`${baseUrl}/api/orders/${orderId}`, {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`,
+		},
+		body: JSON.stringify({ items }),
+	});
+
+	const successfulUpdate = await update(createdOrder.orderId, [
+		{ title: 'Nhà giả kim', quantity: 2 },
+	]);
+	assert.equal(successfulUpdate.status, 200);
+	const updatedOrder = await successfulUpdate.json();
+	assert.equal(updatedOrder.items[0].quantity, 2);
+	assert.equal(updatedOrder.subtotal, createdOrder.subtotal * 2);
+	assert.equal(updatedOrder.total, updatedOrder.subtotal - updatedOrder.discount);
+
+	assert.equal((await orderRequest(10)).status, 201);
+	const beforeRejectedUpdate = await fsPromises.readFile(ordersPath, 'utf8');
+	const stockRejected = await update(createdOrder.orderId, [
+		{ title: 'Nhà giả kim', quantity: 3 },
+	]);
+	assert.equal(stockRejected.status, 400);
+	assert.match((await stockRejected.json()).error, /vượt quá tồn kho/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+
+	const unknownProduct = await update(createdOrder.orderId, [
+		{ title: 'Sách không tồn tại', quantity: 1 },
+	]);
+	assert.equal(unknownProduct.status, 400);
+	assert.match((await unknownProduct.json()).error, /không hợp lệ/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+
+	const unsupportedItemField = await fetch(`${baseUrl}/api/orders/${createdOrder.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({
+			items: [{ title: 'Nhà giả kim', quantity: 1, unitPrice: 1 }],
+		}),
+	});
+	assert.equal(unsupportedItemField.status, 400);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+});
+
+test('order update database failures return a sanitized error and do not alter saved order data', async (t) => {
+	configureTestAdmin(t);
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-update-failure-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const database = new Database({ ordersPath, usersPath });
+	const server = createServer({ database, ordersPath, usersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const createdResponse = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Order Update Failure User',
+			address: '1 Đường Sách',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity: 1 }],
+		}),
+	});
+	const createdOrder = await createdResponse.json();
+	const beforeUpdate = await fsPromises.readFile(ordersPath, 'utf8');
+	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'admin@example.com', password: 'local-test-admin-password-123' }),
+	});
+	const token = (await loginResponse.json()).token;
+	database.updateOrderStatus = async () => {
+		throw new Error('injected database credentials failure');
+	};
+
+	const response = await fetch(`${baseUrl}/api/orders/${createdOrder.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ items: [{ title: 'Nhà giả kim', quantity: 2 }] }),
+	});
+	assert.equal(response.status, 500);
+	assert.match((await response.json()).error, /Máy chủ gặp lỗi/i);
 	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
 });
 

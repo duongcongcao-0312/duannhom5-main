@@ -409,6 +409,9 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
           }
           if (sql.startsWith("UPDATE order_idempotency SET request_hash")) {
             idempotencyRecords.get(values[0]).request_hash = values[1];
+          } else if (sql.startsWith("UPDATE order_idempotency")) {
+            const record = idempotencyRecords.get(values[0]);
+            if (record) record.order_record = JSON.parse(values[1]);
           } else if (sql.startsWith("INSERT INTO book_inventory")) {
             const [title, stock, reserved] = values;
             if (!inventoryRecords.has(title)) inventoryRecords.set(title, { stock, reserved });
@@ -421,6 +424,13 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
               return { rows: [], rowCount: 0 };
             }
             record.reserved += values[1];
+            return { rows: [{ book_title: values[0] }], rowCount: 1 };
+          } else if (sql.includes("SET reserved = reserved - $2")) {
+            const record = inventoryRecords.get(values[0]);
+            if (!record || record.reserved < values[1]) {
+              return { rows: [], rowCount: 0 };
+            }
+            record.reserved -= values[1];
             return { rows: [{ book_title: values[0] }], rowCount: 1 };
           } else if (sql.includes("SET reserved = GREATEST(reserved - $2, 0)")) {
             const record = inventoryRecords.get(values[0]);
@@ -559,13 +569,62 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
   assert.equal(collections.get("orders").length, 2);
   assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 1 });
 
+  const updatedItems = [{
+    title: "Test Book",
+    author: "Test Author",
+    unitPrice: 25,
+    quantity: 2,
+    lineTotal: 50,
+  }];
+  const updateOptions = {
+    inventory: [{ title: "Test Book", stock: 1 }],
+    totals: { subtotal: 50, discount: 0, total: 50 },
+  };
+  await assert.rejects(
+    firstInstance.updateOrderStatus("shared-order", { items: updatedItems }, undefined, updateOptions),
+    /vượt quá tồn kho/,
+  );
+  assert.equal(collections.get("orders").find((entry) => entry.orderId === "shared-order").items[0].quantity, 1);
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 1 });
+
+  failOrderWrite = true;
+  await assert.rejects(
+    firstInstance.updateOrderStatus(
+      "shared-order",
+      { items: updatedItems },
+      undefined,
+      {
+        ...updateOptions,
+        inventory: [{ title: "Test Book", stock: 2 }],
+      },
+    ),
+    /order write failed/,
+  );
+  failOrderWrite = false;
+  assert.equal(collections.get("orders").find((entry) => entry.orderId === "shared-order").items[0].quantity, 1);
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 1 });
+
+  const updatedOrder = await firstInstance.updateOrderStatus(
+    "shared-order",
+    { items: updatedItems },
+    undefined,
+    {
+      ...updateOptions,
+      inventory: [{ title: "Test Book", stock: 2 }],
+    },
+  );
+  assert.equal(updatedOrder.items[0].quantity, 2);
+  assert.equal(updatedOrder.total, 50);
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 2, reserved: 2 });
+  assert.equal(idempotencyRecords.get(order.idempotencyKey).order_record.items[0].quantity, 2);
+
   const cancelled = await secondInstance.updateOrderStatus("shared-order", {
     status: "cancelled",
   });
   assert.equal(cancelled.status, "cancelled");
-  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 0 });
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 2, reserved: 0 });
   await secondInstance.updateOrderStatus("shared-order", { status: "cancelled" });
-  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 0 });
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 2, reserved: 0 });
 });
 
 test("connection failures from pool.connect are propagated", async (t) => {

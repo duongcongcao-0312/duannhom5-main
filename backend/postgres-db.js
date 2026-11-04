@@ -766,16 +766,59 @@ class PostgresDatabase {
     return (await this.readCollection("orders")).find((order) => order.orderId === orderId) || null;
   }
 
-  async updateOrderStatus(orderId, payload) {
+  async updateOrderStatus(orderId, payload, _ordersPathOverride, options = {}) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       throw new Error("Dữ liệu cập nhật đơn hàng không hợp lệ.");
     }
     const { status, paymentStatus } = payload;
+    if (Object.keys(payload).some((field) => !["status", "paymentStatus", "items"].includes(field))) {
+      throw new CustomerError(400, "Dữ liệu cập nhật đơn hàng không hợp lệ.");
+    }
     if (status !== undefined && !orderStatuses.has(String(status).trim())) {
       throw new Error("Trạng thái đơn hàng không hợp lệ.");
     }
     if (paymentStatus !== undefined && !paymentStatuses.has(String(paymentStatus).trim())) {
       throw new Error("Trạng thái thanh toán không hợp lệ.");
+    }
+    if (payload.items !== undefined) {
+      if (!Array.isArray(payload.items) || payload.items.length === 0 || payload.items.length > 50) {
+        throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+      }
+      const titles = new Set();
+      for (const item of payload.items) {
+        if (
+          !item ||
+          typeof item !== "object" ||
+          Array.isArray(item) ||
+          typeof item.title !== "string" ||
+          !item.title.trim() ||
+          !Number.isSafeInteger(item.quantity) ||
+          item.quantity < 1 ||
+          !Number.isSafeInteger(item.unitPrice) ||
+          item.unitPrice < 0 ||
+          !Number.isSafeInteger(item.lineTotal) ||
+          item.lineTotal !== item.unitPrice * item.quantity ||
+          titles.has(item.title)
+        ) {
+          throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+        }
+        titles.add(item.title);
+      }
+      if (
+        !options.totals ||
+        !Number.isSafeInteger(options.totals.subtotal) ||
+        !Number.isSafeInteger(options.totals.discount) ||
+        !Number.isSafeInteger(options.totals.total) ||
+        options.totals.discount < 0 ||
+        options.totals.discount > options.totals.subtotal ||
+        options.totals.subtotal !== payload.items.reduce((sum, item) => sum + item.lineTotal, 0) ||
+        options.totals.total !== options.totals.subtotal - options.totals.discount
+      ) {
+        throw new CustomerError(400, "Tổng giá trị đơn hàng không hợp lệ.");
+      }
+      if (!Array.isArray(options.inventory)) {
+        throw new CustomerError(400, "Thông tin tồn kho cập nhật không hợp lệ.");
+      }
     }
     await this.init();
     const client = await this.pool.connect();
@@ -799,6 +842,101 @@ class PostgresDatabase {
       if (status !== undefined && !isOrderStatusTransitionAllowed(order.status, status)) {
         throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
       }
+      if (payload.items !== undefined) {
+        if (order.status === "cancelled" || status === "cancelled") {
+          throw new CustomerError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
+        }
+        if (typeof options.validateOrder === "function") {
+          options.validateOrder(orders, order);
+        }
+
+        const previousQuantities = new Map();
+        const nextQuantities = new Map();
+        for (const item of order.items || []) {
+          previousQuantities.set(
+            item.title,
+            (previousQuantities.get(item.title) || 0) + Number(item.quantity || 0),
+          );
+        }
+        for (const item of payload.items) {
+          nextQuantities.set(item.title, item.quantity);
+        }
+        const inventoryByTitle = new Map(
+          options.inventory.map((item) => [item.title, item]),
+        );
+        const changedTitles = [...new Set([
+          ...previousQuantities.keys(),
+          ...nextQuantities.keys(),
+        ])].sort((left, right) => left.localeCompare(right));
+
+        for (const title of changedTitles) {
+          const delta = (nextQuantities.get(title) || 0) - (previousQuantities.get(title) || 0);
+          if (!delta) continue;
+          const itemInventory = inventoryByTitle.get(title);
+          if (!itemInventory || !Number.isInteger(itemInventory.stock) || itemInventory.stock < 0) {
+            if (delta > 0) {
+              throw new CustomerError(400, "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.");
+            }
+            const released = await client.query(
+              `UPDATE book_inventory
+               SET reserved = reserved - $2, updated_at = NOW()
+               WHERE book_title = $1 AND reserved >= $2
+               RETURNING book_title`,
+              [title, -delta],
+            );
+            if (!released.rowCount) {
+              throw new Error(`Tồn kho đặt trước không nhất quán cho sách "${title}".`);
+            }
+            continue;
+          }
+
+          const legacyReserved = orders.reduce((quantity, existingOrder) => (
+            existingOrder.status === "cancelled"
+              ? quantity
+              : quantity + (existingOrder.items || [])
+                .filter((entry) => entry.title === title)
+                .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0)
+          ), 0);
+          await client.query(
+            `INSERT INTO book_inventory (book_title, stock, reserved)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (book_title) DO NOTHING`,
+            [title, itemInventory.stock, Math.min(legacyReserved, itemInventory.stock)],
+          );
+          await client.query(
+            `UPDATE book_inventory
+             SET stock = GREATEST($2, reserved), updated_at = NOW()
+             WHERE book_title = $1`,
+            [title, itemInventory.stock],
+          );
+
+          const reservation = delta > 0
+            ? await client.query(
+              `UPDATE book_inventory
+               SET reserved = reserved + $2, updated_at = NOW()
+               WHERE book_title = $1 AND reserved + $2 <= stock
+               RETURNING book_title`,
+              [title, delta],
+            )
+            : await client.query(
+              `UPDATE book_inventory
+               SET reserved = reserved - $2, updated_at = NOW()
+               WHERE book_title = $1 AND reserved >= $2
+               RETURNING book_title`,
+              [title, -delta],
+            );
+          if (!reservation.rowCount) {
+            if (delta > 0) {
+              throw new CustomerError(400, "Số lượng sách vượt quá tồn kho.");
+            }
+            throw new Error(`Tồn kho đặt trước không nhất quán cho sách "${title}".`);
+          }
+        }
+        order.items = payload.items;
+        order.subtotal = options.totals.subtotal;
+        order.discount = options.totals.discount;
+        order.total = options.totals.total;
+      }
       if (status === "cancelled" && order.status !== "cancelled") {
         for (const item of order.items || []) {
           await client.query(
@@ -816,6 +954,14 @@ class PostgresDatabase {
         "UPDATE booknest_data SET records = $1::jsonb, updated_at = NOW() WHERE collection = 'orders'",
         [JSON.stringify(orders)],
       );
+      if (order.idempotencyKey) {
+        await client.query(
+          `UPDATE order_idempotency
+           SET order_record = $2::jsonb
+           WHERE idempotency_key = $1`,
+          [order.idempotencyKey, JSON.stringify(order)],
+        );
+      }
       await client.query("COMMIT");
       return order;
     } catch (error) {

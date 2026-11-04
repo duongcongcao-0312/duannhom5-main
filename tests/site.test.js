@@ -675,6 +675,7 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	assert.match(migrationRunner, /pg_advisory_lock/);
 	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /PRIMARY KEY/);
 	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /ON CONFLICT \(idempotency_key\) DO NOTHING/);
+	assert.match(read('data/migrations/004_transactional_book_inventory.sql'), /reserved <= stock/);
 });
 
 test('OpenAPI documents the current core API routes and CRM statuses', () => {

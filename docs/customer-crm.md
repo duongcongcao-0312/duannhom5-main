@@ -174,10 +174,13 @@ chạy seed trên production. Không lưu URL có thông tin xác thực vào Gi
 log; dùng secret manager cho môi trường triển khai.
 
 Migration 003 tạo khóa chính dùng chung `order_idempotency` cho các yêu cầu
-đặt hàng và giữ lại các khóa đã được lưu trong collection JSONB. Khi chạy
-PostgreSQL nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với
-cùng `Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ
-nhận HTTP 409. Các instance phải cùng trỏ tới database PostgreSQL đó.
+đặt hàng; migration 004 tạo bảng `book_inventory` để khóa và cập nhật số
+lượng đặt giữ trong cùng transaction với đơn hàng. Các khóa cũ được giữ lại;
+tồn kho cũ được tính từ đơn chưa hủy ở lần đặt tiếp theo. Khi chạy PostgreSQL
+nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với cùng
+`Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ nhận
+HTTP 409. Hủy đơn giải phóng lượng đã giữ trong cùng transaction. Các instance
+phải cùng trỏ tới database PostgreSQL đó.
 
 Kiểm tra dữ liệu sau khi chạy:
 

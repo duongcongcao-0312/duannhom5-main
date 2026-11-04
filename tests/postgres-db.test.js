@@ -237,6 +237,8 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
   withAdminConfig(t);
   const idempotencyRecords = new Map();
   const collections = new Map([["users", []], ["orders", []]]);
+  const inventoryRecords = new Map();
+  let failOrderWrite = false;
   let transactionTail = Promise.resolve();
   const pool = {
     async query(sql) {
@@ -245,12 +247,18 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
     },
     async connect() {
       let releaseTransaction;
+      let snapshot;
       return {
         async query(sql, values = []) {
           if (sql === "BEGIN") {
             const previous = transactionTail;
             transactionTail = new Promise((resolve) => { releaseTransaction = resolve; });
             await previous;
+            snapshot = {
+              idempotency: new Map(idempotencyRecords),
+              collections: new Map([...collections].map(([key, value]) => [key, structuredClone(value)])),
+              inventory: new Map([...inventoryRecords].map(([key, value]) => [key, { ...value }])),
+            };
             return { rows: [], rowCount: 0 };
           }
           if (sql.startsWith("INSERT INTO order_idempotency")) {
@@ -265,13 +273,38 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
           }
           if (sql.startsWith("UPDATE order_idempotency SET request_hash")) {
             idempotencyRecords.get(values[0]).request_hash = values[1];
+          } else if (sql.startsWith("INSERT INTO book_inventory")) {
+            const [title, stock, reserved] = values;
+            if (!inventoryRecords.has(title)) inventoryRecords.set(title, { stock, reserved });
+          } else if (sql.includes("SET stock = GREATEST($2, reserved)")) {
+            const record = inventoryRecords.get(values[0]);
+            record.stock = Math.max(values[1], record.reserved);
+          } else if (sql.includes("SET reserved = reserved + $2")) {
+            const record = inventoryRecords.get(values[0]);
+            if (record.reserved + values[1] > record.stock) {
+              return { rows: [], rowCount: 0 };
+            }
+            record.reserved += values[1];
+            return { rows: [{ book_title: values[0] }], rowCount: 1 };
+          } else if (sql.includes("SET reserved = GREATEST(reserved - $2, 0)")) {
+            const record = inventoryRecords.get(values[0]);
+            if (record) record.reserved = Math.max(record.reserved - values[1], 0);
           } else if (sql.includes("INSERT INTO booknest_data")) {
             if (!collections.has("orders")) collections.set("orders", []);
           } else if (sql.includes("SELECT records FROM booknest_data")) {
             return { rows: [{ records: collections.get("orders") }], rowCount: 1 };
           } else if (sql.startsWith("UPDATE booknest_data")) {
+            if (failOrderWrite) throw new Error("order write failed");
             collections.set("orders", JSON.parse(values[0]));
           } else if (sql === "COMMIT" || sql === "ROLLBACK") {
+            if (sql === "ROLLBACK") {
+              idempotencyRecords.clear();
+              for (const [key, value] of snapshot.idempotency) idempotencyRecords.set(key, value);
+              collections.clear();
+              for (const [key, value] of snapshot.collections) collections.set(key, value);
+              inventoryRecords.clear();
+              for (const [key, value] of snapshot.inventory) inventoryRecords.set(key, value);
+            }
             releaseTransaction();
           }
           return { rows: [], rowCount: 0 };
@@ -298,17 +331,44 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
     subtotal: 25,
     discount: 0,
     total: 25,
-    items: [],
+    status: "received",
+    items: [{ title: "Test Book", quantity: 1 }],
   };
   const requestHash = hashOrderRequest(order);
   const [first, concurrentRetry] = await Promise.all([
-    firstInstance.addOrderIdempotently(order, requestHash),
-    secondInstance.addOrderIdempotently({ ...order, orderId: "retry-order-id" }, requestHash),
+    firstInstance.addOrderIdempotently(order, requestHash, [
+      { title: "Test Book", quantity: 1, stock: 1 },
+    ]),
+    secondInstance.addOrderIdempotently(
+      { ...order, orderId: "retry-order-id" },
+      requestHash,
+      [{ title: "Test Book", quantity: 1, stock: 1 }],
+    ),
   ]);
   assert.equal(first.conflict, false);
   assert.equal(concurrentRetry.replayed, true);
   assert.equal(concurrentRetry.order.orderId, "shared-order");
   assert.equal(collections.get("orders").length, 1);
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 1 });
+
+  failOrderWrite = true;
+  const rolledBackOrder = {
+    ...order,
+    orderId: "rolled-back-order",
+    idempotencyKey: "rolled-back-request",
+    items: [{ title: "Rollback Book", quantity: 1 }],
+  };
+  await assert.rejects(
+    firstInstance.addOrderIdempotently(
+      rolledBackOrder,
+      hashOrderRequest(rolledBackOrder),
+      [{ title: "Rollback Book", quantity: 1, stock: 2 }],
+    ),
+    /order write failed/,
+  );
+  failOrderWrite = false;
+  assert.equal(inventoryRecords.has("Rollback Book"), false);
+  assert.equal(idempotencyRecords.has("rolled-back-request"), false);
 
   idempotencyRecords.get(order.idempotencyKey).request_hash = null;
   const migratedRetry = await secondInstance.addOrderIdempotently(order, requestHash);
@@ -322,6 +382,54 @@ test("separate PostgreSQL database instances share atomic idempotent order resul
   );
   assert.equal(changedPayload.conflict, true);
   assert.equal(collections.get("orders").length, 1);
+
+  const raceOrders = ["race-request-one", "race-request-two"].map((idempotencyKey) => {
+    const raceOrder = {
+      ...order,
+      orderId: `${idempotencyKey}-order`,
+      idempotencyKey,
+      items: [{ title: "Race Book", quantity: 2 }],
+    };
+    return {
+      raceOrder,
+      requestHash: hashOrderRequest(raceOrder),
+    };
+  });
+  const raceResults = await Promise.allSettled(raceOrders.map(({ raceOrder, requestHash }) => (
+    firstInstance.addOrderIdempotently(
+      raceOrder,
+      requestHash,
+      [{ title: "Race Book", quantity: 2, stock: 2 }],
+    )
+  )));
+  assert.equal(raceResults.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(raceResults.filter((result) => result.status === "rejected").length, 1);
+  assert.deepEqual(inventoryRecords.get("Race Book"), { stock: 2, reserved: 2 });
+  assert.equal(collections.get("orders").length, 2);
+
+  const secondOrder = {
+    ...order,
+    orderId: "second-order",
+    idempotencyKey: "another-shared-request",
+  };
+  await assert.rejects(
+    secondInstance.addOrderIdempotently(
+      secondOrder,
+      hashOrderRequest(secondOrder),
+      [{ title: "Test Book", quantity: 1, stock: 1 }],
+    ),
+    /vượt quá tồn kho/,
+  );
+  assert.equal(collections.get("orders").length, 2);
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 1 });
+
+  const cancelled = await secondInstance.updateOrderStatus("shared-order", {
+    status: "cancelled",
+  });
+  assert.equal(cancelled.status, "cancelled");
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 0 });
+  await secondInstance.updateOrderStatus("shared-order", { status: "cancelled" });
+  assert.deepEqual(inventoryRecords.get("Test Book"), { stock: 1, reserved: 0 });
 });
 
 test("connection failures from pool.connect are propagated", async (t) => {
@@ -367,13 +475,16 @@ test("PostgresDatabase supports the shared persistence workflows", async (t) => 
         async query(sql, values = []) {
           queries.push({ sql, values });
           if (sql.includes("INSERT INTO booknest_data")) {
-            if (!records.has(values[0])) records.set(values[0], []);
+            const collection = values[0] || "orders";
+            if (!records.has(collection)) records.set(collection, []);
           } else if (sql.includes("SELECT records FROM booknest_data")) {
-            return { rows: [{ records: read(values[0]) }] };
+            const collection = values[0] || "orders";
+            return { rows: [{ records: read(collection) }] };
           } else if (sql.includes("UPDATE booknest_data SET records")) {
-            write(values[0], values[1]);
+            if (values.length > 1) write(values[0], values[1]);
+            else write("orders", values[0]);
           }
-          return { rows: [] };
+          return { rows: [], rowCount: 0 };
         },
         release() {},
       };

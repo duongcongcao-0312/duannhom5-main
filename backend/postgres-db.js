@@ -498,9 +498,10 @@ class PostgresDatabase {
     });
   }
 
-  async addOrderIdempotently(order, requestHash, validateOrder = () => {}) {
-    if (!order?.idempotencyKey || !/^[a-f0-9]{64}$/.test(requestHash || "")) {
-      throw new Error("A valid idempotency key and request hash are required.");
+  async addOrderIdempotently(order, requestHash, inventory = [], validateOrder = () => {}) {
+    if (!order?.idempotencyKey || !/^[a-f0-9]{64}$/.test(requestHash || "") ||
+        !Array.isArray(inventory)) {
+      throw new Error("A valid idempotency key, request hash, and inventory are required.");
     }
     await this.init();
     const client = await this.pool.connect();
@@ -549,6 +550,37 @@ class PostgresDatabase {
         throw new Error('PostgreSQL collection "orders" must contain a JSON array.');
       }
       await validateOrder(orders);
+      for (const item of [...inventory].sort((left, right) => left.title.localeCompare(right.title))) {
+        const legacyReserved = orders.reduce((quantity, existingOrder) => (
+          existingOrder.status === "cancelled"
+            ? quantity
+            : quantity + (existingOrder.items || [])
+              .filter((entry) => entry.title === item.title)
+              .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0)
+        ), 0);
+        await client.query(
+          `INSERT INTO book_inventory (book_title, stock, reserved)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (book_title) DO NOTHING`,
+          [item.title, item.stock, Math.min(legacyReserved, item.stock)],
+        );
+        await client.query(
+          `UPDATE book_inventory
+           SET stock = GREATEST($2, reserved), updated_at = NOW()
+           WHERE book_title = $1`,
+          [item.title, item.stock],
+        );
+        const reservation = await client.query(
+          `UPDATE book_inventory
+           SET reserved = reserved + $2, updated_at = NOW()
+           WHERE book_title = $1 AND reserved + $2 <= stock
+           RETURNING book_title`,
+          [item.title, item.quantity],
+        );
+        if (!reservation.rowCount) {
+          throw new CustomerError(400, "Số lượng sách vượt quá tồn kho.");
+        }
+      }
       if (!orders.some((entry) => entry.orderId === order.orderId)) orders.push(order);
       await client.query(
         "UPDATE booknest_data SET records = $1::jsonb, updated_at = NOW() WHERE collection = 'orders'",
@@ -579,20 +611,53 @@ class PostgresDatabase {
     if (paymentStatus !== undefined && !paymentStatuses.has(String(paymentStatus).trim())) {
       throw new Error("Trạng thái thanh toán không hợp lệ.");
     }
-    return this.updateCollection("orders", (orders) => {
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "INSERT INTO booknest_data (collection, records) VALUES ('orders', '[]'::jsonb) ON CONFLICT (collection) DO NOTHING",
+      );
+      const { rows } = await client.query(
+        "SELECT records FROM booknest_data WHERE collection = 'orders' FOR UPDATE",
+      );
+      const orders = rows[0].records;
+      if (!Array.isArray(orders)) {
+        throw new Error('PostgreSQL collection "orders" must contain a JSON array.');
+      }
       const order = orders.find((entry) => entry.orderId === orderId);
-      if (!order) return null;
-      if (
-        status !== undefined &&
-        !isOrderStatusTransitionAllowed(order.status, status)
-      ) {
+      if (!order) {
+        await client.query("COMMIT");
+        return null;
+      }
+      if (status !== undefined && !isOrderStatusTransitionAllowed(order.status, status)) {
         throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+      }
+      if (status === "cancelled" && order.status !== "cancelled") {
+        for (const item of order.items || []) {
+          await client.query(
+            `UPDATE book_inventory
+             SET reserved = GREATEST(reserved - $2, 0), updated_at = NOW()
+             WHERE book_title = $1`,
+            [item.title, item.quantity],
+          );
+        }
       }
       if (status) order.status = status;
       if (paymentStatus) order.paymentStatus = paymentStatus;
       order.updatedAt = new Date().toISOString();
+      await client.query(
+        "UPDATE booknest_data SET records = $1::jsonb, updated_at = NOW() WHERE collection = 'orders'",
+        [JSON.stringify(orders)],
+      );
+      await client.query("COMMIT");
       return order;
-    });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async addServiceRequest(request) {

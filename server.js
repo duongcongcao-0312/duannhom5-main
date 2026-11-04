@@ -889,7 +889,23 @@ function createServer({
       };
 
       if (typeof db.addOrderIdempotently === "function") {
-        const result = await db.addOrderIdempotently(order, requestHash, validateStock);
+        const inventory = order.items.map((item) => {
+          const book = bookCatalog.get(item.title);
+          return {
+            title: item.title,
+            quantity: item.quantity,
+            stock:
+              Number.isInteger(book && book.stock) && book.stock >= 0
+                ? book.stock
+                : defaultBookStock,
+          };
+        });
+        const result = await db.addOrderIdempotently(
+          order,
+          requestHash,
+          inventory,
+          validateStock,
+        );
         if (result.conflict) {
           throw new RequestError(
             409,

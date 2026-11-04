@@ -110,12 +110,16 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     assert.ok(foreignKeys.rows.every((row) => row.confdeltype === "r"));
 
     const history = await client.query("SELECT version FROM schema_migrations ORDER BY version");
-    assert.deepEqual(history.rows.map((row) => row.version), ["001", "002", "003"]);
+    assert.deepEqual(history.rows.map((row) => row.version), ["001", "002", "003", "004"]);
 
     const idempotencyTable = await client.query(
       "SELECT to_regclass('order_idempotency') AS table_name",
     );
     assert.equal(idempotencyTable.rows[0].table_name, "order_idempotency");
+    const inventoryTable = await client.query(
+      "SELECT to_regclass('book_inventory') AS table_name",
+    );
+    assert.equal(inventoryTable.rows[0].table_name, "book_inventory");
 
     await client.query(
       `INSERT INTO customers (full_name, phone, email, source)

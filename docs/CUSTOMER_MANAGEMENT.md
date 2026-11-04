@@ -86,11 +86,10 @@ Thiết lập ADMIN_EMAIL và ADMIN_PASSWORD trong .env trước khi khởi đ�
 Không có tài khoản/mật khẩu mặc định. Chỉ tài khoản được cấu hình trong môi
 trường chạy mới được cấp role admin. Không commit file dữ liệu production.
 
-Backend CRM runtime hiện vẫn lưu dữ liệu bằng file JSON. Schema PostgreSQL
-đích và lệnh migration hiện có thể triển khai độc lập bằng `npm run migrate`
-khi đặt `DATABASE_URL`; lệnh này không chuyển backend runtime từ JSON sang
-PostgreSQL và không import JSON/JSONL. Khi cần import dữ liệu file, migration
-riêng phải:
+Backend CRM dùng PostgreSQL khi cấu hình `DATABASE_URL`; migration 005 chuyển
+các collection JSONB legacy trong database sang schema quan hệ, còn các file
+JSON/JSONL trên đĩa không thuộc luồng import. Nếu cần nhập các file đó, cần
+một migration riêng để:
 
 1. Tạo bảng và index theo schema đích.
 2. Import `users.json`, `orders.jsonl` và `service-requests.jsonl` theo

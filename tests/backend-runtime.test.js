@@ -271,19 +271,44 @@ test("file storage does not create or retain the insecure default administrator"
 test("configured admin credentials restore the admin account in PostgreSQL", async (t) => {
   const originalAdminEmail = process.env.ADMIN_EMAIL;
   const originalAdminPassword = process.env.ADMIN_PASSWORD;
-  let records = [{
-    id: "admin-master",
+  const record = {
+    user_id: "admin-master",
     email: "admin@example.com",
-    password: hashPassword("old-password"),
+    full_name: "Configured Admin",
+    password_hash: hashPassword("old-password"),
     role: "user",
-  }];
+    student_type: "other",
+    student_id: "",
+    auth_provider: null,
+    provider_id: null,
+    customer_info: {},
+    password_reset: null,
+    created_by: "system",
+    updated_by: "system",
+    created_at: new Date("2025-01-01T00:00:00.000Z"),
+    updated_at: new Date("2025-01-01T00:00:00.000Z"),
+    legacy_record: {},
+  };
   const pool = {
     async query(sql, values = []) {
-      if (sql.includes("SELECT records FROM booknest_data")) {
-        return { rows: [{ records }] };
+      if (sql.includes("FROM app_users")) {
+        return { rows: [{ ...record }] };
       }
-      if (sql.includes("INSERT INTO booknest_data")) {
-        records = JSON.parse(values[0]);
+      if (sql.includes("INSERT INTO app_users")) {
+        record.email = values[1];
+        record.full_name = values[2];
+        record.password_hash = values[3];
+        record.role = values[4];
+        record.student_type = values[5];
+        record.student_id = values[6];
+        record.auth_provider = values[7];
+        record.provider_id = values[8];
+        record.customer_info = JSON.parse(values[9]);
+        record.password_reset = values[10] ? JSON.parse(values[10]) : null;
+        record.created_by = values[11];
+        record.updated_by = values[12];
+        record.updated_at = new Date(values[14]);
+        record.legacy_record = JSON.parse(values[15]);
         return { rows: [] };
       }
       return { rows: [] };
@@ -303,10 +328,10 @@ test("configured admin credentials restore the admin account in PostgreSQL", asy
   const db = new PostgresDatabase({ pool });
   await db.init();
 
-  assert.equal(records[0].role, "admin");
+  assert.equal(record.role, "admin");
   assert.equal(
-    verifyPassword("new-admin-password-123", records[0].password),
+    verifyPassword("new-admin-password-123", record.password_hash),
     true,
   );
-  assert.equal(verifyPassword("old-password", records[0].password), false);
+  assert.equal(verifyPassword("old-password", record.password_hash), false);
 });

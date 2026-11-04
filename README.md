@@ -195,7 +195,7 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 ### PostgreSQL/Supabase
 
-`npm run migrate` áp dụng các migration PostgreSQL CRM có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Schema chuẩn nằm ở `data/customer-schema.sql`. Lệnh migration không chuyển backend runtime từ JSON sang PostgreSQL và không tự import dữ liệu JSON/JSONL cũ. Hãy sao lưu trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
 
 Với PostgreSQL, endpoint tạo đơn lưu khóa `Idempotency-Key` và giữ tồn kho trong database dùng chung; đơn hàng và lượng tồn kho được cập nhật nguyên tử. Retry cùng nội dung trả lại đơn đã tạo, còn tái sử dụng khóa với payload khác trả HTTP 409. Cần chạy `npm run migrate` để cài các migration trước khi triển khai các instance mới.
 

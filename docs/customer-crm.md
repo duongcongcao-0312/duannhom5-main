@@ -1,9 +1,10 @@
 # Hướng dẫn CRM khách hàng
 
-Tài liệu này mô tả API CRM đang chạy, schema PostgreSQL đích và cách nạp dữ
-liệu mẫu. **Backend hiện tại vẫn đọc/ghi JSON** (`data/customers.json`); các
-file SQL là migration/schema đích độc lập, chưa được `server.js` sử dụng.
-Chạy migration không tự chuyển API sang PostgreSQL.
+Tài liệu này mô tả API CRM đang chạy, schema PostgreSQL và cách nạp dữ liệu
+mẫu. Khi cấu hình `DATABASE_URL`, adapter PostgreSQL lưu customers cùng các
+thực thể liên quan trong các bảng quan hệ. Migration 005 nhập các collection
+JSONB cũ sang schema quan hệ; các file JSON trên đĩa là một kho riêng và không
+được migration này nhập.
 
 ## Quyền truy cập
 
@@ -175,8 +176,12 @@ log; dùng secret manager cho môi trường triển khai.
 
 Migration 003 tạo khóa chính dùng chung `order_idempotency` cho các yêu cầu
 đặt hàng; migration 004 tạo bảng `book_inventory` để khóa và cập nhật số
-lượng đặt giữ trong cùng transaction với đơn hàng. Các khóa cũ được giữ lại;
-tồn kho cũ được tính từ đơn chưa hủy ở lần đặt tiếp theo. Khi chạy PostgreSQL
+lượng đặt giữ trong cùng transaction với đơn hàng. Migration 005 tạo các bảng
+quan hệ cho người dùng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ, nhập
+dữ liệu JSONB hiện có, và liên kết tồn kho với sản phẩm qua khóa ngoại. Các
+collection JSONB gốc vẫn được giữ lại; PostgreSQL runtime sử dụng các bảng
+quan hệ làm nguồn dữ liệu chính. Các khóa cũ được giữ lại; tồn kho cũ được
+tính từ đơn chưa hủy ở lần đặt tiếp theo. Khi chạy PostgreSQL
 nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với cùng
 `Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ nhận
 HTTP 409. Hủy đơn giải phóng lượng đã giữ trong cùng transaction. Các instance

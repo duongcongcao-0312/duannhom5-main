@@ -125,6 +125,7 @@ Các biến thường dùng:
 | `FIREBASE_API_KEY` | Firebase Web API key để backend xác minh ID Token social qua Firebase Identity Toolkit. |
 | `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
 | `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày và phải lớn hơn 0. |
+| `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh chữ ký webhook thanh toán; chỉ lưu trong secret manager. |
 
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
 
@@ -199,6 +200,8 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 Với PostgreSQL, endpoint tạo đơn lưu khóa `Idempotency-Key` và giữ tồn kho trong database dùng chung; đơn hàng và lượng tồn kho được cập nhật nguyên tử. Retry cùng nội dung trả lại đơn đã tạo, còn tái sử dụng khóa với payload khác trả HTTP 409. Cần chạy `npm run migrate` để cài các migration trước khi triển khai các instance mới.
 
 Phiên đăng nhập hết hạn sau thời gian cấu hình bởi `SESSION_TTL_MS` (mặc định 7 ngày); cấu hình này phải lớn hơn 0. Khi có `DATABASE_URL`, phiên được lưu trong bảng PostgreSQL dùng chung `auth_sessions`, nên nhiều instance có thể xác thực cùng token và phiên vẫn còn sau khi backend khởi động lại. Chỉ hash SHA-256 của bearer token được dùng làm khóa lưu trữ; token thô không được ghi vào PostgreSQL. Đăng xuất và đặt lại mật khẩu thu hồi phiên trong kho dùng chung; phiên hết hạn bị từ chối ngay và được dọn định kỳ. Production yêu cầu PostgreSQL để không khởi động với session store chỉ trong bộ nhớ; local development không có `DATABASE_URL` tiếp tục dùng bộ nhớ. Client gửi bearer token qua HTTPS và giữ token ở `sessionStorage`; ứng dụng không dùng cookie xác thực.
+
+Webhook thanh toán `POST /api/payments/webhook` chấp nhận JSON sự kiện có `id`, `orderId`, `status` (`succeeded`, `failed`, `pending`, `cancelled`), `amount`, `currency: "VND"` và `occurredAt`. Gửi `X-BookNest-Signature: sha256=<hex>` là HMAC-SHA256 của **raw request body**, dùng `PAYMENT_WEBHOOK_SECRET`; secret phải dài ít nhất 32 byte. Sự kiện chỉ áp dụng cho đơn chuyển khoản có đúng tổng tiền. PostgreSQL ghi nhận event ID và cập nhật trạng thái đơn trong cùng transaction; retry trùng được xác nhận mà không cập nhật lần hai, ID trùng payload khác bị từ chối, và event cũ hơn không ghi đè trạng thái mới. Trạng thái `paid` không bị sự kiện thất bại/hủy đến sau đảo ngược. Cổng thanh toán cần ánh xạ chữ ký và trạng thái nhà cung cấp vào hợp đồng này; endpoint chưa thực hiện gọi thu tiền tới một nhà cung cấp cụ thể.
 
 Đăng nhập giới hạn 5 lần thử cho mỗi địa chỉ IP trong cửa sổ 15 phút; đăng nhập thành công sẽ xóa bộ đếm. Các thông tin đăng nhập sai và email không tồn tại cùng trả về HTTP 401 với thông báo chung. Khi vượt giới hạn, API trả về HTTP 429.
 

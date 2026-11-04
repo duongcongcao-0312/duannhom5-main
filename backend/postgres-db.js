@@ -128,6 +128,13 @@ class PostgresDatabase {
         await this.pool.query(
           "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at)",
         );
+        await this.pool.query(`
+          CREATE TABLE IF NOT EXISTS payment_webhook_events (
+            event_id TEXT PRIMARY KEY,
+            event_hash TEXT NOT NULL,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `);
         const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
         const password = process.env.ADMIN_PASSWORD || "";
         const hasAdminConfig = Boolean(email || password);
@@ -274,6 +281,90 @@ class PostgresDatabase {
       "DELETE FROM auth_sessions WHERE expires_at <= NOW()",
     );
     return rowCount;
+  }
+
+  async applyPaymentWebhookEvent({
+    eventId,
+    eventHash,
+    orderId,
+    paymentStatus,
+    amount,
+    occurredAt,
+  }) {
+    if (!eventId || !/^[a-f0-9]{64}$/.test(eventHash || "")) {
+      throw new Error("A valid payment event ID and hash are required.");
+    }
+    if (!paymentStatuses.has(paymentStatus)) {
+      throw new Error("Trạng thái thanh toán không hợp lệ.");
+    }
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const insertedEvent = await client.query(
+        `INSERT INTO payment_webhook_events (event_id, event_hash)
+         VALUES ($1, $2)
+         ON CONFLICT (event_id) DO NOTHING
+         RETURNING event_id`,
+        [eventId, eventHash],
+      );
+      if (!insertedEvent.rowCount) {
+        const existingEvent = await client.query(
+          "SELECT event_hash FROM payment_webhook_events WHERE event_id = $1 FOR UPDATE",
+          [eventId],
+        );
+        await client.query("COMMIT");
+        return {
+          duplicate: existingEvent.rows[0]?.event_hash === eventHash,
+          conflict: existingEvent.rows[0]?.event_hash !== eventHash,
+        };
+      }
+
+      await client.query(
+        "INSERT INTO booknest_data (collection, records) VALUES ('orders', '[]'::jsonb) ON CONFLICT (collection) DO NOTHING",
+      );
+      const { rows } = await client.query(
+        "SELECT records FROM booknest_data WHERE collection = 'orders' FOR UPDATE",
+      );
+      const orders = rows[0].records;
+      if (!Array.isArray(orders)) {
+        throw new Error('PostgreSQL collection "orders" must contain a JSON array.');
+      }
+      const order = orders.find((entry) => entry.orderId === orderId);
+      if (!order) throw new CustomerError(404, "Không tìm thấy đơn hàng.");
+      if (order.paymentMethod !== "transfer") {
+        throw new CustomerError(400, "Đơn hàng này không sử dụng chuyển khoản.");
+      }
+      if (order.total !== amount) {
+        throw new CustomerError(400, "Số tiền thanh toán không khớp với đơn hàng.");
+      }
+
+      const eventTime = new Date(occurredAt).getTime();
+      const previousEventTime = Date.parse(order.paymentEventAt || "");
+      const terminalStatuses = new Set(["paid", "failed", "cancelled", "refunded"]);
+      const isStale = Number.isFinite(previousEventTime) &&
+        eventTime <= previousEventTime;
+      if (!isStale) {
+        const canChangeStatus = order.paymentStatus !== "paid" &&
+          !(order.paymentStatus === "refunded" && paymentStatus !== "refunded") &&
+          !(terminalStatuses.has(order.paymentStatus) && paymentStatus === "pending") &&
+          !(order.status === "cancelled" && paymentStatus === "paid");
+        if (canChangeStatus) order.paymentStatus = paymentStatus;
+        order.paymentEventAt = new Date(eventTime).toISOString();
+        order.updatedAt = new Date().toISOString();
+        await client.query(
+          "UPDATE booknest_data SET records = $1::jsonb, updated_at = NOW() WHERE collection = 'orders'",
+          [JSON.stringify(orders)],
+        );
+      }
+      await client.query("COMMIT");
+      return { order, duplicate: false, stale: isStale };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async readCollection(name) {

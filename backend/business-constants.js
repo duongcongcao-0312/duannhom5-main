@@ -26,6 +26,8 @@ const ORDER_STATUSES = Object.freeze({
 const PAYMENT_STATUSES = Object.freeze({
   PENDING: "pending",
   PAID: "paid",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
   COD_PENDING: "cod_pending",
   REFUNDED: "refunded",
 });

@@ -2,7 +2,12 @@ const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
-const { randomBytes, randomUUID } = require("node:crypto");
+const {
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} = require("node:crypto");
 const books = require("./books-data");
 const {
   CustomerError,
@@ -389,6 +394,17 @@ async function sendHtmlError(response, status, pageName) {
 }
 
 async function readJson(request) {
+  const rawBody = await readRawBody(request);
+  let payload;
+  try {
+    payload = JSON.parse(rawBody.toString("utf8"));
+  } catch {
+    throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
+  }
+  return sanitizePayload(payload);
+}
+
+async function readRawBody(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -396,14 +412,7 @@ async function readJson(request) {
     if (size > maxRequestBytes) throw new RequestError(413, "Yêu cầu quá lớn.");
     chunks.push(chunk);
   }
-
-  let payload;
-  try {
-    payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
-  }
-  return sanitizePayload(payload);
+  return Buffer.concat(chunks);
 }
 
 function sanitizePlainText(value, maxLength = 0) {
@@ -804,6 +813,7 @@ function createServer({
   servicesPath,
   booksPath,
   database,
+  paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
     : SESSION_TTL_MS,
@@ -1052,6 +1062,94 @@ function createServer({
         );
         sendJson(response, 503, { status: "not_ready", service: "booknest" });
       }
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/payments/webhook" &&
+      request.method === "POST"
+    ) {
+      if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
+        throw new RequestError(415, "Webhook cần được gửi ở định dạng JSON.");
+      }
+      if (typeof paymentWebhookSecret !== "string" ||
+          Buffer.byteLength(paymentWebhookSecret, "utf8") < 32) {
+        throw new RequestError(503, "Webhook thanh toán chưa được cấu hình an toàn.");
+      }
+      if (typeof db.applyPaymentWebhookEvent !== "function") {
+        throw new RequestError(503, "Webhook thanh toán yêu cầu kho PostgreSQL dùng chung.");
+      }
+      const signature = request.headers["x-booknest-signature"] || "";
+      const rawBody = await readRawBody(request);
+      const expectedSignature = createHmac("sha256", paymentWebhookSecret)
+        .update(rawBody)
+        .digest();
+      const suppliedSignature = typeof signature === "string"
+        ? signature.match(/^sha256=([a-f0-9]{64})$/i)?.[1]
+        : null;
+      if (!suppliedSignature) {
+        throw new RequestError(401, "Chữ ký webhook không hợp lệ.");
+      }
+      const suppliedDigest = Buffer.from(suppliedSignature, "hex");
+      if (suppliedDigest.length !== expectedSignature.length ||
+          !timingSafeEqual(suppliedDigest, expectedSignature)) {
+        throw new RequestError(401, "Chữ ký webhook không hợp lệ.");
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        throw new RequestError(400, "Payload webhook không hợp lệ.");
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+          Object.keys(payload).some((key) => ![
+            "id",
+            "orderId",
+            "status",
+            "amount",
+            "currency",
+            "occurredAt",
+          ].includes(key)) ||
+          typeof payload.id !== "string" ||
+          !/^[A-Za-z0-9._:-]{1,128}$/.test(payload.id) ||
+          typeof payload.orderId !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.orderId) ||
+          !["succeeded", "failed", "pending", "cancelled"].includes(payload.status) ||
+          !Number.isSafeInteger(payload.amount) ||
+          payload.amount < 0 ||
+          payload.currency !== "VND" ||
+          typeof payload.occurredAt !== "string" ||
+          !Number.isFinite(Date.parse(payload.occurredAt)) ||
+          Date.parse(payload.occurredAt) > Date.now() + 5 * 60 * 1000) {
+        throw new RequestError(400, "Payload webhook không hợp lệ.");
+      }
+
+      const paymentStatus = {
+        succeeded: "paid",
+        failed: "failed",
+        pending: "pending",
+        cancelled: "cancelled",
+      }[payload.status];
+      const result = await db.applyPaymentWebhookEvent({
+        eventId: payload.id,
+        eventHash: createHmac("sha256", paymentWebhookSecret)
+          .update(rawBody)
+          .digest("hex"),
+        orderId: payload.orderId,
+        paymentStatus,
+        amount: payload.amount,
+        occurredAt: payload.occurredAt,
+      });
+      if (result.conflict) {
+        throw new RequestError(409, "Webhook ID đã được dùng với payload khác.");
+      }
+      sendJson(response, 200, {
+        received: true,
+        duplicate: result.duplicate,
+        stale: result.stale || false,
+        ...(result.order ? { order: publicOrder(result.order) } : {}),
+      });
       return;
     }
 

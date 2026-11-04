@@ -42,7 +42,8 @@ test("PostgresDatabase initializes once and creates the configured admin", async
 
   await db.init();
   await db.init();
-  assert.equal(queries.filter((entry) => entry.sql.includes("CREATE TABLE")).length, 2);
+  assert.equal(queries.filter((entry) => entry.sql.includes("CREATE TABLE")).length, 3);
+  assert.ok(queries.some((entry) => entry.sql.includes("CREATE TABLE IF NOT EXISTS payment_webhook_events")));
   assert.ok(queries.some((entry) => entry.sql.includes("CREATE TABLE IF NOT EXISTS auth_sessions")));
   assert.ok(queries.some((entry) => entry.sql.includes("idx_auth_sessions_user_id")));
   assert.ok(queries.some((entry) => entry.sql.includes("idx_auth_sessions_expires_at")));
@@ -101,6 +102,89 @@ test("PostgresDatabase stores only hashed session keys and enforces database exp
   assert.equal(lookup.values[0], sessionHash);
 });
 
+test("PostgresDatabase applies signed payment events idempotently and rejects out-of-order updates", async (t) => {
+  withAdminConfig(t);
+  const orderId = "11111111-1111-4111-8111-111111111111";
+  let orders = [{
+    orderId,
+    status: "received",
+    paymentMethod: "transfer",
+    paymentStatus: "pending",
+    total: 25000,
+    items: [],
+  }];
+  const events = new Map();
+  const pool = {
+    async query(sql) {
+      if (sql.includes("SELECT records")) return { rows: [{ records: [] }] };
+      return { rows: [], rowCount: 1 };
+    },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+            return { rows: [], rowCount: 0 };
+          }
+          if (sql.includes("INSERT INTO payment_webhook_events")) {
+            if (events.has(values[0])) return { rows: [], rowCount: 0 };
+            events.set(values[0], values[1]);
+            return { rows: [{ event_id: values[0] }], rowCount: 1 };
+          }
+          if (sql.includes("SELECT event_hash")) {
+            return {
+              rows: events.has(values[0])
+                ? [{ event_hash: events.get(values[0]) }]
+                : [],
+              rowCount: events.has(values[0]) ? 1 : 0,
+            };
+          }
+          if (sql.includes("SELECT records FROM booknest_data")) {
+            return { rows: [{ records: orders }] };
+          }
+          if (sql.includes("UPDATE booknest_data SET records")) {
+            orders = JSON.parse(values[0]);
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 1 };
+        },
+        release() {},
+      };
+    },
+  };
+  const db = new PostgresDatabase({ pool });
+  const firstEvent = {
+    eventId: "payment-event-1",
+    eventHash: "a".repeat(64),
+    orderId,
+    paymentStatus: "paid",
+    amount: 25000,
+    occurredAt: "2026-01-01T00:00:02.000Z",
+  };
+
+  const applied = await db.applyPaymentWebhookEvent(firstEvent);
+  assert.equal(applied.order.paymentStatus, "paid");
+  assert.equal(applied.duplicate, false);
+
+  const duplicate = await db.applyPaymentWebhookEvent(firstEvent);
+  assert.equal(duplicate.duplicate, true);
+
+  const conflictingReuse = await db.applyPaymentWebhookEvent({
+    ...firstEvent,
+    eventHash: "b".repeat(64),
+  });
+  assert.equal(conflictingReuse.conflict, true);
+
+  const stale = await db.applyPaymentWebhookEvent({
+    ...firstEvent,
+    eventId: "payment-event-old",
+    eventHash: "c".repeat(64),
+    paymentStatus: "failed",
+    occurredAt: "2026-01-01T00:00:01.000Z",
+  });
+  assert.equal(stale.stale, true);
+  assert.equal(orders[0].paymentStatus, "paid");
+});
+
 test("initialization failure is propagated and can be retried", async () => {
   let attempts = 0;
   const pool = {
@@ -117,7 +201,7 @@ test("initialization failure is propagated and can be retried", async () => {
 
   await assert.rejects(db.init(), /connection refused/);
   await assert.rejects(db.init(), /Đặt ADMIN_EMAIL/);
-  assert.equal(attempts, 3);
+  assert.equal(attempts, 4);
 });
 
 test("query timeout and query failure are surfaced without fallback data", async (t) => {

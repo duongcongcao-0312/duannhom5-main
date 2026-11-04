@@ -72,6 +72,21 @@
         }
       }
     },
+    "/api/payments/webhook": {
+      "post": {
+        "tags": ["Store"],
+        "summary": "Nhận sự kiện thanh toán đã ký HMAC-SHA256",
+        "parameters": [{ "name": "X-BookNest-Signature", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^sha256=[a-f0-9]{64}$" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentWebhookEvent" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/orders/{id}": {
       "get": {
         "tags": ["Store"],
@@ -217,7 +232,7 @@
     "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
     "/api/admin/orders/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
-      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái đơn/thanh toán", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"], "description": "Chuyển tuần tự received -> processing -> shipping -> completed; có thể huỷ trước khi hoàn tất." }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "cod_pending", "refunded"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
+      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái đơn/thanh toán", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"], "description": "Chuyển tuần tự received -> processing -> shipping -> completed; có thể huỷ trước khi hoàn tất." }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/books": { "post": { "tags": ["Admin"], "summary": "Thêm sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "403": { "$ref": "#/components/responses/Error" } } } },
     "/api/admin/books/{id}": {
@@ -257,6 +272,7 @@
       "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
       "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
       "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
+      "PaymentWebhookEvent": { "type": "object", "additionalProperties": false, "required": ["id", "orderId", "status", "amount", "currency", "occurredAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }, "orderId": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["succeeded", "failed", "pending", "cancelled"] }, "amount": { "type": "integer", "minimum": 0 }, "currency": { "type": "string", "const": "VND" }, "occurredAt": { "type": "string", "format": "date-time" } } },
       "OrderQuoteRequest": { "type": "object", "additionalProperties": false, "required": ["items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
       "OrderQuote": { "type": "object", "required": ["discountRate", "couponCode", "subtotal", "discount", "total", "items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": ["string", "null"] }, "subtotal": { "type": "integer", "minimum": 0 }, "discount": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "items": { "type": "object", "required": ["title", "quantity", "unitPrice", "lineTotal"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer" }, "unitPrice": { "type": "integer" }, "lineTotal": { "type": "integer" } } } } } },
       "PublicOrder": { "type": "object", "properties": { "orderId": { "type": "string", "format": "uuid" }, "createdAt": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "paymentStatus": { "type": "string" }, "paymentMethod": { "type": "string" }, "couponCode": { "type": ["string", "null"] }, "subtotal": { "type": "integer", "minimum": 0 }, "discount": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "lineTotal": { "type": "integer", "minimum": 0 } } } } } },

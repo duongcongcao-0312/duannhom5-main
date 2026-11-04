@@ -15,6 +15,7 @@ const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
   hashPasswordResetToken,
+  SESSION_TTL_MS,
   SessionStore,
   verifyPassword,
 } = require("./backend/auth");
@@ -805,7 +806,7 @@ function createServer({
   database,
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
-    : 7 * 24 * 60 * 60 * 1000,
+    : SESSION_TTL_MS,
   passwordResetMailer = createEmailMailer(),
   socialTokenVerifier = createFirebaseIdTokenVerifier(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
@@ -840,7 +841,26 @@ function createServer({
       servicesPath,
       booksPath,
     }));
-  const sessionStore = new SessionStore({ sessionTtlMs, cleanupIntervalMs: 60 * 1000 });
+  const sessionRepositoryMethods = [
+    "saveSessionRecord",
+    "getSessionRecord",
+    "deleteSessionRecord",
+    "deleteUserSessionRecords",
+    "pruneExpiredSessionRecords",
+  ];
+  const sessionRepository = sessionRepositoryMethods.every(
+    (method) => typeof db[method] === "function",
+  )
+    ? db
+    : null;
+  if (process.env.NODE_ENV === "production" && !sessionRepository) {
+    throw new Error("Production requires a shared PostgreSQL session store.");
+  }
+  const sessionStore = new SessionStore({
+    repository: sessionRepository,
+    sessionTtlMs,
+    cleanupIntervalMs: 60 * 1000,
+  });
   const loginAttempts = new Map();
   const loginAttemptLimit = 5;
   const loginAttemptWindowMs = 15 * 60 * 1000;
@@ -943,13 +963,13 @@ function createServer({
     return operation;
   }
 
-  function getAuthUser(request) {
+  async function getAuthUser(request) {
     const authHeader = request.headers["authorization"] || "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    return sessionStore.getSession(token);
+    return await sessionStore.getSession(token);
   }
 
-  function requireCustomerPermission(request, permission) {
+  async function requireCustomerPermission(request, permission) {
     return requireCustomerPermissionMiddleware(
       request,
       permission,
@@ -958,11 +978,11 @@ function createServer({
     );
   }
 
-  function requireRole(request, permission) {
+  async function requireRole(request, permission) {
     return requireRoleMiddleware(request, permission, sessionStore, RequestError);
   }
 
-  function requireAdmin(request) {
+  async function requireAdmin(request) {
     return requireRole(request, "read:dashboard");
   }
 
@@ -1172,7 +1192,7 @@ function createServer({
       if (!userId) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }
-      sessionStore.destroyUserSessions(userId);
+      await sessionStore.destroyUserSessions(userId);
       sendJson(response, 200, { message: "Mật khẩu đã được cập nhật." });
       return;
     }
@@ -1218,7 +1238,7 @@ function createServer({
             64,
           ),
         });
-        const session = sessionStore.createSession(user);
+        const session = await sessionStore.createSession(user);
         sendJson(response, 201, {
           token: session.token,
           expiresAt: session.expiresAt,
@@ -1272,7 +1292,7 @@ function createServer({
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
       loginAttempts.delete(address);
-      const session = sessionStore.createSession(user);
+      const session = await sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,
         expiresAt: session.expiresAt,
@@ -1325,7 +1345,7 @@ function createServer({
         providerId,
       });
 
-      const session = sessionStore.createSession(user);
+      const session = await sessionStore.createSession(user);
       sendJson(response, 200, {
         token: session.token,
         expiresAt: session.expiresAt,
@@ -1335,7 +1355,7 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/api/auth/me" && request.method === "GET") {
-      const user = getAuthUser(request);
+      const user = await getAuthUser(request);
       if (!user) {
         throw new RequestError(401, "Chưa đăng nhập.");
       }
@@ -1348,7 +1368,7 @@ function createServer({
       requestUrl.pathname === "/api/auth/customer-info" &&
       request.method === "PATCH"
     ) {
-      const session = getAuthUser(request);
+      const session = await getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const payload = requireJsonObject(
         await readJson(request),
@@ -1388,14 +1408,14 @@ function createServer({
     ) {
       const authHeader = request.headers["authorization"] || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      sessionStore.destroySession(token);
+      await sessionStore.destroySession(token);
       sendJson(response, 200, { message: "Đã đăng xuất thành công." });
       return;
     }
 
     // --- Customer CRM API (public and admin variants) ---
     if (requestUrl.pathname === "/api/customers" && request.method === "GET") {
-      requireCustomerPermission(request, "view");
+      await requireCustomerPermission(request, "view");
       const customers = await db.getCustomers();
       const filters = validateQuery(
         requestUrl,
@@ -1410,7 +1430,7 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/api/customers" && request.method === "POST") {
-      const user = requireCustomerPermission(request, "create");
+      const user = await requireCustomerPermission(request, "create");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu khách hàng không hợp lệ.",
@@ -1428,7 +1448,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/customers" &&
       request.method === "GET"
     ) {
-      requireCustomerPermission(request, "view");
+      await requireCustomerPermission(request, "view");
       const customers = await db.getCustomers();
       const filters = validateQuery(
         requestUrl,
@@ -1446,7 +1466,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/customers" &&
       request.method === "POST"
     ) {
-      const user = requireCustomerPermission(request, "create");
+      const user = await requireCustomerPermission(request, "create");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu khách hàng không hợp lệ.",
@@ -1471,7 +1491,7 @@ function createServer({
         request.method === "DELETE")
     ) {
       if (request.method === "GET") {
-        requireCustomerPermission(request, "view");
+        await requireCustomerPermission(request, "view");
         const customer = await db.getCustomerById(customerMatch[1]);
         if (!customer) {
           throw new RequestError(404, "Không tìm thấy khách hàng.");
@@ -1481,7 +1501,7 @@ function createServer({
       }
 
       if (request.method === "DELETE") {
-        const user = requireCustomerPermission(request, "delete");
+        const user = await requireCustomerPermission(request, "delete");
         const deleted = await db.softDeleteCustomer(customerMatch[1], user.userId);
         if (!deleted) {
           throw new RequestError(404, "Không tìm thấy khách hàng.");
@@ -1490,7 +1510,7 @@ function createServer({
         return;
       }
 
-      const user = requireCustomerPermission(request, "update");
+      const user = await requireCustomerPermission(request, "update");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật khách hàng không hợp lệ.",
@@ -1523,7 +1543,7 @@ function createServer({
         "Dữ liệu báo giá không hợp lệ.",
         payloadSchemas.orderQuote,
       );
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       const quote = createOrder({
         customerName: "Báo giá",
         address: "Xem trước đơn hàng",
@@ -1551,7 +1571,7 @@ function createServer({
 
     if (requestUrl.pathname === "/api/orders" && request.method === "GET") {
       validateQuery(requestUrl, {}, "Bộ lọc đơn hàng không hợp lệ.");
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       if (!requester) {
         throw new RequestError(401, "Vui lòng đăng nhập để tra cứu đơn hàng.");
       }
@@ -1573,7 +1593,7 @@ function createServer({
         throw new RequestError(415, "Đơn hàng cần được gửi ở định dạng JSON.");
       }
 
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       const suppliedIdempotencyKey = String(
         request.headers["idempotency-key"] || "",
       ).trim();
@@ -1611,7 +1631,7 @@ function createServer({
         sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
         return;
       }
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       if (requester && requester.role !== ROLES.ADMIN) {
         if (order.userId && order.userId !== requester.userId) {
           throw new RequestError(
@@ -1635,7 +1655,7 @@ function createServer({
     }
 
     if (orderMatch && (request.method === "PATCH" || request.method === "PUT")) {
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       if (!requester) {
         throw new RequestError(401, "Chưa đăng nhập.");
       }
@@ -1765,7 +1785,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/stats" &&
       request.method === "GET"
     ) {
-      requireRole(request, "read:dashboard");
+      await requireRole(request, "read:dashboard");
       const stats = await db.getStats(ordersPath, books.length);
       sendJson(response, 200, stats);
       return;
@@ -1776,7 +1796,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/orders" &&
       request.method === "GET"
     ) {
-      requireRole(request, "read:orders");
+      await requireRole(request, "read:orders");
       const orders = await db.getAllOrders(ordersPath);
       sendJson(response, 200, orders);
       return;
@@ -1789,7 +1809,7 @@ function createServer({
       adminOrderMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
-      requireRole(request, "write:orders");
+      await requireRole(request, "write:orders");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
@@ -1833,7 +1853,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/services" &&
       request.method === "GET"
     ) {
-      requireRole(request, "read:services");
+      await requireRole(request, "read:services");
       const list = await db.getServiceRequests();
       sendJson(response, 200, list);
       return;
@@ -1846,7 +1866,7 @@ function createServer({
       adminServiceMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
-      requireRole(request, "write:services");
+      await requireRole(request, "write:services");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật yêu cầu dịch vụ không hợp lệ.",
@@ -1876,7 +1896,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/books" &&
       request.method === "POST"
     ) {
-      requireRole(request, "write:books");
+      await requireRole(request, "write:books");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu sách không hợp lệ.",
@@ -1920,7 +1940,7 @@ function createServer({
       adminBookMatch &&
       (request.method === "PUT" || request.method === "PATCH")
     ) {
-      requireRole(request, "write:books");
+      await requireRole(request, "write:books");
       const previousBooks = await db.getCustomBooks();
       const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
       const payload = requireJsonObject(
@@ -1941,7 +1961,7 @@ function createServer({
     }
 
     if (adminBookMatch && request.method === "DELETE") {
-      requireRole(request, "write:books");
+      await requireRole(request, "write:books");
       const previousBooks = await db.getCustomBooks();
       const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
       const deleted = await db.deleteCustomBook(adminBookMatch[1]);
@@ -1955,7 +1975,7 @@ function createServer({
       requestUrl.pathname === "/api/admin/users" &&
       request.method === "GET"
     ) {
-      requireRole(request, "read:users");
+      await requireRole(request, "read:users");
       const users = await db.getUsers();
       const safeUsers = users.map((u) => ({
         id: u.id,
@@ -1971,7 +1991,7 @@ function createServer({
     }
 
     if (requestUrl.pathname.startsWith("/api/admin/")) {
-      const requester = getAuthUser(request);
+      const requester = await getAuthUser(request);
       if (!requester) {
         throw new RequestError(401, "Vui lòng đăng nhập để truy cập API quản trị.");
       }

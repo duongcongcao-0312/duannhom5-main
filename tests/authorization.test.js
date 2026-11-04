@@ -45,40 +45,40 @@ test("role policy matrix grants only the intended admin permissions", () => {
   assert.equal(hasPermission({ role: "user" }, "read:orders"), false);
 });
 
-test("authentication middleware rejects missing sessions and authorizes valid roles", () => {
-  assert.throws(
-    () => requireRole(requestFor(null), "read:orders", sessionStore(null), TestRequestError),
+test("authentication middleware rejects missing sessions and authorizes valid roles", async () => {
+  await assert.rejects(
+    requireRole(requestFor(null), "read:orders", sessionStore(null), TestRequestError),
     (error) => error.status === 401,
   );
   const sales = { role: "sales" };
   assert.equal(
-    requireRole(requestFor(sales), "read:orders", sessionStore(sales), TestRequestError),
+    await requireRole(requestFor(sales), "read:orders", sessionStore(sales), TestRequestError),
     sales,
   );
-  assert.throws(
-    () => requireRole(requestFor(sales), "read:users", sessionStore(sales), TestRequestError),
+  await assert.rejects(
+    requireRole(requestFor(sales), "read:users", sessionStore(sales), TestRequestError),
     (error) => error.status === 403,
   );
 });
 
-test("customer policy matrix separates sales, support and destructive access", () => {
+test("customer policy matrix separates sales, support and destructive access", async () => {
   const sales = { role: "sales" };
   const support = { role: "support" };
   const user = { role: "user" };
   assert.equal(
-    requireCustomerPermission(requestFor(sales), "update", sessionStore(sales), TestRequestError),
+    await requireCustomerPermission(requestFor(sales), "update", sessionStore(sales), TestRequestError),
     sales,
   );
   assert.equal(
-    requireCustomerPermission(requestFor(support), "view", sessionStore(support), TestRequestError),
+    await requireCustomerPermission(requestFor(support), "view", sessionStore(support), TestRequestError),
     support,
   );
-  assert.throws(
-    () => requireCustomerPermission(requestFor(support), "delete", sessionStore(support), TestRequestError),
+  await assert.rejects(
+    requireCustomerPermission(requestFor(support), "delete", sessionStore(support), TestRequestError),
     (error) => error.status === 403,
   );
-  assert.throws(
-    () => requireCustomerPermission(requestFor(user), "view", sessionStore(user), TestRequestError),
+  await assert.rejects(
+    requireCustomerPermission(requestFor(user), "view", sessionStore(user), TestRequestError),
     (error) => error.status === 403,
   );
 });

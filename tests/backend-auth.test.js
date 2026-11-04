@@ -4,6 +4,76 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
+const { SessionStore } = require("../backend/auth");
+
+test("shared session repositories preserve sessions across instances and revoke them everywhere", async () => {
+  const records = new Map();
+  const repository = {
+    async saveSessionRecord(key, session) {
+      records.set(key, structuredClone(session));
+    },
+    async getSessionRecord(key) {
+      const session = records.get(key);
+      return session ? structuredClone(session) : null;
+    },
+    async deleteSessionRecord(key) {
+      return records.delete(key);
+    },
+    async deleteUserSessionRecords(userId) {
+      let removed = 0;
+      for (const [key, session] of records) {
+        if (session.userId === userId) {
+          records.delete(key);
+          removed += 1;
+        }
+      }
+      return removed;
+    },
+    async pruneExpiredSessionRecords() {
+      let removed = 0;
+      for (const [key, session] of records) {
+        if (session.expiresAt <= Date.now()) {
+          records.delete(key);
+          removed += 1;
+        }
+      }
+      return removed;
+    },
+  };
+  const firstInstance = new SessionStore({
+    repository,
+    sessionTtlMs: 1000,
+    cleanupIntervalMs: 0,
+  });
+  const secondInstance = new SessionStore({
+    repository,
+    sessionTtlMs: 1000,
+    cleanupIntervalMs: 0,
+  });
+  const session = await firstInstance.createSession({
+    id: "shared-user",
+    email: "shared@example.com",
+    name: "Shared User",
+  });
+
+  assert.equal((await secondInstance.getSession(session.token)).userId, "shared-user");
+  assert.equal(records.size, 1);
+  assert.doesNotMatch(JSON.stringify([...records.values()]), new RegExp(session.token));
+
+  await secondInstance.destroySession(session.token);
+  assert.equal(await firstInstance.getSession(session.token), null);
+  assert.equal(records.size, 0);
+
+  const expiringSession = await firstInstance.createSession(
+    { id: "expired-user", email: "expired@example.com", name: "Expired User" },
+    1,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(await secondInstance.getSession(expiringSession.token), null);
+  assert.equal(records.size, 0);
+  firstInstance.close();
+  secondInstance.close();
+});
 
 async function startAuthTestServer(t, options = {}) {
   const temporaryDirectory = await fsPromises.mkdtemp(

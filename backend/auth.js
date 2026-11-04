@@ -31,26 +31,33 @@ function hashPasswordResetToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-/**
- * In-memory session store with token expiration and production-friendly cleanup.
- */
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 class SessionStore {
   constructor(options = {}) {
     this.sessions = new Map();
+    this.repository = options.repository || null;
     this.sessionTtlMs = Number.isFinite(options.sessionTtlMs)
       ? options.sessionTtlMs
-      : 7 * 24 * 60 * 60 * 1000;
+      : SESSION_TTL_MS;
+    if (this.sessionTtlMs <= 0) {
+      throw new RangeError("SESSION_TTL_MS must be greater than zero.");
+    }
     this.cleanupIntervalMs = Number.isFinite(options.cleanupIntervalMs)
       ? options.cleanupIntervalMs
       : 60 * 1000;
     this._cleanupTimer = null;
     if (this.cleanupIntervalMs > 0) {
-      this._cleanupTimer = setInterval(() => this.pruneExpiredSessions(), this.cleanupIntervalMs);
+      this._cleanupTimer = setInterval(() => {
+        this.pruneExpiredSessions().catch((error) => {
+          console.error("Không thể dọn session hết hạn:", error);
+        });
+      }, this.cleanupIntervalMs);
       this._cleanupTimer.unref?.();
     }
   }
 
-  createSession(user, sessionTtlMs = this.sessionTtlMs) {
+  async createSession(user, sessionTtlMs = this.sessionTtlMs) {
     const token = crypto.randomUUID();
     const now = Date.now();
     const sessionData = {
@@ -66,36 +73,63 @@ class SessionStore {
       updatedAt: now,
       expiresAt: now + Number(sessionTtlMs),
     };
-    this.sessions.set(token, sessionData);
+    if (this.repository) {
+      const storedSession = { ...sessionData };
+      delete storedSession.token;
+      await this.repository.saveSessionRecord(
+        hashPasswordResetToken(token),
+        storedSession,
+      );
+    } else {
+      this.sessions.set(token, sessionData);
+    }
     return sessionData;
   }
 
-  getSession(token) {
+  async getSession(token) {
     if (!token || typeof token !== "string") return null;
-    const session = this.sessions.get(token);
+    const session = this.repository
+      ? await this.repository.getSessionRecord(hashPasswordResetToken(token))
+      : this.sessions.get(token);
     if (!session) return null;
     if (Date.now() >= session.expiresAt) {
-      this.sessions.delete(token);
+      await this.destroySession(token);
       return null;
     }
-    return session;
+    return { ...session, token };
   }
 
-  refreshSession(token, sessionTtlMs = this.sessionTtlMs) {
-    const session = this.getSession(token);
+  async refreshSession(token, sessionTtlMs = this.sessionTtlMs) {
+    const session = await this.getSession(token);
     if (!session) return null;
     const now = Date.now();
     session.updatedAt = now;
     session.expiresAt = now + Number(sessionTtlMs);
+    if (this.repository) {
+      const storedSession = { ...session };
+      delete storedSession.token;
+      await this.repository.saveSessionRecord(
+        hashPasswordResetToken(token),
+        storedSession,
+      );
+    } else {
+      this.sessions.set(token, session);
+    }
     return session;
   }
 
-  destroySession(token) {
+  async destroySession(token) {
     if (!token || typeof token !== "string") return false;
+    if (this.repository) {
+      return this.repository.deleteSessionRecord(hashPasswordResetToken(token));
+    }
     return this.sessions.delete(token);
   }
 
-  destroyUserSessions(userId) {
+  async destroyUserSessions(userId) {
+    if (this.repository) {
+      return this.repository.deleteUserSessionRecords(userId);
+    }
     let removed = 0;
     for (const [token, session] of this.sessions) {
       if (session.userId === userId) {
@@ -106,7 +140,10 @@ class SessionStore {
     return removed;
   }
 
-  pruneExpiredSessions() {
+  async pruneExpiredSessions() {
+    if (this.repository) {
+      return this.repository.pruneExpiredSessionRecords();
+    }
     const now = Date.now();
     let removed = 0;
     for (const [token, session] of this.sessions) {
@@ -129,6 +166,7 @@ class SessionStore {
 module.exports = {
   hashPassword,
   hashPasswordResetToken,
+  SESSION_TTL_MS,
   verifyPassword,
   SessionStore
 };

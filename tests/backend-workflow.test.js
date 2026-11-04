@@ -359,6 +359,19 @@ test("registration returns a JSON service error when user persistence is unavail
       async createUser() {
         throw new Error("database connection unavailable");
       },
+      async saveSessionRecord() {},
+      async getSessionRecord() {
+        return null;
+      },
+      async deleteSessionRecord() {
+        return false;
+      },
+      async deleteUserSessionRecords() {
+        return 0;
+      },
+      async pruneExpiredSessionRecords() {
+        return 0;
+      },
     },
   });
 

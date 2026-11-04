@@ -42,11 +42,63 @@ test("PostgresDatabase initializes once and creates the configured admin", async
 
   await db.init();
   await db.init();
-  assert.equal(queries.filter((entry) => entry.sql.includes("CREATE TABLE")).length, 1);
+  assert.equal(queries.filter((entry) => entry.sql.includes("CREATE TABLE")).length, 2);
+  assert.ok(queries.some((entry) => entry.sql.includes("CREATE TABLE IF NOT EXISTS auth_sessions")));
+  assert.ok(queries.some((entry) => entry.sql.includes("idx_auth_sessions_user_id")));
+  assert.ok(queries.some((entry) => entry.sql.includes("idx_auth_sessions_expires_at")));
   assert.equal(queries.filter((entry) => entry.sql.includes("SELECT records")).length, 1);
   assert.equal(queries.filter((entry) => entry.sql.includes("INSERT INTO")).length, 1);
   await db.close();
   assert.equal(queries.at(-1).sql, "END");
+});
+
+test("PostgresDatabase stores only hashed session keys and enforces database expiry", async (t) => {
+  withAdminConfig(t);
+  const statements = [];
+  const expiresAt = Date.now() + 60_000;
+  const sessionData = {
+    userId: "session-user",
+    email: "session@example.com",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    expiresAt,
+  };
+  const pool = {
+    async query(sql, values = []) {
+      statements.push({ sql, values });
+      if (sql.includes("SELECT records")) return { rows: [{ records: [] }] };
+      if (sql.includes("SELECT session_data")) {
+        return {
+          rows: [{
+            session_data: sessionData,
+            expires_at: new Date(expiresAt),
+          }],
+        };
+      }
+      if (sql.includes("DELETE FROM auth_sessions WHERE session_hash")) {
+        return { rowCount: 1, rows: [] };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const db = new PostgresDatabase({ pool });
+  const sessionHash = "a".repeat(64);
+  const persistedSession = { ...sessionData, token: "must-not-be-persisted" };
+
+  await db.saveSessionRecord(sessionHash, persistedSession);
+  const insert = statements.find((entry) => entry.sql.includes("INSERT INTO auth_sessions"));
+  assert.equal(insert.values[0], sessionHash);
+  assert.equal(insert.values[1], sessionData.userId);
+  assert.doesNotMatch(insert.values[2], /must-not-be-persisted/);
+  assert.equal(insert.values[3], expiresAt);
+  assert.deepEqual(await db.getSessionRecord(sessionHash), {
+    ...sessionData,
+    expiresAt,
+  });
+  assert.equal(await db.deleteSessionRecord(sessionHash), true);
+  const lookup = statements.find((entry) => entry.sql.includes("SELECT session_data"));
+  assert.match(lookup.sql, /expires_at > NOW\(\)/);
+  assert.equal(lookup.values[0], sessionHash);
 });
 
 test("initialization failure is propagated and can be retried", async () => {
@@ -65,7 +117,7 @@ test("initialization failure is propagated and can be retried", async () => {
 
   await assert.rejects(db.init(), /connection refused/);
   await assert.rejects(db.init(), /Đặt ADMIN_EMAIL/);
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
 });
 
 test("query timeout and query failure are surfaced without fallback data", async (t) => {

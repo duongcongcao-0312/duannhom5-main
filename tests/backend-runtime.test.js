@@ -129,6 +129,28 @@ test("production server requires explicit admin credentials", () => {
   assert.match(result.stderr, /Production requires a valid ADMIN_EMAIL/);
 });
 
+test("production server requires PostgreSQL for shared authentication sessions", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        RENDER: "",
+        DATABASE_URL: "",
+        ADMIN_EMAIL: "admin@example.com",
+        ADMIN_PASSWORD: "production-admin-password-123",
+        NODE_ENV: "production",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Production requires a shared PostgreSQL session store/);
+});
+
 test("Render backend refuses to start without a persistent database URL", () => {
   const result = spawnSync(
     process.execPath,

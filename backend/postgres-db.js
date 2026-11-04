@@ -113,6 +113,21 @@ class PostgresDatabase {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `).then(async () => {
+        await this.pool.query(`
+          CREATE TABLE IF NOT EXISTS auth_sessions (
+            session_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            session_data JSONB NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `);
+        await this.pool.query(
+          "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id)",
+        );
+        await this.pool.query(
+          "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at)",
+        );
         const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
         const password = process.env.ADMIN_PASSWORD || "";
         const hasAdminConfig = Boolean(email || password);
@@ -199,6 +214,66 @@ class PostgresDatabase {
 
   async close() {
     return this.pool.end();
+  }
+
+  async saveSessionRecord(sessionHash, session) {
+    await this.init();
+    const storedSession = { ...session };
+    delete storedSession.token;
+    await this.pool.query(
+      `INSERT INTO auth_sessions (session_hash, user_id, session_data, expires_at)
+       VALUES ($1, $2, $3::jsonb, to_timestamp($4::double precision / 1000.0))
+       ON CONFLICT (session_hash) DO UPDATE
+       SET session_data = EXCLUDED.session_data,
+           expires_at = EXCLUDED.expires_at`,
+      [
+        sessionHash,
+        session.userId,
+        JSON.stringify(storedSession),
+        session.expiresAt,
+      ],
+    );
+  }
+
+  async getSessionRecord(sessionHash) {
+    await this.init();
+    const { rows } = await this.pool.query(
+      `SELECT session_data, expires_at
+       FROM auth_sessions
+       WHERE session_hash = $1 AND expires_at > NOW()`,
+      [sessionHash],
+    );
+    if (!rows.length) return null;
+    return {
+      ...rows[0].session_data,
+      expiresAt: new Date(rows[0].expires_at).getTime(),
+    };
+  }
+
+  async deleteSessionRecord(sessionHash) {
+    await this.init();
+    const { rowCount } = await this.pool.query(
+      "DELETE FROM auth_sessions WHERE session_hash = $1",
+      [sessionHash],
+    );
+    return rowCount > 0;
+  }
+
+  async deleteUserSessionRecords(userId) {
+    await this.init();
+    const { rowCount } = await this.pool.query(
+      "DELETE FROM auth_sessions WHERE user_id = $1",
+      [userId],
+    );
+    return rowCount;
+  }
+
+  async pruneExpiredSessionRecords() {
+    await this.init();
+    const { rowCount } = await this.pool.query(
+      "DELETE FROM auth_sessions WHERE expires_at <= NOW()",
+    );
+    return rowCount;
   }
 
   async readCollection(name) {

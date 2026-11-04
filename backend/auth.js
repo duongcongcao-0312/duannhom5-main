@@ -32,6 +32,15 @@ function hashPasswordResetToken(token) {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MAX_LENGTH = 128;
+
+function isPasswordValid(password) {
+  return typeof password === "string" &&
+    password.length >= PASSWORD_MIN_LENGTH &&
+    password.length <= PASSWORD_MAX_LENGTH &&
+    password.trim().length > 0;
+}
 
 class SessionStore {
   constructor(options = {}) {
@@ -166,6 +175,9 @@ class SessionStore {
 module.exports = {
   hashPassword,
   hashPasswordResetToken,
+  isPasswordValid,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,
   verifyPassword,
   SessionStore

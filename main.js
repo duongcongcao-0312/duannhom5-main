@@ -964,8 +964,8 @@ document.querySelector('#passwordResetConfirmForm').addEventListener('submit', a
 		showAccountError('#passwordResetConfirmError', 'Mật khẩu nhập lại không khớp.');
 		return;
 	}
-	if (password.trim().length < 6 || password.trim().length > 128 || !password.trim()) {
-		showAccountError('#passwordResetConfirmError', 'Mật khẩu mới phải có từ 6 đến 128 ký tự và không được trống.');
+	if (password.length < 12 || password.length > 128 || !password.trim()) {
+		showAccountError('#passwordResetConfirmError', 'Mật khẩu mới phải có từ 12 đến 128 ký tự và không được chỉ chứa khoảng trắng.');
 		return;
 	}
 	const submitButton = form.querySelector('[type="submit"]');
@@ -1193,7 +1193,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			showAccountError(
 				'#registerError',
 				response.status === 409
-					? 'Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Quên mật khẩu?” để khôi phục tài khoản.'
+					? errorData.error || 'Không thể hoàn tất đăng ký với thông tin đã cung cấp. Vui lòng kiểm tra và thử lại.'
 					: errorData.error || `Máy chủ không thể tạo tài khoản (mã lỗi ${response.status}). Vui lòng thử lại sau.`
 			);
 			return;

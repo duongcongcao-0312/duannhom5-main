@@ -99,7 +99,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     body: JSON.stringify({
       name: "Trần Minh",
       email: "tranminh@example.com",
-      password: "password123",
+      password: "password12345",
       studentType: "student",
       studentId: "HS-9988",
     }),
@@ -114,11 +114,13 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     body: JSON.stringify({
       name: "Tên khác",
       email: " TRANMINH@example.com ",
-      password: "password456",
+      password: "password45678",
     }),
   });
   assert.equal(duplicateRegisterRes.status, 409);
-  assert.match((await duplicateRegisterRes.json()).error, /đã được đăng ký/i);
+  const duplicateError = (await duplicateRegisterRes.json()).error;
+  assert.match(duplicateError, /không thể hoàn tất đăng ký/i);
+  assert.doesNotMatch(duplicateError, /đã được đăng ký|email.*tồn tại/i);
 
   // 4. Auth: Profile lookup via token
   const meRes = await fetch(`${baseUrl}/api/auth/me`, {
@@ -250,7 +252,7 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     body: JSON.stringify({
       name: "Alice",
       email: "alice@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(aliceRegister.status, 201);
@@ -262,7 +264,7 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     body: JSON.stringify({
       name: "Bob",
       email: "bob@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(bobRegister.status, 201);
@@ -402,7 +404,7 @@ test("registration returns a JSON service error when user persistence is unavail
       body: JSON.stringify({
         name: "New Reader",
         email: "new-reader@example.com",
-        password: "password123",
+        password: "password12345",
       }),
     });
     assert.equal(response.status, 503);

@@ -274,7 +274,7 @@ test("order creation calculates catalog prices and rejects invalid checkout data
       body: JSON.stringify({
         name: "Nguyễn Văn A",
         email,
-        password: "password123",
+        password: "password12345",
         studentType,
         studentId: studentType === "other" ? "" : "HS-1234",
       }),

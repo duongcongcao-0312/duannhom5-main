@@ -107,7 +107,7 @@ test("expired sessions are rejected by every protected endpoint", async (t) => {
     body: JSON.stringify({
       name: "Expired User",
       email: "expired@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -141,7 +141,7 @@ test("logging out revokes the token for subsequent protected requests", async (t
     body: JSON.stringify({
       name: "Logged Out User",
       email: "logged-out@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -168,7 +168,7 @@ test("login failures use a generic response and are limited per source address",
     body: JSON.stringify({
       name: "Login Limit User",
       email: "login-limit@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -178,7 +178,7 @@ test("login failures use a generic response and are limited per source address",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  const unknownUserResponse = await login("unknown@example.com", "password123");
+  const unknownUserResponse = await login("unknown@example.com", "password12345");
   assert.equal(unknownUserResponse.status, 401);
   const unknownUserError = await unknownUserResponse.json();
 
@@ -190,7 +190,7 @@ test("login failures use a generic response and are limited per source address",
     const response = await login("login-limit@example.com", "wrong-password");
     assert.equal(response.status, 401);
   }
-  const limitedResponse = await login("login-limit@example.com", "password123");
+  const limitedResponse = await login("login-limit@example.com", "password12345");
   assert.equal(limitedResponse.status, 429);
   assert.match((await limitedResponse.json()).error, /thử lại sau 15 phút/i);
 
@@ -209,7 +209,7 @@ test("successful login resets failed attempts for the source address", async (t)
     body: JSON.stringify({
       name: "Reset Attempts User",
       email: "reset-attempts@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(registerResponse.status, 201);
@@ -223,8 +223,54 @@ test("successful login resets failed attempts for the source address", async (t)
     const response = await login("wrong-password");
     assert.equal(response.status, 401);
   }
-  assert.equal((await login("password123")).status, 200);
+  assert.equal((await login("password12345")).status, 200);
   assert.equal((await login("wrong-password")).status, 401);
+});
+
+test("registration enforces password length and counts repeated attempts per source address", async (t) => {
+  const baseUrl = await startAuthTestServer(t);
+  const register = (email, password) => fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Password Policy User", email, password }),
+  });
+
+  for (const [email, password] of [
+    ["short@example.com", "12345678901"],
+    ["spaces@example.com", "            "],
+    ["long@example.com", "x".repeat(129)],
+  ]) {
+    const response = await register(email, password);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /12 đến 128/i);
+  }
+
+  const boundaryPassword = " 1234567890 ";
+  const accepted = await register("boundary@example.com", boundaryPassword);
+  assert.equal(accepted.status, 201);
+  const boundaryLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "boundary@example.com", password: boundaryPassword }),
+  });
+  assert.equal(boundaryLogin.status, 200);
+
+  const limitedBaseUrl = await startAuthTestServer(t);
+  const rejectedRegistration = () => fetch(`${limitedBaseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Rate Limit User",
+      email: "retry@example.com",
+      password: "12345678901",
+    }),
+  });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    assert.equal((await rejectedRegistration()).status, 400);
+  }
+  const rateLimited = await rejectedRegistration();
+  assert.equal(rateLimited.status, 429);
+  assert.match((await rateLimited.json()).error, /quá nhiều lần/i);
 });
 
 test("password reset requests are rate limited by source address and email", async (t) => {
@@ -304,6 +350,13 @@ test("password reset emails a single-use link and replaces the account password"
   assert.equal(resetUrl.search, "");
   const token = new URLSearchParams(resetUrl.hash.slice(1)).get("resetToken");
   assert.match(token, /^[a-f0-9]{64}$/);
+  const invalidPasswordRes = await fetch(`${baseUrl}/api/auth/password-reset/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password: "short-pass" }),
+  });
+  assert.equal(invalidPasswordRes.status, 400);
+
   const storedUser = JSON.parse(
     await fsPromises.readFile(path.join(temporaryDirectory, "users.json"), "utf8"),
   ).find((user) => user.email === "reset@example.com");
@@ -401,7 +454,7 @@ test("auth customer-info rejects null or malformed payloads without crashing", a
   const user = {
     name: "Test User",
     email: "test-user@example.com",
-    password: "password123",
+    password: "password12345",
   };
 
   await fetch(`${baseUrl}/api/auth/register`, {

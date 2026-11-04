@@ -306,6 +306,13 @@ BookNest hiện phù hợp cho demo, chưa phải cấu hình production hoàn c
 - Chạy `npm audit --omit=dev` và cập nhật dependency định kỳ.
 - Không chạy seed dữ liệu mẫu trên production.
 
+Đăng ký và đặt lại mật khẩu yêu cầu 12–128 ký tự, không chỉ có khoảng trắng;
+mật khẩu được giữ nguyên và không bị cắt khoảng trắng trước khi băm. Endpoint
+đăng ký giới hạn 5 yêu cầu cho mỗi địa chỉ IP trong 15 phút và dùng bộ đếm trong
+bộ nhớ của từng tiến trình Node.js. Khi chạy nhiều instance hoặc sau proxy, cần
+cấu hình giới hạn tương ứng ở gateway/kho dùng chung; server không tin cậy các
+header IP do client tự gửi.
+
 ### Đăng ký Google/Facebook
 
 Nếu bật Firebase Authentication, cấu hình provider trong Firebase Console và chỉ đặt các giá trị web public trong `assets/firebase-config.js`. Không đặt provider client secret, Facebook App Secret hoặc private credential trong frontend. Domain sử dụng phải được thêm vào danh sách Authorized domains và website phải chạy qua HTTPS, hoặc localhost khi development.

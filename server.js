@@ -20,6 +20,9 @@ const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
   hashPasswordResetToken,
+  isPasswordValid,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,
   SessionStore,
   verifyPassword,
@@ -89,6 +92,7 @@ const payloadSchemas = {
     allowed: ["token", "password"],
     required: ["token", "password"],
     types: { token: "string", password: "string" },
+    preserveStrings: ["password"],
   },
   register: {
     allowed: ["name", "email", "password", "studentType", "studentId"],
@@ -100,11 +104,13 @@ const payloadSchemas = {
       studentType: "string",
       studentId: "string",
     },
+    preserveStrings: ["password"],
   },
   login: {
     allowed: ["email", "password"],
     required: ["email", "password"],
     types: { email: "string", password: "string" },
+    preserveStrings: ["password"],
   },
   socialAuth: {
     allowed: [
@@ -401,7 +407,7 @@ async function readJson(request) {
   } catch {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
-  return sanitizePayload(payload);
+  return payload;
 }
 
 async function readRawBody(request) {
@@ -477,6 +483,11 @@ function requireJsonObject(
   }
 
   const sanitized = sanitizePayload(payload);
+  for (const field of schema?.preserveStrings || []) {
+    if (typeof payload[field] === "string") {
+      sanitized[field] = payload[field];
+    }
+  }
   const prototype = Object.getPrototypeOf(sanitized);
   if (prototype !== Object.prototype && prototype !== null) {
     throw new RequestError(400, message);
@@ -874,6 +885,9 @@ function createServer({
   const loginAttempts = new Map();
   const loginAttemptLimit = 5;
   const loginAttemptWindowMs = 15 * 60 * 1000;
+  const registrationAttempts = new Map();
+  const registrationAttemptLimit = 5;
+  const registrationAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
   let orderWriteQueue = Promise.resolve();
@@ -1280,11 +1294,11 @@ function createServer({
       if (!/^[a-f0-9]{64}$/i.test(token)) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }
-      if (password.trim().length < 6 || password.trim().length > 128) {
-        throw new RequestError(400, "Mật khẩu mới phải có từ 6 đến 128 ký tự.");
-      }
-      if (!password.trim()) {
-        throw new RequestError(400, "Mật khẩu mới không được để trống.");
+      if (!isPasswordValid(password)) {
+        throw new RequestError(
+          400,
+          `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
+        );
       }
       const userId = await db.resetPassword(hashPasswordResetToken(token), password);
       if (!userId) {
@@ -1299,6 +1313,28 @@ function createServer({
       requestUrl.pathname === "/api/auth/register" &&
       request.method === "POST"
     ) {
+      const now = Date.now();
+      for (const [address, attempt] of registrationAttempts) {
+        if (attempt.expiresAt <= now) registrationAttempts.delete(address);
+      }
+      const address = request.socket.remoteAddress || "unknown";
+      const attempt = registrationAttempts.get(address);
+      if (attempt && attempt.count >= registrationAttemptLimit) {
+        throw new RequestError(
+          429,
+          "Bạn đã đăng ký quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+        );
+      }
+      if (!attempt && registrationAttempts.size >= 10_000) {
+        throw new RequestError(
+          503,
+          "Tạm thời không thể xử lý đăng ký. Vui lòng thử lại sau.",
+        );
+      }
+      registrationAttempts.set(address, {
+        count: (attempt?.count || 0) + 1,
+        expiresAt: attempt?.expiresAt || now + registrationAttemptWindowMs,
+      });
       const payload = requireJsonObject(
         await readJson(request),
         "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
@@ -1319,8 +1355,11 @@ function createServer({
           "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
         );
       }
-      if (password.length < 6) {
-        throw new RequestError(400, "Mật khẩu phải có ít nhất 6 ký tự.");
+      if (!isPasswordValid(password)) {
+        throw new RequestError(
+          400,
+          `Mật khẩu phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
+        );
       }
       try {
         const user = await db.createUser({
@@ -1344,7 +1383,10 @@ function createServer({
         });
       } catch (err) {
         if (err instanceof Error && err.message === "Email này đã được đăng ký trên hệ thống.") {
-          throw new RequestError(409, err.message);
+          throw new RequestError(
+            409,
+            "Không thể hoàn tất đăng ký với thông tin đã cung cấp. Vui lòng kiểm tra và thử lại.",
+          );
         }
         throw new RequestError(
           503,

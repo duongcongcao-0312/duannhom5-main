@@ -621,7 +621,7 @@ test('coupon and account discounts use one rounded integer-money calculation', a
 		body: JSON.stringify({
 			name: 'Nguyễn Văn B',
 			email: 'money-rounding@example.com',
-			password: 'password123',
+			password: 'password12345',
 			studentType: 'student',
 		}),
 	});

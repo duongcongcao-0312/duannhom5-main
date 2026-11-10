@@ -26,6 +26,12 @@ Khi dùng Render Postgres, ưu tiên internal database URL của cùng region. B
 dùng TLS và chỉ bỏ xác thực chứng thư cho hostname nội bộ Render (không có dấu
 chấm); các hostname database bên ngoài vẫn xác thực chứng thư TLS.
 
+Render chạy `npm run migrate && npm start`, vì vậy migration hoàn tất trước khi
+web server nhận traffic. Hãy tạo backup/snapshot ở provider trước khi bấm
+deploy, sau đó kiểm tra `/ready` và chạy smoke test sau deploy. Checklist bằng
+chứng không chứa secret nằm tại
+[production-readiness-checklist.md](./production-readiness-checklist.md).
+
 Để bật khôi phục mật khẩu, cấu hình các biến sau trên backend:
 
 - `PUBLIC_APP_URL`: URL đầy đủ của storefront, bao gồm đường dẫn nếu website

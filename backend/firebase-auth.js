@@ -1,3 +1,5 @@
+const { SOCIAL_PROVIDERS } = require("./db");
+
 const FIREBASE_LOOKUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
 function createFirebaseIdTokenVerifier({
@@ -25,8 +27,11 @@ function createFirebaseIdTokenVerifier({
       throw new Error("Email của tài khoản social chưa được xác minh.");
     }
     const providerInfo = Array.isArray(firebaseUser.providerUserInfo)
-      ? firebaseUser.providerUserInfo[0]
+      ? firebaseUser.providerUserInfo.find((entry) => SOCIAL_PROVIDERS.has(entry.providerId))
       : null;
+    if (!providerInfo) {
+      throw new Error("Tài khoản không sử dụng nhà cung cấp social được hỗ trợ.");
+    }
     return {
       uid: firebaseUser.localId,
       email: firebaseUser.email,

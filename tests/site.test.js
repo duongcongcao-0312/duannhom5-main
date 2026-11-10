@@ -710,6 +710,9 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	);
 	assert.equal(spec.openapi, '3.1.0');
 	assert.ok(spec.paths['/api/auth/register']);
+	assert.ok(spec.paths['/api/auth/social']);
+	assert.ok(spec.paths['/api/auth/social/link'].post.security);
+	assert.ok(spec.paths['/api/auth/social/unlink'].post.security);
 	assert.ok(spec.paths['/api/auth/password-reset']);
 	assert.ok(spec.paths['/api/orders'].get.security);
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);

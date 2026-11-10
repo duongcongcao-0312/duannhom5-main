@@ -350,6 +350,10 @@ header IP do client tự gửi.
 
 Nếu bật Firebase Authentication, cấu hình provider trong Firebase Console và chỉ đặt các giá trị web public trong `assets/firebase-config.js`. Không đặt provider client secret, Facebook App Secret hoặc private credential trong frontend. Domain sử dụng phải được thêm vào danh sách Authorized domains và website phải chạy qua HTTPS, hoặc localhost khi development.
 
+Social login chỉ chấp nhận email đã được Firebase xác minh và provider Google/Facebook. Email trùng với tài khoản mật khẩu không tự động liên kết: người dùng cần đăng nhập bằng tài khoản hiện tại rồi gọi `POST /api/auth/social/link` với session bearer token, Firebase `idToken` và mật khẩu để xác thực lại. Gọi `POST /api/auth/social/unlink` với session token, `provider` (`google.com` hoặc `facebook.com`) và mật khẩu để tách provider. Tài khoản social-only cần đặt mật khẩu qua quy trình khôi phục email trước khi liên kết hoặc tách provider.
+
+Các tài khoản social cũ vẫn giữ provider ID đã lưu và có thể đăng nhập bằng đúng provider ID đó. Không có migration tự động thay đổi liên kết cũ; trước khi gỡ liên kết đã tồn tại, cần kiểm tra thủ công các tài khoản có `authProvider`/`providerId` hoặc `socialAccounts` trong kho dữ liệu.
+
 ## Cấu trúc dự án
 
 ```text

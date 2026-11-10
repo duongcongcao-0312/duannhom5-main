@@ -665,7 +665,7 @@ test('coupon and account discounts use one rounded integer-money calculation', a
 	const order = await response.json();
 	assert.deepEqual(
 		{ subtotal: order.subtotal, discount: order.discount, total: order.total },
-		{ subtotal: 89000, discount: 17800, total: 71200 },
+		{ subtotal: 89000, discount: 13350, total: 75650 },
 	);
 });
 

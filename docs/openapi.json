@@ -32,7 +32,13 @@
     "/api/books": {
       "get": {
         "tags": ["Store"],
-        "summary": "Danh sách sách mặc định và sách do quản trị thêm",
+        "summary": "Danh sách sách mặc định và sách do quản trị thêm, có phân trang",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["title", "price", "category"], "default": "title" } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } }
+        ],
         "responses": { "200": { "description": "Danh sách sách", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } } } } } }
       }
     },

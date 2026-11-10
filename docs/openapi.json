@@ -176,6 +176,33 @@
         "responses": { "200": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } }, "401": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/auth/social": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Đăng nhập social bằng Firebase ID token đã xác minh",
+        "parameters": [{ "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^Bearer .+$" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email", "description": "Tương thích client; backend dùng email trong token đã xác minh." } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "description": "Email đã thuộc tài khoản khác; không tự động liên kết.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } } }
+      }
+    },
+    "/api/auth/social/link": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Liên kết social provider sau khi xác thực lại bằng mật khẩu",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SocialAccountLink" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/auth/social/unlink": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Tách social provider sau khi xác thực lại bằng mật khẩu",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SocialAccountUnlink" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/auth/me": {
       "get": {
         "tags": ["Auth"],
@@ -373,6 +400,8 @@
       "PasswordResetConfirm": { "type": "object", "required": ["token", "password"], "properties": { "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "password": { "type": "string", "minLength": 6, "maxLength": 128 } } },
       "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
       "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
+      "SocialAccountLink": { "type": "object", "additionalProperties": false, "required": ["idToken", "password"], "properties": { "idToken": { "type": "string", "description": "Firebase ID token của tài khoản social đã xác minh." }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
+      "SocialAccountUnlink": { "type": "object", "additionalProperties": false, "required": ["provider", "password"], "properties": { "provider": { "type": "string", "enum": ["google.com", "facebook.com"] }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
       "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
       "PaymentWebhookEvent": { "type": "object", "additionalProperties": false, "required": ["id", "orderId", "status", "amount", "currency", "occurredAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }, "orderId": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["succeeded", "failed", "pending", "cancelled"] }, "amount": { "type": "integer", "minimum": 0 }, "currency": { "type": "string", "const": "VND" }, "occurredAt": { "type": "string", "format": "date-time" } } },
       "OrderQuoteRequest": { "type": "object", "additionalProperties": false, "required": ["items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },

@@ -13,6 +13,7 @@ const books = require("./books-data");
 const {
   CustomerError,
   Database,
+  SOCIAL_PROVIDERS,
   validateCustomerInteractionData,
   validateCustomerData,
 } = require("./backend/db");
@@ -165,6 +166,18 @@ const payloadSchemas = {
       studentType: "string",
       studentId: "string",
     },
+  },
+  socialAuthLink: {
+    allowed: ["idToken", "password"],
+    required: ["idToken", "password"],
+    types: { idToken: "string", password: "string" },
+    preserveStrings: ["idToken", "password"],
+  },
+  socialAuthUnlink: {
+    allowed: ["provider", "password"],
+    required: ["provider", "password"],
+    types: { provider: "string", password: "string" },
+    preserveStrings: ["password"],
   },
   customerInfo: {
     allowed: ["customerName", "name", "phone", "address"],
@@ -486,6 +499,28 @@ function publicUser(user) {
     authProvider: user.authProvider || undefined,
     customerInfo: user.customerInfo || {},
   };
+}
+
+async function verifySocialIdentity(idToken, socialTokenVerifier) {
+  let verified;
+  try {
+    verified = await socialTokenVerifier(idToken);
+  } catch {
+    throw new RequestError(401, "Thông tin xác thực social không hợp lệ hoặc đã hết hạn.");
+  }
+  const email = sanitizePlainText(String(verified?.email || ""), 254).toLowerCase();
+  const name = sanitizePlainText(String(verified?.name || ""), 120) || email.split("@")[0];
+  const provider = String(verified?.provider || "").trim().toLowerCase();
+  const providerId = sanitizePlainText(String(verified?.uid || ""), 128);
+  if (
+    verified?.emailVerified !== true ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    !SOCIAL_PROVIDERS.has(provider) ||
+    !providerId
+  ) {
+    throw new RequestError(401, "Thông tin xác thực social chưa được xác minh đầy đủ.");
+  }
+  return { email, name, provider, providerId };
 }
 
 async function sendHtmlError(response, status, pageName) {
@@ -1181,6 +1216,7 @@ function createServer({
     cleanupIntervalMs: 60 * 1000,
   });
   const loginAttempts = new Map();
+  const reauthenticationAttempts = new Map();
   const loginAttemptLimit = 5;
   const loginAttemptWindowMs = 15 * 60 * 1000;
   const registrationAttempts = new Map();
@@ -1188,6 +1224,31 @@ function createServer({
   const registrationAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
+  function verifyPasswordReauthentication(request, user, password) {
+    const now = Date.now();
+    for (const [address, attempt] of reauthenticationAttempts) {
+      if (attempt.expiresAt <= now) reauthenticationAttempts.delete(address);
+    }
+    const address = request.socket.remoteAddress || "unknown";
+    const attempt = reauthenticationAttempts.get(address);
+    if (attempt && attempt.count >= loginAttemptLimit) {
+      throw new RequestError(
+        429,
+        "Bạn đã thử xác thực lại quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+      );
+    }
+    if (
+      user.passwordAuthEnabled === false ||
+      !verifyPassword(password, user.password)
+    ) {
+      reauthenticationAttempts.set(address, {
+        count: (attempt?.count || 0) + 1,
+        expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
+      });
+      throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
+    }
+    reauthenticationAttempts.delete(address);
+  }
   let orderWriteQueue = Promise.resolve();
   const allowedOrigins = new Set(
     corsOrigins
@@ -1865,7 +1926,12 @@ function createServer({
       ).toLowerCase();
       const password = typeof payload.password === "string" ? payload.password : "";
       const user = await db.findUserByEmail(email);
-      if (!user || user.isActive === false || !verifyPassword(password, user.password)) {
+      if (
+        !user ||
+        user.isActive === false ||
+        user.passwordAuthEnabled === false ||
+        !verifyPassword(password, user.password)
+      ) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
       loginAttempts.delete(address);
@@ -1892,38 +1958,21 @@ function createServer({
         (typeof payload.idToken === "string" ? payload.idToken.trim() : "");
       if (!idToken) throw new RequestError(401, "Thiếu Firebase ID Token.");
 
-      let verified;
-      try {
-        verified = await socialTokenVerifier(idToken);
-      } catch (error) {
-        throw new RequestError(401, error.message || "Firebase ID Token không hợp lệ.");
-      }
-      const email = sanitizePlainText(String(verified?.email || ""), 254).toLowerCase();
-      const name = sanitizePlainText(String(verified?.name || ""), 120) ||
-        email.split("@")[0];
-      const provider = sanitizePlainText(String(verified?.provider || "firebase"), 32);
-      const providerId = sanitizePlainText(String(verified?.uid || ""), 128);
-      if (!verified?.emailVerified || !email || !providerId ||
-          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new RequestError(401, "Thông tin Firebase chưa được xác minh đầy đủ.");
-      }
-      const existingUser = await db.findUserByEmail(email);
-      if (existingUser?.isActive === false) {
-        throw new RequestError(403, "Tài khoản đã bị vô hiệu hóa.");
-      }
-      if (existingUser?.role === ROLES.ADMIN) {
-        throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
-      }
-      if (existingUser?.providerId && existingUser.providerId !== providerId) {
-        throw new RequestError(403, "Tài khoản social không khớp với tài khoản đã liên kết.");
-      }
+      const { email, name, provider, providerId } = await verifySocialIdentity(
+        idToken,
+        socialTokenVerifier,
+      );
 
       const user = await db.findOrCreateSocialUser({
         name,
         email,
         authProvider: provider,
         providerId,
+        emailVerified: true,
       });
+      if (user.role === ROLES.ADMIN) {
+        throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
+      }
 
       const session = await sessionStore.createSession(user);
       sendJson(response, 200, {
@@ -1931,6 +1980,53 @@ function createServer({
         expiresAt: session.expiresAt,
         user: publicUser(user),
       });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/auth/social/link" &&
+      request.method === "POST"
+    ) {
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu liên kết tài khoản không hợp lệ.",
+        payloadSchemas.socialAuthLink,
+      );
+      const session = await getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      const user = await db.findUserById(session.userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+        throw new RequestError(403, "Không thể liên kết tài khoản social.");
+      }
+      verifyPasswordReauthentication(request, user, payload.password);
+      const identity = await verifySocialIdentity(payload.idToken, socialTokenVerifier);
+      const linkedUser = await db.linkSocialAccount(
+        user.id,
+        identity.provider,
+        identity.providerId,
+      );
+      sendJson(response, 200, { user: publicUser(linkedUser) });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/auth/social/unlink" &&
+      request.method === "POST"
+    ) {
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu tách tài khoản không hợp lệ.",
+        payloadSchemas.socialAuthUnlink,
+      );
+      const session = await getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      const user = await db.findUserById(session.userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+        throw new RequestError(403, "Không thể tách tài khoản social.");
+      }
+      verifyPasswordReauthentication(request, user, payload.password);
+      const updatedUser = await db.unlinkSocialAccount(user.id, payload.provider);
+      sendJson(response, 200, { user: publicUser(updatedUser) });
       return;
     }
 
@@ -2846,7 +2942,7 @@ function createServer({
         password: payload.password,
         role: payload.role,
       }, actor.userId);
-      const { password, passwordReset, ...safeStaff } = staff;
+      const { password, passwordAuthEnabled, passwordReset, ...safeStaff } = staff;
       sendJson(response, 201, safeStaff);
       return;
     }

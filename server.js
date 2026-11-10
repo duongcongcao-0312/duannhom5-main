@@ -421,6 +421,14 @@ const customerQuerySchema = {
   },
   page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
   limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
+  sort: { type: "string", maxLength: 32, values: ["createdAt", "name", "status"] },
+  order: { type: "string", maxLength: 4, values: ["asc", "desc"] },
+};
+const listQuerySchema = {
+  page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
+  limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
+  sort: { type: "string", maxLength: 32, values: ["createdAt", "title", "name", "status"] },
+  order: { type: "string", maxLength: 4, values: ["asc", "desc"] },
 };
 const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
 const maxRequestBytes = 1024 * 1024;
@@ -757,6 +765,7 @@ function validateQuery(requestUrl, schema, message) {
     if (!definition || Object.hasOwn(values, field) || value.length > definition.maxLength) {
       throw new RequestError(400, message);
     }
+
     if (definition.type === "integer") {
       if (!/^\d+$/.test(value)) throw new RequestError(400, message);
       const number = Number(value);
@@ -776,6 +785,42 @@ function validateQuery(requestUrl, schema, message) {
     values[field] = value;
   }
   return values;
+}
+
+function paginateList(records, query, defaultSort, defaultLimit = 50) {
+  const page = query.page || 1;
+  const limit = query.limit || defaultLimit;
+  const sort = query.sort || defaultSort;
+  const direction = query.order === "asc" ? 1 : -1;
+  const sorted = [...records].sort((left, right) => {
+    const rawLeftValue = left?.[sort] ?? "";
+    const rawRightValue = right?.[sort] ?? "";
+    const compared = typeof rawLeftValue === "number" && typeof rawRightValue === "number"
+      ? rawLeftValue - rawRightValue
+      : String(rawLeftValue).toLocaleLowerCase("vi")
+        .localeCompare(String(rawRightValue).toLocaleLowerCase("vi"), "vi");
+    if (compared !== 0) return compared * direction;
+    return String(left?.id || left?.orderId || left?.title || "")
+      .localeCompare(String(right?.id || right?.orderId || right?.title || ""), "vi") * direction;
+  });
+  const total = sorted.length;
+  const items = sorted.slice((page - 1) * limit, page * limit);
+  return {
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      sort,
+      order: query.order || "desc",
+    },
+  };
+}
+
+function sendPaginatedJson(response, result) {
+  response.setHeader("X-Pagination", JSON.stringify(result.pagination));
+  sendJson(response, 200, result.items);
 }
 
 function validateApiPath(pathname) {
@@ -1399,9 +1444,6 @@ function createServer({
   function applyCustomerFilters(customers, { search = "", status = "", page = 1, limit = 20 } = {}) {
     const normalizedSearch = String(search || "").trim().toLowerCase();
     const normalizedStatus = String(status || "").trim();
-    const normalizedPage = Number.isFinite(Number(page)) ? Math.max(1, Number(page)) : 1;
-    const normalizedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 20;
-
     let filtered = [...customers];
     if (normalizedStatus) {
       filtered = filtered.filter((customer) => customer.status === normalizedStatus);
@@ -1415,8 +1457,7 @@ function createServer({
       });
     }
 
-    const start = (normalizedPage - 1) * normalizedLimit;
-    return filtered.slice(start, start + normalizedLimit);
+    return filtered;
   }
 
   async function assertUniqueBookTitle(title, excludedId) {
@@ -2060,7 +2101,7 @@ function createServer({
       const pagedCustomers = applyCustomerFilters(customers, {
         ...filters,
       });
-      sendJson(response, 200, pagedCustomers);
+      sendPaginatedJson(response, paginateList(pagedCustomers, filters, "createdAt", 20));
       return;
     }
 
@@ -2093,7 +2134,7 @@ function createServer({
       const pagedCustomers = applyCustomerFilters(customers, {
         ...filters,
       });
-      sendJson(response, 200, pagedCustomers);
+      sendPaginatedJson(response, paginateList(pagedCustomers, filters, "createdAt", 20));
       return;
     }
 
@@ -2280,18 +2321,23 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/api/orders" && request.method === "GET") {
-      validateQuery(requestUrl, {}, "Bộ lọc đơn hàng không hợp lệ.");
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "total"] } },
+        "Bộ lọc đơn hàng không hợp lệ.",
+      );
       const requester = await getAuthUser(request);
       if (!requester) {
         throw new RequestError(401, "Vui lòng đăng nhập để tra cứu đơn hàng.");
       }
       const orders = await db.getAllOrders(ordersPath);
-      sendJson(
+      sendPaginatedJson(
         response,
-        200,
-        orders
-          .filter((order) => order.userId === requester.userId)
-          .map(publicOrder),
+        paginateList(
+          orders.filter((order) => order.userId === requester.userId).map(publicOrder),
+          filters,
+          "createdAt",
+        ),
       );
       return;
     }
@@ -2563,7 +2609,12 @@ function createServer({
 
     // --- API: Books Catalog (Base + Custom) ---
     if (requestUrl.pathname === "/api/books" && request.method === "GET") {
-      sendJson(response, 200, await getCatalogBookList());
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] } },
+        "Bộ lọc sách không hợp lệ.",
+      );
+      sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
       return;
     }
 
@@ -2572,7 +2623,12 @@ function createServer({
       request.method === "GET"
     ) {
       await requireRole(request, "read:books");
-      sendJson(response, 200, await getCatalogBookList());
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] } },
+        "Bộ lọc sách không hợp lệ.",
+      );
+      sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
       return;
     }
 
@@ -2593,8 +2649,13 @@ function createServer({
       request.method === "GET"
     ) {
       await requireRole(request, "read:orders");
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "total"] } },
+        "Bộ lọc đơn hàng không hợp lệ.",
+      );
       const orders = await db.getAllOrders(ordersPath);
-      sendJson(response, 200, orders);
+      sendPaginatedJson(response, paginateList(orders, filters, "createdAt"));
       return;
     }
 
@@ -2651,8 +2712,12 @@ function createServer({
       request.method === "GET"
     ) {
       await requireRole(request, "read:services");
-      const list = await db.getServiceRequests();
-      sendJson(response, 200, list);
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "service"] } },
+        "Bộ lọc yêu cầu dịch vụ không hợp lệ.",
+      );
+      sendPaginatedJson(response, paginateList(await db.getServiceRequests(), filters, "createdAt"));
       return;
     }
 
@@ -2694,7 +2759,12 @@ function createServer({
       request.method === "GET"
     ) {
       await requireRole(request, "read:coupons");
-      sendJson(response, 200, await db.getCoupons());
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["code", "expiresAt", "usedCount"] } },
+        "Bộ lọc coupon không hợp lệ.",
+      );
+      sendPaginatedJson(response, paginateList(await db.getCoupons(), filters, "code"));
       return;
     }
 
@@ -2912,6 +2982,11 @@ function createServer({
       request.method === "GET"
     ) {
       await requireRole(request, "read:users");
+      const filters = validateQuery(
+        requestUrl,
+        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "name", "role"] } },
+        "Bộ lọc người dùng không hợp lệ.",
+      );
       const users = await db.getUsers();
       const safeUsers = users.map((u) => ({
         id: u.id,
@@ -2923,7 +2998,7 @@ function createServer({
         studentVerification: u.studentVerification || { status: STUDENT_VERIFICATION_STATUSES.PENDING },
         createdAt: u.createdAt,
       }));
-      sendJson(response, 200, safeUsers);
+      sendPaginatedJson(response, paginateList(safeUsers, filters, "createdAt"));
       return;
     }
 

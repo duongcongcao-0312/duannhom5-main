@@ -188,6 +188,8 @@ Các endpoint chính hiện có:
 | `PUT` / `PATCH` / `DELETE` | `/api/admin/customers/:id/interactions/:interactionId` | Quyền CRM | Cập nhật hoặc xoá tương tác; chỉ admin được xoá. |
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra coupon còn hiệu lực. |
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
+
+Danh sách hỗ trợ phân trang, sắp xếp có whitelist và header `X-Pagination`; xem [tài liệu phân trang API](docs/api-pagination.md) và [OpenAPI](docs/openapi.json).
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
 | `GET` | `/api/admin/users` | Quản trị | Liệt kê người dùng. |
 | `GET` | `/api/admin/staff` | `read:staff` | Liệt kê nhân viên và các quyền hiệu lực theo vai trò. |

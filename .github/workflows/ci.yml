@@ -43,6 +43,8 @@ jobs:
         run: npm ci
       - name: Static JavaScript checks
         run: npm run check
+      - name: Validate API contract JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('docs/openapi.json','utf8')); console.log('OpenAPI contract is valid JSON')"
       - name: Tests and coverage thresholds (lines 70%, branches 65%, functions 60%)
         run: npm run test:coverage
       - name: Upload test and coverage reports

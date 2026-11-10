@@ -121,6 +121,27 @@ test("expired sessions are rejected by every protected endpoint", async (t) => {
   assert.equal(customersResponse.status, 401);
 });
 
+test("refresh tokens enforce their expiry and reject mismatched values", async () => {
+  const store = new SessionStore({
+    sessionTtlMs: 30_000,
+    refreshTtlMs: 5,
+    cleanupIntervalMs: 0,
+  });
+  const user = { id: "r1", email: "refresh@example.com", name: "Refresh User" };
+  const session = await store.createSession(user);
+
+  assert.equal(store.verifyRefreshToken("not-the-right-token", session), false);
+  assert.equal(store.verifyRefreshToken(session.refreshToken, session), true);
+  const refreshed = await store.refreshSession(session.token, session.refreshToken);
+  assert.ok(refreshed);
+  assert.ok(refreshed.expiresAt > Date.now());
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(await store.refreshSession(session.token, session.refreshToken), null);
+  assert.equal(await store.getSession(session.token), null);
+  store.close();
+});
+
 test("profile endpoint rejects missing and invalid bearer tokens", async (t) => {
   const baseUrl = await startAuthTestServer(t);
   const missingTokenResponse = await fetch(`${baseUrl}/api/auth/me`);

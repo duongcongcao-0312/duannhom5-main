@@ -24,6 +24,7 @@ const {
   isPasswordValid,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  SESSION_REFRESH_TTL_MS,
   SESSION_TTL_MS,
   SessionStore,
   verifyPassword,
@@ -1079,6 +1080,9 @@ function createServer({
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
     : SESSION_TTL_MS,
+  refreshTtlMs = Number.isFinite(Number(process.env.SESSION_REFRESH_TTL_MS))
+    ? Number(process.env.SESSION_REFRESH_TTL_MS)
+    : SESSION_REFRESH_TTL_MS,
   passwordResetMailer = createEmailMailer(),
   socialTokenVerifier = createFirebaseIdTokenVerifier(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
@@ -1133,6 +1137,7 @@ function createServer({
   const sessionStore = new SessionStore({
     repository: sessionRepository,
     sessionTtlMs,
+    refreshTtlMs,
     cleanupIntervalMs: 60 * 1000,
   });
   const loginAttempts = new Map();

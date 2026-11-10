@@ -32,6 +32,7 @@ function hashPasswordResetToken(token) {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;
 
@@ -49,8 +50,14 @@ class SessionStore {
     this.sessionTtlMs = Number.isFinite(options.sessionTtlMs)
       ? options.sessionTtlMs
       : SESSION_TTL_MS;
+    this.refreshTtlMs = Number.isFinite(options.refreshTtlMs)
+      ? options.refreshTtlMs
+      : SESSION_REFRESH_TTL_MS;
     if (this.sessionTtlMs <= 0) {
       throw new RangeError("SESSION_TTL_MS must be greater than zero.");
+    }
+    if (this.refreshTtlMs <= 0) {
+      throw new RangeError("SESSION_REFRESH_TTL_MS must be greater than zero.");
     }
     this.cleanupIntervalMs = Number.isFinite(options.cleanupIntervalMs)
       ? options.cleanupIntervalMs
@@ -66,11 +73,15 @@ class SessionStore {
     }
   }
 
-  async createSession(user, sessionTtlMs = this.sessionTtlMs) {
+  async createSession(user, sessionTtlMs = this.sessionTtlMs, refreshTtlMs = this.refreshTtlMs) {
     const token = crypto.randomUUID();
+    const refreshToken = crypto.randomUUID();
     const now = Date.now();
     const sessionData = {
       token,
+      refreshToken,
+      refreshTokenHash: hashPasswordResetToken(refreshToken),
+      refreshExpiresAt: now + Number(refreshTtlMs),
       userId: user.id,
       email: user.email,
       name: user.name,
@@ -86,12 +97,13 @@ class SessionStore {
     if (this.repository) {
       const storedSession = { ...sessionData };
       delete storedSession.token;
+      delete storedSession.refreshToken;
       await this.repository.saveSessionRecord(
         hashPasswordResetToken(token),
         storedSession,
       );
     } else {
-      this.sessions.set(token, sessionData);
+      this.sessions.set(token, { ...sessionData, refreshToken: undefined });
     }
     return sessionData;
   }
@@ -109,12 +121,37 @@ class SessionStore {
     return { ...session, token };
   }
 
-  async refreshSession(token, sessionTtlMs = this.sessionTtlMs) {
+  async refreshSession(token, refreshTokenOrSessionTtlMs, maybeRefreshTtlMs) {
     const session = await this.getSession(token);
     if (!session) return null;
     const now = Date.now();
+    let refreshToken = null;
+    let sessionTtlMs = this.sessionTtlMs;
+    let refreshTtlMs = this.refreshTtlMs;
+
+    if (typeof refreshTokenOrSessionTtlMs === "string") {
+      refreshToken = refreshTokenOrSessionTtlMs;
+      if (Number.isFinite(Number(maybeRefreshTtlMs))) {
+        sessionTtlMs = Number(maybeRefreshTtlMs);
+      }
+    } else if (Number.isFinite(Number(refreshTokenOrSessionTtlMs))) {
+      sessionTtlMs = Number(refreshTokenOrSessionTtlMs);
+      refreshTtlMs = Number.isFinite(Number(maybeRefreshTtlMs))
+        ? Number(maybeRefreshTtlMs)
+        : refreshTtlMs;
+    }
+
+    if (Number.isFinite(session.refreshExpiresAt) && now >= session.refreshExpiresAt) {
+      await this.destroySession(token);
+      return null;
+    }
+    if (refreshToken && !this.verifyRefreshToken(refreshToken, session)) {
+      return null;
+    }
+
     session.updatedAt = now;
     session.expiresAt = now + Number(sessionTtlMs);
+    session.refreshExpiresAt = now + Number(refreshTtlMs);
     if (this.repository) {
       const storedSession = { ...session };
       delete storedSession.token;
@@ -123,9 +160,85 @@ class SessionStore {
         storedSession,
       );
     } else {
-      this.sessions.set(token, session);
+      this.sessions.set(token, { ...session, refreshToken: undefined });
     }
     return session;
+  }
+
+  verifyRefreshToken(refreshToken, session) {
+    if (!refreshToken || typeof refreshToken !== "string") return false;
+    if (!session || typeof session !== "object") return false;
+    if (Number.isFinite(session.refreshExpiresAt) && Date.now() >= session.refreshExpiresAt) {
+      return false;
+    }
+    const expectedHash = hashPasswordResetToken(refreshToken);
+    const suppliedHash = typeof session.refreshTokenHash === "string"
+      ? session.refreshTokenHash
+      : "";
+    if (!suppliedHash || !expectedHash) return false;
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(expectedHash, "hex"),
+        Buffer.from(suppliedHash, "hex"),
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async rotateSession(token, refreshTokenOrSessionTtlMs, maybeRefreshTtlMs) {
+    const session = await this.getSession(token);
+    if (!session) return null;
+    const now = Date.now();
+    let refreshToken = null;
+    let sessionTtlMs = this.sessionTtlMs;
+    let refreshTtlMs = this.refreshTtlMs;
+
+    if (typeof refreshTokenOrSessionTtlMs === "string") {
+      refreshToken = refreshTokenOrSessionTtlMs;
+      if (Number.isFinite(Number(maybeRefreshTtlMs))) {
+        sessionTtlMs = Number(maybeRefreshTtlMs);
+      }
+    } else if (Number.isFinite(Number(refreshTokenOrSessionTtlMs))) {
+      sessionTtlMs = Number(refreshTokenOrSessionTtlMs);
+      refreshTtlMs = Number.isFinite(Number(maybeRefreshTtlMs))
+        ? Number(maybeRefreshTtlMs)
+        : refreshTtlMs;
+    }
+
+    if (Number.isFinite(session.refreshExpiresAt) && now >= session.refreshExpiresAt) {
+      await this.destroySession(token);
+      return null;
+    }
+    if (refreshToken && !this.verifyRefreshToken(refreshToken, session)) {
+      return null;
+    }
+
+    const nextToken = crypto.randomUUID();
+    const nextRefreshToken = crypto.randomUUID();
+    const rotatedSession = {
+      ...session,
+      token: nextToken,
+      refreshToken: nextRefreshToken,
+      refreshTokenHash: hashPasswordResetToken(nextRefreshToken),
+      updatedAt: now,
+      expiresAt: now + Number(sessionTtlMs),
+      refreshExpiresAt: now + Number(refreshTtlMs),
+    };
+    if (this.repository) {
+      const storedSession = { ...rotatedSession };
+      delete storedSession.token;
+      delete storedSession.refreshToken;
+      await this.repository.deleteSessionRecord(hashPasswordResetToken(token));
+      await this.repository.saveSessionRecord(
+        hashPasswordResetToken(nextToken),
+        storedSession,
+      );
+    } else {
+      this.sessions.delete(token);
+      this.sessions.set(nextToken, { ...rotatedSession, refreshToken: undefined });
+    }
+    return rotatedSession;
   }
 
   async destroySession(token) {
@@ -180,6 +293,7 @@ module.exports = {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,
+  SESSION_REFRESH_TTL_MS,
   verifyPassword,
   SessionStore
 };

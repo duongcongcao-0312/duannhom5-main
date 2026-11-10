@@ -340,8 +340,18 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     },
     body: JSON.stringify({ status: "processing" }),
   });
-  assert.equal(alicePatch.status, 200);
-  assert.equal((await alicePatch.json()).status, "processing");
+  assert.equal(alicePatch.status, 403);
+
+  const aliceCancel = await fetch(`${baseUrl}/api/orders/${orderId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `******
+    },
+    body: JSON.stringify({ status: "cancelled" }),
+  });
+  assert.equal(aliceCancel.status, 200);
+  assert.equal((await aliceCancel.json()).status, "cancelled");
 });
 
 test("registration returns a JSON service error when user persistence is unavailable", async (t) => {

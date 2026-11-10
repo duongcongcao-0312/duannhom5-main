@@ -20,6 +20,7 @@ const routes = [
   { name: "admin:books:create", permission: "write:books", method: "POST", match: (path) => path === "/api/admin/books" },
   { name: "admin:books", permission: "write:books", match: (path) => /^\/api\/admin\/books\/[A-Za-z0-9_-]+$/.test(path) },
   { name: "admin:users", permission: "read:users", method: "GET", match: (path) => path === "/api/admin/users" },
+  { name: "admin:user:update", permission: "write:users", method: "PATCH", match: (path) => /^\/api\/admin\/users\/[0-9a-f-]+$/i.test(path) },
   { name: "admin:staff", permission: "read:staff", method: "GET", match: (path) => path === "/api/admin/staff" },
   { name: "admin:staff:create", permission: "write:staff", method: "POST", match: (path) => path === "/api/admin/staff" },
   { name: "admin:staff:update", permission: "write:staff", method: "PATCH", match: (path) => /^\/api\/admin\/staff\/[0-9a-f-]{36}$/i.test(path) },

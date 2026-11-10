@@ -764,7 +764,7 @@
     async function loadUsers() {
         const usersBody = document.getElementById('usersTableBody');
         const staffBody = document.getElementById('staffTableBody');
-        usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Đang tải danh sách người dùng...</td></tr>';
+        usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Đang tải danh sách người dùng...</td></tr>';
         staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải nhân viên...</td></tr>';
         try {
             const [usersResponse, staffResponse] = await Promise.all([
@@ -775,7 +775,7 @@
                 allUsers = await usersResponse.json();
                 renderUsers();
             } else {
-                usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Không thể tải danh sách người dùng.</td></tr>';
+                usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Không thể tải danh sách người dùng.</td></tr>';
             }
             if (staffResponse.ok) {
                 const data = await staffResponse.json();
@@ -786,7 +786,7 @@
                 staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải danh sách nhân viên.</td></tr>';
             }
         } catch {
-            usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
             staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
         }
     }
@@ -944,12 +944,20 @@
     function renderUsers() {
         const tbody = document.getElementById('usersTableBody');
         if (!allUsers.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Chưa có người dùng nào.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center">Chưa có người dùng nào.</td></tr>';
             return;
         }
 
         tbody.innerHTML = allUsers.map((u) => {
             const date = u.createdAt ? new Date(u.createdAt).toLocaleDateString('vi-VN') : 'Mặc định';
+            const verificationStatus = u.studentVerification?.status || 'pending';
+            const verificationLabels = { pending: 'Chờ duyệt', verified: 'Đã duyệt', revoked: 'Đã thu hồi' };
+            const verificationControl = u.role === 'user'
+                ? `<select class="form-select student-verification-select" data-id="${escapeHtml(u.id)}">
+                    ${Object.entries(verificationLabels).map(([status, label]) =>
+                        `<option value="${status}" ${verificationStatus === status ? 'selected' : ''}>${label}</option>`).join('')}
+                   </select>`
+                : '<span>-</span>';
             return `
                 <tr>
                     <td><code>${escapeHtml(u.id ? u.id.slice(0, 8) : '')}</code></td>
@@ -958,10 +966,31 @@
                     <td><span class="status-badge ${u.role === 'admin' ? 'status-completed' : 'status-processing'}">${escapeHtml(u.role)}</span></td>
                     <td>${escapeHtml(u.studentType === 'student' ? 'Học sinh' : u.studentType === 'university' ? 'Sinh viên' : 'Độc giả')}</td>
                     <td><code>${escapeHtml(u.studentId || '-')}</code></td>
+                    <td>${verificationControl}</td>
                     <td><small>${date}</small></td>
                 </tr>
             `;
         }).join('');
+        tbody.querySelectorAll('.student-verification-select').forEach((select) => {
+            select.addEventListener('change', async (event) => {
+                const control = event.currentTarget;
+                try {
+                    const response = await apiFetch(`/api/admin/users/${encodeURIComponent(control.dataset.id)}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ studentVerificationStatus: control.value })
+                    });
+                    if (!response.ok) {
+                        showToast((await response.json()).error || 'Không thể cập nhật xác minh sinh viên.', 'error');
+                        await loadUsers();
+                        return;
+                    }
+                    showToast('Đã cập nhật trạng thái xác minh sinh viên.');
+                } catch {
+                    showToast('Lỗi kết nối khi cập nhật xác minh sinh viên.', 'error');
+                    await loadUsers();
+                }
+            });
+        });
     }
 
     // Initialize on page load

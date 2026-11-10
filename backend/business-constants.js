@@ -54,6 +54,12 @@ const PAYMENT_METHODS = Object.freeze({
   TRANSFER: "transfer",
 });
 
+const STUDENT_VERIFICATION_STATUSES = Object.freeze({
+  PENDING: "pending",
+  VERIFIED: "verified",
+  REVOKED: "revoked",
+});
+
 const ORDER_STATUS_TRANSITIONS = Object.freeze({
   [ORDER_STATUSES.RECEIVED]: Object.freeze([
     ORDER_STATUSES.PROCESSING,
@@ -69,6 +75,18 @@ const ORDER_STATUS_TRANSITIONS = Object.freeze({
   ]),
   [ORDER_STATUSES.COMPLETED]: Object.freeze([]),
   [ORDER_STATUSES.CANCELLED]: Object.freeze([]),
+});
+
+const ORDER_STATUS_ROLE_TRANSITIONS = Object.freeze({
+  [ROLES.ADMIN]: ORDER_STATUS_TRANSITIONS,
+  sales: ORDER_STATUS_TRANSITIONS,
+  [ROLES.USER]: Object.freeze({
+    [ORDER_STATUSES.RECEIVED]: Object.freeze([ORDER_STATUSES.CANCELLED]),
+    [ORDER_STATUSES.PROCESSING]: Object.freeze([]),
+    [ORDER_STATUSES.SHIPPING]: Object.freeze([]),
+    [ORDER_STATUSES.COMPLETED]: Object.freeze([]),
+    [ORDER_STATUSES.CANCELLED]: Object.freeze([]),
+  }),
 });
 
 const values = (constantGroup) => Object.freeze(Object.values(constantGroup));
@@ -88,19 +106,29 @@ function isOrderStatusTransitionAllowed(currentStatus, nextStatus) {
   );
 }
 
+function isOrderStatusTransitionAllowedForRole(currentStatus, nextStatus, role) {
+  return (
+    (role !== ROLES.USER && currentStatus === nextStatus) ||
+    ORDER_STATUS_ROLE_TRANSITIONS[role]?.[currentStatus]?.includes(nextStatus) === true
+  );
+}
+
 module.exports = {
   CUSTOMER_STATUSES,
   CUSTOMER_INTERACTION_TYPES,
   ORDER_STATUS_TRANSITIONS,
+  ORDER_STATUS_ROLE_TRANSITIONS,
   ORDER_STATUSES,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
   customerStatusValues,
   customerInteractionTypeValues,
   isOrderStatusTransitionAllowed,
+  isOrderStatusTransitionAllowedForRole,
   orderStatusValues,
   paymentMethodValues,
   paymentStatusValues,

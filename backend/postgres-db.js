@@ -4,9 +4,9 @@ const { Pool } = require("pg");
 const {
   CustomerError,
   getSocialAccounts,
-  isOrderStatusTransitionAllowed,
   normalizeSocialAccount,
   SOCIAL_PROVIDERS,
+  isOrderStatusTransitionAllowedForRole,
   validateCustomerActor,
   validateCustomerInteractionData,
   validateCustomerData,
@@ -21,6 +21,7 @@ const {
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
 } = require("./business-constants");
 
 const databaseConnectionTimeoutMs = 5_000;
@@ -283,6 +284,16 @@ class PostgresDatabase {
         }
 
         let users = await this.readRelationalCollection(this.pool, "users");
+        let usersChanged = false;
+        for (const user of users) {
+          if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(user.studentVerification?.status)) {
+            user.studentVerification = {
+              status: STUDENT_VERIFICATION_STATUSES.PENDING,
+              requestedAt: user.createdAt || new Date().toISOString(),
+            };
+            usersChanged = true;
+          }
+        }
         if (users.length === 0 && !hasAdminConfig) {
           throw new Error(
             "Đặt ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) để tạo tài khoản quản trị đầu tiên.",
@@ -335,6 +346,8 @@ class PostgresDatabase {
             legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
             legacyDefaultAdmin.passwordAuthEnabled = false;
             legacyDefaultAdmin.updatedAt = new Date().toISOString();
+          }
+          if (legacyDefaultAdmin || usersChanged) {
             await this.writeRelationalCollection(this.pool, "users", users);
           }
         }
@@ -960,6 +973,10 @@ class PostgresDatabase {
         isActive: true,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         customerInfo: {},
         createdBy: actor,
         updatedBy: actor,
@@ -976,6 +993,29 @@ class PostgresDatabase {
       .filter((user) => ["sales", "support"].includes(user.role))
       .map(({ password, passwordAuthEnabled, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async updateStudentVerification(id, status, actorId) {
+    const actor = validateActor(actorId);
+    if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(status)) {
+      throw new CustomerError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
+    }
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user || user.role !== ROLES.USER) return null;
+      const now = new Date().toISOString();
+      user.studentVerification = {
+        status,
+        requestedAt: user.studentVerification?.requestedAt || user.createdAt || now,
+        ...(status === STUDENT_VERIFICATION_STATUSES.VERIFIED
+          ? { verifiedAt: now, verifiedBy: actor }
+          : { revokedAt: now, revokedBy: actor }),
+      };
+      user.updatedBy = actor;
+      user.updatedAt = now;
+      const { password, passwordReset, ...safeUser } = user;
+      return safeUser;
+    });
   }
 
   async createStaffUser(data, actorId) {
@@ -1068,6 +1108,12 @@ class PostgresDatabase {
         if (user.isActive === false) {
           throw new CustomerError(403, "Tài khoản đã bị vô hiệu hóa.");
         }
+        if (!user.studentVerification) {
+          user.studentVerification = {
+            status: STUDENT_VERIFICATION_STATUSES.PENDING,
+            requestedAt: user.createdAt || now,
+          };
+        }
         return user;
       }
       user = users.find((entry) => String(entry.email || "").toLowerCase() === email) || null;
@@ -1087,6 +1133,10 @@ class PostgresDatabase {
         role: ROLES.USER,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         authProvider: socialAccount.provider,
         providerId: socialAccount.providerId,
         socialAccounts: [socialAccount],
@@ -1429,6 +1479,13 @@ class PostgresDatabase {
     if (paymentStatus !== undefined && !paymentStatuses.has(String(paymentStatus).trim())) {
       throw new Error("Trạng thái thanh toán không hợp lệ.");
     }
+    const actorRole = String(options.actorRole || "").trim().toLowerCase();
+    if (!actorRole) {
+      throw new CustomerError(403, "Không xác định được vai trò thực hiện cập nhật đơn hàng.");
+    }
+    if (actorRole === ROLES.USER && (paymentStatus !== undefined || payload.items !== undefined)) {
+      throw new CustomerError(403, "Người mua chỉ được phép hủy đơn hàng ở trạng thái phù hợp.");
+    }
     if (payload.items !== undefined) {
       if (!Array.isArray(payload.items) || payload.items.length === 0 || payload.items.length > 50) {
         throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
@@ -1479,8 +1536,14 @@ class PostgresDatabase {
         await client.query("COMMIT");
         return null;
       }
-      if (status !== undefined && !isOrderStatusTransitionAllowed(order.status, status)) {
-        throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+      if (
+        status !== undefined &&
+        !isOrderStatusTransitionAllowedForRole(order.status, status, actorRole)
+      ) {
+        throw new CustomerError(
+          actorRole === ROLES.USER ? 403 : 400,
+          "Vai trò hiện tại không được phép chuyển trạng thái đơn hàng.",
+        );
       }
       if (payload.items !== undefined) {
         if (order.status === "cancelled" || status === "cancelled") {

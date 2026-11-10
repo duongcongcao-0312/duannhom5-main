@@ -1,9 +1,10 @@
 # Hướng dẫn CRM khách hàng
 
-Tài liệu này mô tả API CRM đang chạy, schema PostgreSQL đích và cách nạp dữ
-liệu mẫu. **Backend hiện tại vẫn đọc/ghi JSON** (`data/customers.json`); các
-file SQL là migration/schema đích độc lập, chưa được `server.js` sử dụng.
-Chạy migration không tự chuyển API sang PostgreSQL.
+Tài liệu này mô tả API CRM đang chạy, schema PostgreSQL và cách nạp dữ liệu
+mẫu. Khi cấu hình `DATABASE_URL`, adapter PostgreSQL lưu customers cùng các
+thực thể liên quan trong các bảng quan hệ. Migration 005 nhập các collection
+JSONB cũ sang schema quan hệ; các file JSON trên đĩa là một kho riêng và không
+được migration này nhập.
 
 ## Quyền truy cập
 
@@ -139,27 +140,52 @@ có thể được dùng lại. Hồ sơ không tìm thấy trả `404`.
 
 ## Schema PostgreSQL và migration
 
-`data/customer-schema.sql` là migration đầu tiên, hỗ trợ PostgreSQL 13 trở lên.
-Nó tạo `customers`, `customer_interactions`, `customer_orders` và
-`consent_records`, cùng khóa ngoại, check constraint và index. Email và số
-điện thoại được duy nhất trong các hồ sơ đang hoạt động; hồ sơ soft-delete có
-thể nhường lại giá trị đó. `data/customer-seed.sql` thêm 12 hồ sơ và 3 tương
-tác tổng hợp, dùng email `example.com` và không chứa dữ liệu khách hàng thật.
+`data/customer-schema.sql` là snapshot schema CRM chuẩn cho PostgreSQL 13 trở
+lên. Các thay đổi triển khai được quản lý theo thứ tự tại `data/migrations/`;
+`001_customer_crm.sql` là migration lịch sử, còn `002_align_customer_crm_schema.sql`
+nâng cấp cấu trúc cũ về schema chuẩn. Email và số điện thoại được duy nhất
+trong các hồ sơ đang hoạt động; hồ sơ soft-delete có thể nhường lại giá trị
+đó. `data/customer-seed.sql` thêm 12 hồ sơ và 3 tương tác tổng hợp, dùng email
+`example.com` và không chứa dữ liệu khách hàng thật.
 
 Cài PostgreSQL client `psql`, tạo database development, rồi trong PowerShell
 tại thư mục gốc dự án:
 
 ```powershell
 $env:DATABASE_URL = "postgresql://<user>:<password>@localhost:5432/booknest_dev"
-psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f data/customer-schema.sql
+npm.cmd run migrate
 psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f data/customer-seed.sql
 ```
 
-Lệnh migration và seed an toàn để chạy lại đối với database development hiện
-tại (`IF NOT EXISTS` và khóa ổn định với `ON CONFLICT DO NOTHING`). Đây là
-migration khởi tạo, không thay thế migration phiên bản tiếp theo khi schema
-đã thay đổi. Không chạy seed trên production. Không lưu URL có thông tin xác
-thực vào Git hoặc log; dùng secret manager cho môi trường triển khai.
+`npm run migrate` áp dụng từng file SQL theo thứ tự số, trong transaction,
+ghi phiên bản vào `schema_migrations` và bỏ qua phiên bản đã áp dụng. Có thể
+chạy lại an toàn; migration khóa advisory để tránh hai tiến trình cùng áp dụng.
+Trên database đã chạy migration cũ, phiên bản 001 được xác nhận an toàn rồi
+002 nâng cấp các bảng hiện có. Các trạng thái cũ `active`/`vip` được đổi thành
+`customer`; `inactive`/`blocked` thành hồ sơ `new` đã soft-delete. Đơn hàng
+`pending`/`confirmed` được chuẩn hóa thành `received`; các bản ghi và quan hệ
+được giữ lại. Lỗi kiểm tra constraint sẽ rollback migration đang chạy, không
+xóa dữ liệu.
+
+Trước khi nâng cấp database có dữ liệu, tạo và xác minh backup theo
+[backup/restore runbook](./backup-restore-incident-runbook.md). Migration chỉ
+có tiến, không có lệnh down tự động; rollback là khôi phục backup trước
+migration sau khi đã đánh giá các thay đổi phát sinh kể từ lúc backup. Không
+chạy seed trên production. Không lưu URL có thông tin xác thực vào Git hoặc
+log; dùng secret manager cho môi trường triển khai.
+
+Migration 003 tạo khóa chính dùng chung `order_idempotency` cho các yêu cầu
+đặt hàng; migration 004 tạo bảng `book_inventory` để khóa và cập nhật số
+lượng đặt giữ trong cùng transaction với đơn hàng. Migration 005 tạo các bảng
+quan hệ cho người dùng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ, nhập
+dữ liệu JSONB hiện có, và liên kết tồn kho với sản phẩm qua khóa ngoại. Các
+collection JSONB gốc vẫn được giữ lại; PostgreSQL runtime sử dụng các bảng
+quan hệ làm nguồn dữ liệu chính. Các khóa cũ được giữ lại; tồn kho cũ được
+tính từ đơn chưa hủy ở lần đặt tiếp theo. Khi chạy PostgreSQL
+nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với cùng
+`Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ nhận
+HTTP 409. Hủy đơn giải phóng lượng đã giữ trong cùng transaction. Các instance
+phải cùng trỏ tới database PostgreSQL đó.
 
 Kiểm tra dữ liệu sau khi chạy:
 
@@ -188,7 +214,8 @@ API Node.js hiện tại không đọc database này.
 
 ## Kiểm thử
 
-Chạy kiểm thử ứng dụng bằng `npm test`. Kiểm thử này bao gồm kiểm tra cấu trúc
-schema và số lượng fixture SQL, nhưng không kết nối PostgreSQL. Để xác minh
-migration thực sự trên môi trường phát triển, chạy hai lệnh `psql` ở trên
-trên một database dùng riêng cho test.
+Chạy kiểm thử ứng dụng bằng `npm test`. Kiểm thử này xác minh thứ tự, tính lặp
+và rollback của runner. Nếu `DATABASE_URL` được cấu hình, kiểm thử
+`tests/postgres-migrations.test.js` cũng chạy migration trên schema PostgreSQL
+tạm thời, kiểm tra dữ liệu cũ và schema sau nâng cấp, rồi xóa schema thử
+nghiệm.

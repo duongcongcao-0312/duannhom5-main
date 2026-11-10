@@ -226,7 +226,7 @@ updateServiceRequest(id, status)
 
 **Token Management**:
 ```
-localStorage key: 'booknest-admin-token'
+sessionStorage key: 'booknest-auth-token' (current browser tab)
 Header: 'Authorization: Bearer {token}'
 ```
 
@@ -243,8 +243,13 @@ Header: 'Authorization: Bearer {token}'
 'booknest-users' → JSON object of registered users
 'booknest-current-user' → Current logged-in user object
 'booknest-coupon' → Applied coupon code
-'booknest-auth-token' → Authentication token
 ```
+Authentication tokens are scoped to the current browser tab in `sessionStorage`;
+the server remains authoritative for session expiration and revocation.
+With `DATABASE_URL`, the server stores session metadata in PostgreSQL's
+`auth_sessions` table, keyed by a SHA-256 hash of the bearer token. Logout and
+password reset revoke records across backend instances; local development without
+PostgreSQL keeps sessions in process memory.
 
 #### 3.3.2 **Server-side File Storage**
 ```
@@ -635,10 +640,10 @@ dọn dữ liệu riêng để chạy độc lập.
 |------|-----------|----------|----------|
 | **Presentation** | HTML5, CSS3 | UI/UX | index.html, admin.html, book.html |
 | **Client Logic** | JavaScript (ES6+) | Event handling, state management | main.js, admin.js, book-detail.js |
-| **Client Storage** | localStorage | Persistent data | Cart, favorites, user session |
+| **Client Storage** | sessionStorage / localStorage | Tab-scoped auth token; persistent cart and favorites | assets/api-client.js, main.js |
 | **Server** | Node.js (native HTTP) | API, file serving | server.js |
 | **Business Logic** | JavaScript | Orders, books, users, auth | db.js, auth.js |
-| **Data Storage** | JSON/JSONL files | Persistence | orders.jsonl, users.json, services.json |
+| **Data Storage** | PostgreSQL / JSON files | Shared production sessions and database data; local development files | backend/postgres-db.js, db.js |
 | **Styling** | CSS3 | Design system | main.css, admin.css |
 
 ---

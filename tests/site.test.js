@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { createServer } = require('../server');
+const { Database } = require('../backend/db');
 
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -95,6 +96,59 @@ test('admin API authentication uses bearer tokens without cross-origin cookies',
 	const script = read('admin.js');
 	assert.match(script, /headers\[AUTH_HEADER_KEY\]/);
 	assert.doesNotMatch(script, /credentials:\s*['"]include['"]/);
+});
+
+test('authentication tokens use tab-scoped storage and expire consistently', async () => {
+	const apiClient = read('assets/api-client.js');
+	const main = read('main.js');
+	const admin = read('admin.js');
+	assert.match(apiClient, /sessionStorage\.setItem\(AUTH_TOKEN_KEY, token\)/);
+	assert.match(apiClient, /localStorage\.removeItem\(AUTH_TOKEN_KEY\)/);
+	assert.doesNotMatch(main, /localStorage\.(?:getItem|setItem|removeItem)\(['"]booknest-(?:admin-)?auth-token/);
+	assert.doesNotMatch(admin, /localStorage\.(?:getItem|setItem|removeItem)\(['"]booknest-(?:admin-)?auth-token/);
+
+	const createStorage = () => {
+		const values = new Map();
+		return {
+			getItem: (key) => values.get(key) || null,
+			setItem: (key, value) => values.set(key, String(value)),
+			removeItem: (key) => values.delete(key)
+		};
+	};
+	const localStorage = createStorage();
+	const sessionStorage = createStorage();
+	const events = [];
+	const context = {
+		window: { dispatchEvent: (event) => events.push(event.type) },
+		localStorage,
+		sessionStorage,
+		Event: class TestEvent { constructor(type) { this.type = type; } },
+		AbortController,
+		Headers,
+		setTimeout,
+		clearTimeout,
+		fetch: async () => ({ status: 401 }),
+		document: { body: null }
+	};
+	vm.runInNewContext(apiClient, context);
+
+	context.window.booknestAuth.setToken('temporary-token', Date.now() + 60_000);
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), 'temporary-token');
+	assert.equal(localStorage.getItem('booknest-auth-token'), null);
+	await context.window.booknestApiFetch('/api/auth/me', {
+		headers: { Authorization: 'Bearer temporary-token' }
+	});
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), null);
+	assert.deepEqual(events, ['booknest:auth-expired']);
+
+	localStorage.setItem('booknest-admin-token', 'legacy-token');
+	assert.equal(context.window.booknestAuth.getToken(), 'legacy-token');
+	assert.equal(localStorage.getItem('booknest-admin-token'), null);
+	assert.equal(sessionStorage.getItem('booknest-auth-token'), 'legacy-token');
+
+	context.window.booknestAuth.setToken('expired-token', Date.now() - 1);
+	assert.equal(context.window.booknestAuth.getToken(), null);
+	assert.deepEqual(events, ['booknest:auth-expired', 'booknest:auth-expired']);
 });
 
 test('account registration only reports duplicates for an explicit conflict response', () => {
@@ -326,7 +380,7 @@ test('account discounts and AI assistant are wired without membership cards', ()
 	assert.match(html, /id="aiChat"/);
 	assert.match(script, /signInWithPopup\(providerObject\)/);
 	assert.match(firebaseConfig, /BOOKNEST_FIREBASE_CONFIG/);
-	assert.match(script, /getDiscountRate/);
+	assert.match(script, /api\/orders\/quote/);
 	assert.match(script, /getAiAnswer/);
 	assert.doesNotMatch(script, /memberNumber/);
 });
@@ -344,6 +398,7 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(script, /api\/coupons/);
 	assert.match(script, /trackOrderForm/);
 	assert.match(script, /booknestApiFetch\('\/api\/orders'/);
+	assert.match(script, /booknestApiFetch\('\/api\/orders\/quote'/);
 	assert.match(script, /Authorization: `Bearer \$\{token\}`/);
 	assert.match(server, /BOOKNEST10/);
 	assert.match(server, /couponCode/);
@@ -387,7 +442,7 @@ test('issue #39 - search, category filter, price filter, tag filter and sorting 
 	assert.match(script, /priceRange === '100k-200k'/);
 	assert.match(script, /priceRange === 'above-200k'/);
 	assert.match(script, /function roundMoney/);
-	assert.match(script, /Math\.min\(getDiscountRate\(\) \+ getCouponRate\(\), 0\.3\)/);
+	assert.doesNotMatch(script, /discountRate:\s*getDiscountRate\(\)/);
 	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.title\.localeCompare\(a\.title, 'vi'\)\)/);
 	assert.match(script, /resetFiltersBtn/);
 
@@ -468,9 +523,9 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(response.status, 201);
 	const confirmation = await response.json();
 	assert.match(confirmation.orderId, /^[0-9a-f-]{36}$/i);
-	assert.equal(confirmation.total, 169100);
+	assert.equal(confirmation.total, 178000);
 	assert.equal(confirmation.subtotal, 178000);
-	assert.equal(confirmation.discount, 8900);
+	assert.equal(confirmation.discount, 0);
 	assert.equal(confirmation.items[0].quantity, 2);
 	assert.ok((await fsPromises.readFile(ordersPath, 'utf8')).includes(confirmation.orderId));
 
@@ -478,9 +533,9 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(lookupResponse.status, 200);
 	const order = await lookupResponse.json();
 	assert.equal(order.orderId, confirmation.orderId);
-	assert.equal(order.total, 169100);
+	assert.equal(order.total, 178000);
 	assert.equal(order.subtotal, 178000);
-	assert.equal(order.discount, 8900);
+	assert.equal(order.discount, 0);
 	assert.equal(Object.hasOwn(order, 'phone'), false);
 	assert.equal(Object.hasOwn(order, 'address'), false);
 
@@ -490,7 +545,7 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(serverSourceResponse.status, 404);
 });
 
-test('retries with the same idempotency key return one saved order', async (t) => {
+test('retries with the same idempotency key return one saved order and reject changed payloads', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-idempotency-'));
 	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
 	const server = createServer({ ordersPath, usersPath: path.join(temporaryDirectory, 'users.json') });
@@ -527,6 +582,13 @@ test('retries with the same idempotency key return one saved order', async (t) =
 	assert.equal(retry.status, 200);
 	assert.equal(retryBody.orderId, firstBody.orderId);
 	assert.equal(retryBody.total, firstBody.total);
+	const mismatched = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ ...payload, customerName: 'Another Customer' }),
+	});
+	assert.equal(mismatched.status, 409);
+	assert.match((await mismatched.json()).error, /Idempotency-Key.*nội dung đơn hàng khác/i);
 	const saved = (await fsPromises.readFile(ordersPath, 'utf8')).trim().split(/\r?\n/);
 	assert.equal(saved.length, 1);
 });
@@ -575,7 +637,7 @@ test('coupon and account discounts use one rounded integer-money calculation', a
 		body: JSON.stringify({
 			name: 'Nguyễn Văn B',
 			email: 'money-rounding@example.com',
-			password: 'password123',
+			password: 'password12345',
 			studentType: 'student',
 		}),
 	});
@@ -610,6 +672,9 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	const schemaPath = path.join(root, 'data', 'customer-schema.sql');
 	assert.ok(fs.existsSync(schemaPath));
 	const schema = fs.readFileSync(schemaPath, 'utf8');
+	const initialMigration = read('data/migrations/001_customer_crm.sql');
+	const alignmentMigration = read('data/migrations/002_align_customer_crm_schema.sql');
+	const migrationRunner = read('scripts/migrate.js');
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customers/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_interactions/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_orders/);
@@ -619,6 +684,15 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	assert.match(schema, /WHERE is_active/);
 	assert.match(schema, /CHECK \(status IN \('new', 'lead', 'customer'\)\)/);
 	assert.match(schema, /FOREIGN KEY \(customer_id\) REFERENCES customers/);
+	assert.match(initialMigration, /CREATE TABLE IF NOT EXISTS customers/);
+	assert.match(alignmentMigration, /ALTER TABLE customers/);
+	assert.match(alignmentMigration, /UPDATE customer_orders/);
+	assert.match(alignmentMigration, /CREATE TABLE IF NOT EXISTS consent_records/);
+	assert.match(migrationRunner, /schema_migrations/);
+	assert.match(migrationRunner, /pg_advisory_lock/);
+	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /PRIMARY KEY/);
+	assert.match(read('data/migrations/003_shared_order_idempotency.sql'), /ON CONFLICT \(idempotency_key\) DO NOTHING/);
+	assert.match(read('data/migrations/004_transactional_book_inventory.sql'), /reserved <= stock/);
 });
 
 test('OpenAPI documents the current core API routes and CRM statuses', () => {
@@ -629,6 +703,15 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	assert.ok(spec.paths['/api/orders'].get.security);
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
+	assert.ok(spec.paths['/api/orders/{id}'].patch.security);
+	assert.equal(
+		spec.paths['/api/orders/{id}'].patch.requestBody.content['application/json'].schema.$ref,
+		'#/components/schemas/OrderUpdateRequest'
+	);
+	assert.equal(
+		spec.components.schemas.OrderUpdateRequest.properties.items.items.additionalProperties,
+		false
+	);
 	assert.ok(spec.paths['/api/customers/{id}']);
 	assert.ok(spec.paths['/api/admin/customers']);
 	assert.ok(spec.paths['/api/admin/customers/{id}']);
@@ -791,6 +874,138 @@ test('zero and negative quantities are rejected on create and update without per
 	});
 	assert.equal(authenticatedUpdate.status, 400);
 	assert.match((await authenticatedUpdate.json()).error, /lớn hơn 0/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
+});
+
+test('order product updates recalculate totals and preserve order and stock on failures', async (t) => {
+	configureTestAdmin(t);
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-update-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const database = new Database({ ordersPath, usersPath });
+	const server = createServer({ database, ordersPath, usersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const orderRequest = (quantity) => fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Order Update User',
+			address: '1 Đường Sách',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity }],
+		}),
+	});
+	const createdResponse = await orderRequest(1);
+	assert.equal(createdResponse.status, 201);
+	const createdOrder = await createdResponse.json();
+	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'admin@example.com', password: 'local-test-admin-password-123' }),
+	});
+	const token = (await loginResponse.json()).token;
+	const update = (orderId, items) => fetch(`${baseUrl}/api/orders/${orderId}`, {
+		method: 'PATCH',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`,
+		},
+		body: JSON.stringify({ items }),
+	});
+
+	const successfulUpdate = await update(createdOrder.orderId, [
+		{ title: 'Nhà giả kim', quantity: 2 },
+	]);
+	assert.equal(successfulUpdate.status, 200);
+	const updatedOrder = await successfulUpdate.json();
+	assert.equal(updatedOrder.items[0].quantity, 2);
+	assert.equal(updatedOrder.subtotal, createdOrder.subtotal * 2);
+	assert.equal(updatedOrder.total, updatedOrder.subtotal - updatedOrder.discount);
+
+	assert.equal((await orderRequest(10)).status, 201);
+	const beforeRejectedUpdate = await fsPromises.readFile(ordersPath, 'utf8');
+	const stockRejected = await update(createdOrder.orderId, [
+		{ title: 'Nhà giả kim', quantity: 3 },
+	]);
+	assert.equal(stockRejected.status, 400);
+	assert.match((await stockRejected.json()).error, /vượt quá tồn kho/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+
+	const unknownProduct = await update(createdOrder.orderId, [
+		{ title: 'Sách không tồn tại', quantity: 1 },
+	]);
+	assert.equal(unknownProduct.status, 400);
+	assert.match((await unknownProduct.json()).error, /không hợp lệ/i);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+
+	const unsupportedItemField = await fetch(`${baseUrl}/api/orders/${createdOrder.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({
+			items: [{ title: 'Nhà giả kim', quantity: 1, unitPrice: 1 }],
+		}),
+	});
+	assert.equal(unsupportedItemField.status, 400);
+	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeRejectedUpdate);
+});
+
+test('order update database failures return a sanitized error and do not alter saved order data', async (t) => {
+	configureTestAdmin(t);
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-order-update-failure-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const database = new Database({ ordersPath, usersPath });
+	const server = createServer({ database, ordersPath, usersPath });
+	t.after(async () => {
+		await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const createdResponse = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			customerName: 'Order Update Failure User',
+			address: '1 Đường Sách',
+			phone: '0901234567',
+			paymentMethod: 'cod',
+			discountRate: 0,
+			items: [{ title: 'Nhà giả kim', quantity: 1 }],
+		}),
+	});
+	const createdOrder = await createdResponse.json();
+	const beforeUpdate = await fsPromises.readFile(ordersPath, 'utf8');
+	const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: 'admin@example.com', password: 'local-test-admin-password-123' }),
+	});
+	const token = (await loginResponse.json()).token;
+	database.updateOrderStatus = async () => {
+		throw new Error('injected database credentials failure');
+	};
+
+	const response = await fetch(`${baseUrl}/api/orders/${createdOrder.orderId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: JSON.stringify({ items: [{ title: 'Nhà giả kim', quantity: 2 }] }),
+	});
+	assert.equal(response.status, 500);
+	assert.match((await response.json()).error, /Máy chủ gặp lỗi/i);
 	assert.equal(await fsPromises.readFile(ordersPath, 'utf8'), beforeUpdate);
 });
 

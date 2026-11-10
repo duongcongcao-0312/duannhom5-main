@@ -38,16 +38,16 @@ const CUSTOMER_ROLE_PERMISSIONS = Object.freeze({
   support: Object.freeze(["view"]),
 });
 
-function authenticate(request, sessionStore, RequestError) {
+async function authenticate(request, sessionStore, RequestError) {
   const authHeader = request.headers["authorization"] || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  const user = sessionStore.getSession(token);
+  const user = await sessionStore.getSession(token);
   if (!user) throw new RequestError(401, "Chưa đăng nhập.");
   return user;
 }
 
-function requireRole(request, permission, sessionStore, RequestError) {
-  const user = authenticate(request, sessionStore, RequestError);
+async function requireRole(request, permission, sessionStore, RequestError) {
+  const user = await authenticate(request, sessionStore, RequestError);
   const role = String(user.role || ROLES.USER).trim().toLowerCase();
   if (!ROLE_PERMISSIONS[role]?.includes(permission)) {
     throw new RequestError(403, "Bạn không có quyền thực hiện hành động này.");
@@ -55,8 +55,8 @@ function requireRole(request, permission, sessionStore, RequestError) {
   return user;
 }
 
-function requireCustomerPermission(request, permission, sessionStore, RequestError) {
-  const user = authenticate(request, sessionStore, RequestError);
+async function requireCustomerPermission(request, permission, sessionStore, RequestError) {
+  const user = await authenticate(request, sessionStore, RequestError);
   if (!CUSTOMER_ROLE_PERMISSIONS[user.role]?.includes(permission)) {
     const messages = {
       view: "Bạn không có quyền xem dữ liệu khách hàng.",

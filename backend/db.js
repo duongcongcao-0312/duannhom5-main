@@ -570,59 +570,115 @@ class Database {
     return orders.find((order) => order.orderId === orderId) || null;
   }
 
-  async updateOrderStatus(orderId, payload, ordersPathOverride) {
+  async updateOrderStatus(orderId, payload, ordersPathOverride, options = {}) {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       throw new Error("Dữ liệu cập nhật đơn hàng không hợp lệ.");
     }
 
     const { status, paymentStatus } = payload;
     const filePath = ordersPathOverride || this.ordersPath;
+    if (Object.keys(payload).some((field) => !["status", "paymentStatus", "items"].includes(field))) {
+      throw new CustomerError(400, "Dữ liệu cập nhật đơn hàng không hợp lệ.");
+    }
     if (status !== undefined && !allowedOrderStatuses.has(String(status).trim())) {
       throw new Error("Trạng thái đơn hàng không hợp lệ.");
     }
     if (paymentStatus !== undefined && !allowedPaymentStatuses.has(String(paymentStatus).trim())) {
       throw new Error("Trạng thái thanh toán không hợp lệ.");
     }
-
-    let content;
-    try {
-      content = await fs.readFile(filePath, "utf8");
-    } catch (err) {
-      if (err.code === "ENOENT") return null;
-      throw err;
+    if (payload.items !== undefined) {
+      if (!Array.isArray(payload.items) || payload.items.length === 0 || payload.items.length > 50) {
+        throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+      }
+      const titles = new Set();
+      for (const item of payload.items) {
+        if (
+          !item ||
+          typeof item !== "object" ||
+          Array.isArray(item) ||
+          typeof item.title !== "string" ||
+          !item.title.trim() ||
+          !Number.isSafeInteger(item.quantity) ||
+          item.quantity < 1 ||
+          !Number.isSafeInteger(item.unitPrice) ||
+          item.unitPrice < 0 ||
+          !Number.isSafeInteger(item.lineTotal) ||
+          item.lineTotal !== item.unitPrice * item.quantity ||
+          titles.has(item.title)
+        ) {
+          throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
+        }
+        titles.add(item.title);
+      }
+      if (
+        !options.totals ||
+        !Number.isSafeInteger(options.totals.subtotal) ||
+        !Number.isSafeInteger(options.totals.discount) ||
+        !Number.isSafeInteger(options.totals.total) ||
+        options.totals.discount < 0 ||
+        options.totals.discount > options.totals.subtotal ||
+        options.totals.subtotal !== payload.items.reduce((sum, item) => sum + item.lineTotal, 0) ||
+        options.totals.total !== options.totals.subtotal - options.totals.discount
+      ) {
+        throw new CustomerError(400, "Tổng giá trị đơn hàng không hợp lệ.");
+      }
     }
 
-    const lines = content.split(/\r?\n/).filter((l) => l.trim());
-    let updatedOrder = null;
-
-    const newLines = lines.map((line) => {
-      let order;
+    return this.enqueueFileWrite(filePath, async () => {
+      let content;
       try {
-        order = JSON.parse(line);
-      } catch {
-        return line;
+        content = await fs.readFile(filePath, "utf8");
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
       }
-      if (order && order.orderId === orderId) {
-        if (
-          status !== undefined &&
-          !isOrderStatusTransitionAllowed(order.status, status)
-        ) {
-          throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
-        }
-        if (status) order.status = status;
-        if (paymentStatus) order.paymentStatus = paymentStatus;
-        order.updatedAt = new Date().toISOString();
-        updatedOrder = order;
-        return JSON.stringify(order);
-      }
-      return line;
-    });
 
-    if (!updatedOrder) return null;
-    await this.enqueueFileWrite(filePath, () =>
-      atomicWriteFile(filePath, newLines.join("\n") + "\n"),
-    );
-    return updatedOrder;
+      const lines = content.split(/\r?\n/).filter((line) => line.trim());
+      const orders = [];
+      const parsedLines = lines.map((line) => {
+        try {
+          const order = JSON.parse(line);
+          if (order && order.orderId) orders.push(order);
+          return order;
+        } catch {
+          return null;
+        }
+      });
+      let updatedOrder = null;
+      const nextLines = lines.map((line, index) => {
+        const order = parsedLines[index];
+        if (order && order.orderId === orderId) {
+          if (
+            status !== undefined &&
+            !isOrderStatusTransitionAllowed(order.status, status)
+          ) {
+            throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+          }
+          if (payload.items !== undefined) {
+            if (order.status === "cancelled" || status === "cancelled") {
+              throw new CustomerError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
+            }
+            if (typeof options.validateOrder === "function") {
+              options.validateOrder(orders, order);
+            }
+            order.items = payload.items;
+            order.subtotal = options.totals.subtotal;
+            order.discount = options.totals.discount;
+            order.total = options.totals.total;
+          }
+          if (status) order.status = status;
+          if (paymentStatus) order.paymentStatus = paymentStatus;
+          order.updatedAt = new Date().toISOString();
+          updatedOrder = order;
+          return JSON.stringify(order);
+        }
+        return line;
+      });
+
+      if (!updatedOrder) return null;
+      await atomicWriteFile(filePath, `${nextLines.join("\n")}\n`);
+      return updatedOrder;
+    });
   }
 
   // --- Service Requests (Thuê / Thu mua / Trao đổi sách) ---

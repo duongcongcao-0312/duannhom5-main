@@ -87,7 +87,7 @@ function saveCustomerInfo(info) {
 }
 
 async function saveCustomerInfoToAccount(info) {
-	const token = localStorage.getItem('booknest-auth-token');
+	const token = window.booknestAuth.getToken();
 	if (!token) return;
 	const response = await window.booknestApiFetch('/api/auth/customer-info', {
 		method: 'PATCH',
@@ -107,15 +107,14 @@ function applyAccountCustomerInfo(user) {
 }
 
 async function hydrateAuthenticatedUser() {
-	const token = localStorage.getItem('booknest-auth-token');
+	const token = window.booknestAuth.getToken();
 	if (!token) return;
 	try {
 		const response = await window.booknestApiFetch('/api/auth/me', {
 			headers: { Authorization: `Bearer ${token}` }
 		});
 		if (response.status === 401) {
-			localStorage.removeItem('booknest-auth-token');
-			localStorage.removeItem('booknest-admin-token');
+			window.booknestAuth.clearToken();
 			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			state.user = null;
 			renderAccount();
@@ -133,6 +132,13 @@ async function hydrateAuthenticatedUser() {
 		console.error('Không thể đồng bộ hồ sơ khách hàng:', error);
 	}
 }
+
+window.addEventListener('booknest:auth-expired', () => {
+	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+	state.user = null;
+	renderAccount();
+	renderCart();
+});
 
 function fillSavedCustomerInfo() {
 	const saved = loadCustomerInfo();
@@ -160,6 +166,7 @@ function loadFavorites() {
 }
 
 const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavorites(), coupon: localStorage.getItem(COUPON_STORAGE_KEY) || '' };
+let cartQuoteVersion = 0;
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
@@ -240,19 +247,6 @@ function roundMoney(value) {
 }
 
 function formatPrice(price) { return `${roundMoney(price).toLocaleString('vi-VN')} đ`; }
-
-function getDiscountRate() {
-	if (!state.user) return 0;
-	return state.user.studentType === 'student' || state.user.studentType === 'university' ? 0.1 : 0.05;
-}
-
-function getDiscountLabel() {
-	return state.user && getDiscountRate() === 0.1 ? 'Ưu đãi học sinh / sinh viên' : 'Ưu đãi tài khoản';
-}
-
-function getCouponRate() {
-	return state.coupon === 'BOOKNEST10' ? 0.1 : state.coupon === 'WELCOME5' ? 0.05 : 0;
-}
 
 function getAiAnswer(question) {
 	const normalized = question.toLowerCase();
@@ -471,24 +465,81 @@ function renderCart() {
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
 	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
-	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
+	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong data-cart-price="${escapeHtml(book.title)}">${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
+
 	removeFailedImages(cartItems);
-	const subtotal = state.cart.reduce((sum, book) => sum + roundMoney(book.price), 0);
-	const discount = roundMoney(subtotal * Math.min(getDiscountRate() + getCouponRate(), 0.3));
-	const total = subtotal - discount;
-	document.querySelector('#cartSubtotal').textContent = formatPrice(subtotal);
-	document.querySelector('#cartDiscount').textContent = `-${formatPrice(discount)}`;
-	const discountLine = document.querySelector('#discountLine');
-	if (discountLine) discountLine.hidden = discount === 0;
-	const discountLineLabel = document.querySelector('#discountLine span');
-	if (discountLineLabel) discountLineLabel.textContent = getDiscountLabel();
-	document.querySelector('#cartTotal').textContent = formatPrice(total);
-	document.querySelector('#paymentTotal').textContent = formatPrice(total);
-	updatePaymentQr(total);
 	const checkoutButton = document.querySelector('#checkoutButton');
-	if (checkoutButton) checkoutButton.disabled = state.cart.length === 0;
+	const quoteVersion = ++cartQuoteVersion;
+	if (state.cart.length) {
+		document.querySelector('#cartSubtotal').textContent = 'Đang tính...';
+		document.querySelector('#cartDiscount').textContent = 'Đang tính...';
+		document.querySelector('#cartTotal').textContent = 'Đang tính...';
+		document.querySelector('#paymentTotal').textContent = 'Đang tính...';
+		document.querySelector('#discountLine').hidden = true;
+		cartItems.querySelectorAll('[data-cart-price]').forEach((price) => {
+			price.textContent = 'Đang tính...';
+		});
+		if (checkoutButton) checkoutButton.disabled = true;
+		updatePaymentQr(0);
+		refreshCartQuote(quoteVersion, cartGroups);
+	} else {
+		document.querySelector('#cartSubtotal').textContent = formatPrice(0);
+		document.querySelector('#cartDiscount').textContent = `-${formatPrice(0)}`;
+		document.querySelector('#cartTotal').textContent = formatPrice(0);
+		document.querySelector('#paymentTotal').textContent = formatPrice(0);
+		document.querySelector('#discountLine').hidden = true;
+		if (checkoutButton) checkoutButton.disabled = true;
+		updatePaymentQr(0);
+	}
 	const couponInput = document.querySelector('#couponInput');
 	if (couponInput && state.coupon) couponInput.value = state.coupon;
+}
+
+async function refreshCartQuote(version, cartGroups) {
+	try {
+		const headers = { 'Content-Type': 'application/json' };
+		const token = window.booknestAuth.getToken();
+		if (token) headers.Authorization = `Bearer ${token}`;
+		const response = await window.booknestApiFetch('/api/orders/quote', {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				couponCode: state.coupon,
+				items: cartGroups.map(({ book, quantity }) => ({
+					title: book.title,
+					quantity
+				}))
+			})
+		});
+		const quote = await response.json();
+		if (!response.ok) throw new Error(quote.error || 'Không thể tính giá đơn hàng.');
+		if (version !== cartQuoteVersion) return;
+		document.querySelector('#cartSubtotal').textContent = formatPrice(quote.subtotal);
+		document.querySelector('#cartDiscount').textContent = `-${formatPrice(quote.discount)}`;
+		document.querySelector('#cartTotal').textContent = formatPrice(quote.total);
+		document.querySelector('#paymentTotal').textContent = formatPrice(quote.total);
+		document.querySelector('#discountLine').hidden = quote.discount === 0;
+		document.querySelector('#discountLine span').textContent = quote.discountRate > 0.05
+			? 'Ưu đãi học sinh / sinh viên'
+			: quote.discountRate > 0 ? 'Ưu đãi tài khoản' : 'Mã ưu đãi';
+		for (const item of quote.items) {
+			const price = [...document.querySelectorAll('[data-cart-price]')]
+				.find((element) => element.dataset.cartPrice === item.title);
+			if (price) price.textContent = formatPrice(item.lineTotal);
+		}
+		updatePaymentQr(quote.total);
+		const checkoutButton = document.querySelector('#checkoutButton');
+		if (checkoutButton) checkoutButton.disabled = false;
+	} catch (error) {
+		if (version !== cartQuoteVersion) return;
+		const message = error instanceof Error ? error.message : 'Không thể tính giá đơn hàng.';
+		document.querySelector('#cartSubtotal').textContent = 'Không khả dụng';
+		document.querySelector('#cartDiscount').textContent = 'Không khả dụng';
+		document.querySelector('#cartTotal').textContent = 'Không khả dụng';
+		document.querySelector('#paymentTotal').textContent = 'Không khả dụng';
+		document.querySelector('#couponMessage').textContent = `Không thể tính giá: ${message}`;
+		console.error('Không thể tải báo giá giỏ hàng:', error);
+	}
 }
 
 function toggleCart(open) {
@@ -591,20 +642,22 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			quantities.set(book.title, (quantities.get(book.title) || 0) + 1);
 			return quantities;
 		}, new Map())].map(([title, quantity]) => ({ title, quantity }));
+		const headers = {
+			'Content-Type': 'application/json',
+			'Idempotency-Key': idempotencyKey
+		};
+		const token = window.booknestAuth.getToken();
+		if (token) headers.Authorization = `Bearer ${token}`;
 		let result;
 		try {
 			const response = await window.booknestApiFetch('/api/orders', {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Idempotency-Key': idempotencyKey
-				},
+				headers,
 				body: JSON.stringify({
 					customerName,
 					address,
 					phone,
 					paymentMethod: method,
-					discountRate: getDiscountRate(),
 					couponCode: state.coupon,
 					items
 				})
@@ -808,7 +861,7 @@ async function saveFederatedAccount(socialUser) {
 		});
 		const data = await response.json().catch(() => ({}));
 		if (!response.ok) throw new Error(data.error || 'Không thể xác minh tài khoản social.');
-		if (data.token) localStorage.setItem('booknest-auth-token', data.token);
+		if (data.token) window.booknestAuth.setToken(data.token, data.expiresAt);
 		if (data.user) user = { ...user, ...data.user };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Không thể xác minh tài khoản social.';
@@ -897,8 +950,8 @@ document.querySelector('#passwordResetConfirmForm').addEventListener('submit', a
 		showAccountError('#passwordResetConfirmError', 'Mật khẩu nhập lại không khớp.');
 		return;
 	}
-	if (password.trim().length < 6 || password.trim().length > 128 || !password.trim()) {
-		showAccountError('#passwordResetConfirmError', 'Mật khẩu mới phải có từ 6 đến 128 ký tự và không được trống.');
+	if (password.length < 12 || password.length > 128 || !password.trim()) {
+		showAccountError('#passwordResetConfirmError', 'Mật khẩu mới phải có từ 12 đến 128 ký tự và không được chỉ chứa khoảng trắng.');
 		return;
 	}
 	const submitButton = form.querySelector('[type="submit"]');
@@ -1052,8 +1105,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 		});
 		if (response.ok) {
 			const data = await response.json();
-			if (data.token) localStorage.setItem('booknest-auth-token', data.token);
-			if (data.user && data.user.role === 'admin') localStorage.setItem('booknest-admin-token', data.token);
+			if (data.token) window.booknestAuth.setToken(data.token, data.expiresAt);
 			state.user = data.user;
 			applyAccountCustomerInfo(data.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
@@ -1111,7 +1163,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 		});
 		if (response.ok) {
 			const resData = await response.json();
-			if (resData.token) localStorage.setItem('booknest-auth-token', resData.token);
+			if (resData.token) window.booknestAuth.setToken(resData.token, resData.expiresAt);
 			state.user = resData.user || user;
 			applyAccountCustomerInfo(state.user);
 			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
@@ -1127,7 +1179,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			showAccountError(
 				'#registerError',
 				response.status === 409
-					? 'Email này đã được đăng ký. Hãy đăng nhập hoặc chọn “Quên mật khẩu?” để khôi phục tài khoản.'
+					? errorData.error || 'Không thể hoàn tất đăng ký với thông tin đã cung cấp. Vui lòng kiểm tra và thử lại.'
 					: errorData.error || `Máy chủ không thể tạo tài khoản (mã lỗi ${response.status}). Vui lòng thử lại sau.`
 			);
 			return;
@@ -1154,16 +1206,17 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 		}
 	}
 	try {
-		const token = localStorage.getItem('booknest-auth-token');
+		const token = window.booknestAuth.getToken();
 		if (token) {
 			await window.booknestApiFetch('/api/auth/logout', {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` }
 			});
 		}
-	} catch {}
-	localStorage.removeItem('booknest-auth-token');
-	localStorage.removeItem('booknest-admin-token');
+	} catch (error) {
+		console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
+	}
+	window.booknestAuth.clearToken();
 	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
 	renderAccount();
@@ -1202,7 +1255,7 @@ document.querySelector('#myOrdersButton')?.addEventListener('click', async () =>
 	error.hidden = true;
 	result.hidden = true;
 	try {
-		const token = localStorage.getItem('booknest-auth-token');
+		const token = window.booknestAuth.getToken();
 		if (!token) throw new Error('Vui lòng đăng nhập để tra cứu đơn hàng.');
 		const response = await window.booknestApiFetch('/api/orders', {
 			headers: { Authorization: `Bearer ${token}` }

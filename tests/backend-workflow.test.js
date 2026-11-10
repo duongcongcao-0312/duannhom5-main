@@ -99,7 +99,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     body: JSON.stringify({
       name: "Trần Minh",
       email: "tranminh@example.com",
-      password: "password123",
+      password: "password12345",
       studentType: "student",
       studentId: "HS-9988",
     }),
@@ -114,11 +114,13 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     body: JSON.stringify({
       name: "Tên khác",
       email: " TRANMINH@example.com ",
-      password: "password456",
+      password: "password45678",
     }),
   });
   assert.equal(duplicateRegisterRes.status, 409);
-  assert.match((await duplicateRegisterRes.json()).error, /đã được đăng ký/i);
+  const duplicateError = (await duplicateRegisterRes.json()).error;
+  assert.match(duplicateError, /không thể hoàn tất đăng ký/i);
+  assert.doesNotMatch(duplicateError, /đã được đăng ký|email.*tồn tại/i);
 
   // 4. Auth: Profile lookup via token
   const meRes = await fetch(`${baseUrl}/api/auth/me`, {
@@ -156,12 +158,14 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
       address: "123 Phố Sách Hà Nội",
       phone: "0912345678",
       paymentMethod: "transfer",
-      discountRate: 0.1,
+      discountRate: 0,
       items: [{ title: "Nhà giả kim", quantity: 1 }],
     }),
   });
   assert.equal(orderRes.status, 201);
   const orderData = await orderRes.json();
+  assert.equal(orderData.discount, 8900);
+  assert.equal(orderData.total, 80100);
 
   // 7. Profile includes saved customer information
   const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {
@@ -248,7 +252,7 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     body: JSON.stringify({
       name: "Alice",
       email: "alice@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(aliceRegister.status, 201);
@@ -260,7 +264,7 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     body: JSON.stringify({
       name: "Bob",
       email: "bob@example.com",
-      password: "password123",
+      password: "password12345",
     }),
   });
   assert.equal(bobRegister.status, 201);
@@ -357,6 +361,19 @@ test("registration returns a JSON service error when user persistence is unavail
       async createUser() {
         throw new Error("database connection unavailable");
       },
+      async saveSessionRecord() {},
+      async getSessionRecord() {
+        return null;
+      },
+      async deleteSessionRecord() {
+        return false;
+      },
+      async deleteUserSessionRecords() {
+        return 0;
+      },
+      async pruneExpiredSessionRecords() {
+        return 0;
+      },
     },
   });
 
@@ -387,7 +404,7 @@ test("registration returns a JSON service error when user persistence is unavail
       body: JSON.stringify({
         name: "New Reader",
         email: "new-reader@example.com",
-        password: "password123",
+        password: "password12345",
       }),
     });
     assert.equal(response.status, 503);

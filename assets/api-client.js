@@ -3,6 +3,50 @@ window.booknestApiUrl = function (path) {
     return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 };
 
+const AUTH_TOKEN_KEY = 'booknest-auth-token';
+const ADMIN_AUTH_TOKEN_KEY = 'booknest-admin-token';
+const AUTH_TOKEN_EXPIRY_KEY = 'booknest-auth-token-expires-at';
+
+window.booknestAuth = {
+    getToken() {
+        let token = sessionStorage.getItem(AUTH_TOKEN_KEY);
+        const expiresAt = Number(sessionStorage.getItem(AUTH_TOKEN_EXPIRY_KEY));
+        if (token && Number.isFinite(expiresAt) && expiresAt > 0 && Date.now() >= expiresAt) {
+            this.clearToken();
+            window.dispatchEvent(new Event('booknest:auth-expired'));
+            return null;
+        }
+
+        if (!token) {
+            token = localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem(ADMIN_AUTH_TOKEN_KEY);
+            if (token) this.setToken(token);
+        }
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+        return token || null;
+    },
+    setToken(token, expiresAt) {
+        if (typeof token !== 'string' || !token) {
+            throw new TypeError('An authentication token is required.');
+        }
+        sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+        if (Number.isFinite(expiresAt) && expiresAt > 0) {
+            sessionStorage.setItem(AUTH_TOKEN_EXPIRY_KEY, String(expiresAt));
+        } else {
+            sessionStorage.removeItem(AUTH_TOKEN_EXPIRY_KEY);
+        }
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+    },
+    clearToken() {
+        sessionStorage.removeItem(AUTH_TOKEN_KEY);
+        sessionStorage.removeItem(AUTH_TOKEN_EXPIRY_KEY);
+        sessionStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+    }
+};
+
 const API_REQUEST_TIMEOUT_MS = 15000;
 
 function showApiConnectionNotice(message) {
@@ -61,6 +105,17 @@ window.booknestApiFetch = async function (path, options = {}) {
         showApiConnectionNotice(
             `Máy chủ BookNest đang tạm thời không khả dụng (HTTP ${response.status}). Hãy thử lại sau ít phút.`
         );
+    }
+
+    if (response.status === 401) {
+        const authorization = new Headers(options.headers || {}).get('Authorization');
+        if (authorization) {
+            const token = window.booknestAuth.getToken();
+            if (token && authorization === `Bearer ${token}`) {
+                window.booknestAuth.clearToken();
+                window.dispatchEvent(new Event('booknest:auth-expired'));
+            }
+        }
     }
 
     return response;

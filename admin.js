@@ -1,6 +1,5 @@
 // BookNest Admin Panel Client Script
 (function () {
-    const TOKEN_KEY = 'booknest-admin-token';
     const AUTH_HEADER_KEY = 'Authorization';
 
     let currentAdmin = null;
@@ -57,14 +56,13 @@
     };
 
     // Helper: Authenticated fetch
-    // Helper: Authenticated fetch
     async function apiFetch(url, options = {}) {
-        const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem('booknest-auth-token');
+        const token = window.booknestAuth.getToken();
         const headers = {
             'Content-Type': 'application/json',
             ...(options.headers || {})
         };
-        if (token && token !== 'admin-session') {
+        if (token) {
             headers[AUTH_HEADER_KEY] = `Bearer ${token}`;
         }
         const response = await window.booknestApiFetch(url, { ...options, headers });
@@ -137,9 +135,7 @@
                 return;
             }
 
-            const token = data.token || 'admin-session';
-            localStorage.setItem(TOKEN_KEY, token);
-            localStorage.setItem('booknest-auth-token', token);
+            window.booknestAuth.setToken(data.token, data.expiresAt);
             currentAdmin = user;
             document.getElementById('adminUserName').textContent = currentAdmin.name || 'Quản trị viên';
             hideLoginOverlay();
@@ -156,8 +152,10 @@
     document.getElementById('adminLogoutBtn').addEventListener('click', async () => {
         try {
             await apiFetch('/api/auth/logout', { method: 'POST' });
-        } catch {}
-        localStorage.removeItem(TOKEN_KEY);
+        } catch (error) {
+            console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
+        }
+        window.booknestAuth.clearToken();
         currentAdmin = null;
         showLoginOverlay();
         showToast('Đã đăng xuất.');

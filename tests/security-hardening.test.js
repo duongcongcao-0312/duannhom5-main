@@ -38,6 +38,18 @@ test("static serving rejects traversal and malformed encoded paths", async (t) =
   }
 });
 
+test("security headers are applied to static, API, and error responses", async (t) => {
+  const baseUrl = await withServer(t);
+  for (const pathname of ["/index.html", "/health", "/api/unknown"]) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+    assert.match(response.headers.get("content-security-policy"), /default-src 'self'/);
+    assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  }
+});
+
 test("authentication responses never expose passwords, reset tokens or secrets", async (t) => {
   const baseUrl = await withServer(t);
   const registerResponse = await fetch(`${baseUrl}/api/auth/register`, {
@@ -50,9 +62,13 @@ test("authentication responses never expose passwords, reset tokens or secrets",
     }),
   });
   assert.equal(registerResponse.status, 201);
+  assert.equal(registerResponse.headers.get("cache-control"), "no-store");
   const registerBody = await registerResponse.text();
   assert.doesNotMatch(registerBody, /security-password-123|passwordReset|password|salt|hash/i);
-  const { token } = JSON.parse(registerBody);
+  const { token, expiresAt } = JSON.parse(registerBody);
+  assert.ok(token);
+  assert.ok(Number.isFinite(expiresAt));
+  assert.ok(expiresAt > Date.now());
 
   const profileResponse = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },

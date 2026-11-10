@@ -33,7 +33,13 @@ function formatPrice(price) {
 }
 
 function getBookImage(book) {
-	return book.image || `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
+	if (book.image) return book.image;
+	if (book.cover && !/^cover-[1-5]$/.test(book.cover)) return book.cover;
+	return `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
+}
+
+function getBookCoverStyle(book) {
+	return /^cover-[1-5]$/.test(book.cover || '') ? book.cover : 'cover-1';
 }
 
 function getBookDetailsUrl(book) {
@@ -109,7 +115,7 @@ if (!book) {
 		</section>
 		<section class="related-books" aria-labelledby="relatedBooksTitle">
 			<div class="section-heading"><div><p class="eyebrow">Có thể bạn sẽ thích</p><h2 id="relatedBooksTitle">Sách khác cùng thể loại</h2></div><a class="back-link" href="index.html#books">Xem toàn bộ sách →</a></div>
-			<div class="related-book-grid">${relatedBooks.map((relatedBook) => `<a class="related-book-card" href="${getBookDetailsUrl(relatedBook)}"><div class="related-book-cover ${escapeHtml(relatedBook.cover)}"><span>${escapeHtml(relatedBook.label).replace(/\n/g, '<br>')}</span></div><strong>${escapeHtml(relatedBook.title)}</strong><small>${escapeHtml(relatedBook.author)}</small><b>${formatPrice(relatedBook.price)}</b></a>`).join('')}</div>
+			<div class="related-book-grid">${relatedBooks.map((relatedBook) => `<a class="related-book-card" href="${getBookDetailsUrl(relatedBook)}"><div class="related-book-cover ${getBookCoverStyle(relatedBook)}"><span>${escapeHtml(relatedBook.label || relatedBook.title).replace(/\n/g, '<br>')}</span></div><strong>${escapeHtml(relatedBook.title)}</strong><small>${escapeHtml(relatedBook.author)}</small><b>${formatPrice(relatedBook.price)}</b></a>`).join('')}</div>
 		</section>`;
 	document.querySelector('#buyBook').addEventListener('click', () => addBookToCart(book));
 	const detailImage = detail.querySelector('.detail-cover img');

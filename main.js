@@ -272,7 +272,13 @@ function getAiAnswer(question) {
 }
 
 function getBookImage(book) {
-	return book.image || `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
+	if (book.image) return book.image;
+	if (book.cover && !/^cover-[1-5]$/.test(book.cover)) return book.cover;
+	return `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
+}
+
+function getBookCoverStyle(book) {
+	return /^cover-[1-5]$/.test(book.cover || '') ? book.cover : 'cover-1';
 }
 
 function getBookDetailsUrl(book) {
@@ -299,22 +305,6 @@ function createFallbackCover(title, author) {
 	const authorLines = wrapText(safeAuthor, 28).map((line, index) => `<tspan x="70" dy="${index ? 30 : 0}">${line}</tspan>`).join('');
 	const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800"><rect width="600" height="800" fill="#315c70"/><rect x="36" y="36" width="528" height="728" fill="none" stroke="#fffdf8" stroke-width="3"/><text x="70" y="250" fill="#fffdf8" font-family="Georgia,serif" font-size="42" font-weight="700">${titleLines}</text><text x="70" y="670" fill="#f7f3eb" font-family="Arial,sans-serif" font-size="22">${authorLines}</text></svg>`;
 	return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
-async function findBookCover(image) {
-	try {
-		const query = `https://openlibrary.org/search.json?title=${encodeURIComponent(image.dataset.bookTitle)}&author=${encodeURIComponent(image.dataset.bookAuthor)}&limit=1&fields=cover_i`;
-		const response = await fetch(window.booknestApiUrl(query));
-		if (!response.ok) throw new Error('Không tìm thấy dữ liệu bìa sách.');
-		const result = await response.json();
-		const coverId = result.docs?.[0]?.cover_i;
-		if (coverId) {
-			image.src = `https://covers.openlibrary.org/b/id/${coverId}-L.jpg`;
-			return;
-		}
-	} catch (error) {
-	}
-	image.src = createFallbackCover(image.dataset.bookTitle, image.dataset.bookAuthor);
 }
 
 function updatePaymentQr(total) {
@@ -370,10 +360,10 @@ function renderBooks() {
 		const tagLabel = tagLabels[tag] || tag;
 		return `
 		<article class="book-card">
-			<div class="cover ${escapeHtml(book.cover)} has-image">
+			<div class="cover ${getBookCoverStyle(book)} has-image">
 				<span class="book-tag tag-${escapeHtml(tag)}">${escapeHtml(tagLabel)}</span>
 				<img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">
-				<span class="cover-label">${escapeHtml(book.label).replace('\n', '<br>')}</span>
+				<span class="cover-label">${escapeHtml(book.label || book.title).replace('\n', '<br>')}</span>
 			</div>
 			<div class="book-info">
 				<h3>${escapeHtml(book.title)}</h3><p class="author">${escapeHtml(book.author)}</p><p class="stock-status ${getBookStock(book) < 4 ? 'stock-low' : ''}">${getBookStock(book) ? `Còn ${getBookStock(book)} cuốn` : 'Tạm hết hàng'}</p>
@@ -459,11 +449,6 @@ function changeCartQuantity(title, change) {
 
 function removeFailedImages(container) {
 	container.querySelectorAll('img').forEach((image) => image.addEventListener('error', () => {
-		if (!image.dataset.lookupAttempted) {
-			image.dataset.lookupAttempted = 'true';
-			findBookCover(image);
-			return;
-		}
 		if (!image.dataset.fallback) {
 			image.dataset.fallback = 'true';
 			image.src = createFallbackCover(image.dataset.bookTitle, image.dataset.bookAuthor);
@@ -486,7 +471,7 @@ function renderCart() {
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
 	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
-	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${escapeHtml(book.cover)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
+	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong>${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 	removeFailedImages(cartItems);
 	const subtotal = state.cart.reduce((sum, book) => sum + roundMoney(book.price), 0);
 	const discount = roundMoney(subtotal * Math.min(getDiscountRate() + getCouponRate(), 0.3));

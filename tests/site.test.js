@@ -275,6 +275,21 @@ test('book cards link to a detailed description page', () => {
 	assert.match(read('book-detail.js'), /categoryDescriptions/);
 });
 
+test('custom product cover URLs are used on the catalog and detail pages', () => {
+	for (const file of ['main.js', 'book-detail.js']) {
+		const script = read(file);
+		const match = script.match(/function getBookImage\(book\) \{[\s\S]*?\n\}/);
+		assert.ok(match, `${file} should define getBookImage`);
+		const getBookImage = vm.runInNewContext(`${match[0]}; getBookImage`);
+		assert.equal(getBookImage({ cover: 'https://example.com/custom-cover.jpg' }), 'https://example.com/custom-cover.jpg');
+		assert.equal(getBookImage({ cover: 'cover-3', title: 'A Book' }), 'https://covers.openlibrary.org/b/title/A%20Book-L.jpg?default=false');
+		assert.equal(getBookImage({ image: 'https://example.com/catalog-cover.jpg', cover: 'cover-2', title: 'A Book' }), 'https://example.com/catalog-cover.jpg');
+	}
+	const script = read('main.js');
+	assert.match(script, /image\.src = createFallbackCover\(image\.dataset\.bookTitle, image\.dataset\.bookAuthor\)/);
+	assert.doesNotMatch(script, /findBookCover/);
+});
+
 test('book details support purchasing and related book discovery', () => {
 	const html = read('book.html');
 	const script = read('book-detail.js');

@@ -479,3 +479,70 @@ test("admin coupons enforce dates, minimum spend, and redemption limits on the s
   assert.equal(updatedCouponRes.status, 200);
   assert.equal((await updatedCouponRes.json()).enabled, false);
 });
+
+test("admin audit log records staff actions with a hash chain", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-audit-test-"),
+  );
+  const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    auditLogPath,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const adminLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "admin@example.com",
+      password: "local-test-admin-password-123",
+    }),
+  });
+  assert.equal(adminLoginRes.status, 200);
+  const { token } = await adminLoginRes.json();
+  const adminHeaders = { Authorization: `Bearer ${token}` };
+
+  const staffCreateRes = await fetch(`${baseUrl}/api/admin/staff`, {
+    method: "POST",
+    headers: { ...adminHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Nhân viên audit",
+      email: "audit-staff@example.com",
+      password: "audit-staff-password-123",
+      role: "sales",
+    }),
+  });
+  assert.equal(staffCreateRes.status, 201);
+  const createdStaff = await staffCreateRes.json();
+
+  const staffUpdateRes = await fetch(`${baseUrl}/api/admin/staff/${createdStaff.id}`, {
+    method: "PATCH",
+    headers: { ...adminHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Nhân viên audit đã cập nhật" }),
+  });
+  assert.equal(staffUpdateRes.status, 200);
+
+  const auditRes = await fetch(`${baseUrl}/api/admin/audit`, {
+    headers: adminHeaders,
+  });
+  assert.equal(auditRes.status, 200);
+  const auditPayload = await auditRes.json();
+  assert.ok(auditPayload.entries.some((entry) => entry.action === "staff.profile.create"));
+  assert.ok(auditPayload.entries.some((entry) => entry.action === "staff.profile.update"));
+  assert.ok(auditPayload.entries.every((entry) => typeof entry.hash === "string" && entry.hash.length === 64));
+  assert.ok(auditPayload.entries.every((entry) => entry.action !== ""));
+});

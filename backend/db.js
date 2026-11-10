@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
+const { appendAuditEntry, readAuditEntries, sanitizeAuditValue } = require("./audit");
 const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
 const {
   CUSTOMER_STATUSES,
@@ -204,6 +205,7 @@ class Database {
     this.customerInteractionsPath = options.customerInteractionsPath ||
       path.join(dataDir, "customer-interactions.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
+    this.auditLogPath = options.auditLogPath || path.join(dataDir, "admin-audit.jsonl");
     this.initialized = false;
     this.initializationPromise = null;
     this.userWriteQueue = Promise.resolve();
@@ -630,11 +632,26 @@ class Database {
       throw new CustomerError(400, "Nhân viên chỉ có thể được gán vai trò sales hoặc support.");
     }
     try {
-      return await this.createUser({
+      const created = await this.createUser({
         ...data,
         createdBy: actor,
         updatedBy: actor,
       });
+      await appendAuditEntry(this.auditLogPath, {
+        action: "staff.profile.create",
+        actorId: actor,
+        actorRole: "admin",
+        entityType: "staff",
+        entityId: created.id,
+        before: null,
+        after: sanitizeAuditValue({
+          name: created.name,
+          email: created.email,
+          role: created.role,
+          isActive: created.isActive,
+        }),
+      });
+      return created;
     } catch (error) {
       if (error.message.includes("đã được đăng ký")) {
         throw new CustomerError(409, error.message);
@@ -659,12 +676,18 @@ class Database {
         (name === undefined && email === undefined && role === undefined && isActive === undefined)) {
       throw new CustomerError(400, "Cập nhật nhân viên không hợp lệ.");
     }
-    return this.updateUsers((users) => {
+    return this.updateUsers(async (users) => {
       const user = users.find((entry) => entry.id === id);
       if (!user || !["sales", "support"].includes(user.role)) return null;
       if (updatedEmail && users.some((entry) => entry.id !== id && entry.email.toLowerCase() === updatedEmail)) {
         throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
       }
+      const before = sanitizeAuditValue({
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+      });
       if (updatedName !== undefined) user.name = updatedName;
       if (updatedEmail !== undefined) user.email = updatedEmail;
       if (role !== undefined) user.role = role;
@@ -672,6 +695,20 @@ class Database {
       user.updatedBy = actor;
       user.updatedAt = new Date().toISOString();
       const { password, passwordAuthEnabled, passwordReset, ...safeUser } = user;
+      await appendAuditEntry(this.auditLogPath, {
+        action: "staff.profile.update",
+        actorId: actor,
+        actorRole: "admin",
+        entityType: "staff",
+        entityId: id,
+        before,
+        after: sanitizeAuditValue({
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          isActive: user.isActive,
+        }),
+      });
       return safeUser;
     });
   }
@@ -731,6 +768,20 @@ class Database {
     };
     customers.push(customer);
     await this.writeCustomers(customers);
+    await appendAuditEntry(this.auditLogPath, {
+      action: "customer.create",
+      actorId: actor,
+      actorRole: "admin",
+      entityType: "customer",
+      entityId: customer.id,
+      before: null,
+      after: sanitizeAuditValue({
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        status: customer.status,
+      }),
+    });
     return customer;
   }
 
@@ -744,6 +795,12 @@ class Database {
     if (customerIndex < 0) return null;
 
     const existing = customers[customerIndex];
+    const before = sanitizeAuditValue({
+      name: existing.name,
+      email: existing.email,
+      phone: existing.phone,
+      status: existing.status,
+    });
     const nextData = {
       name: data.name !== undefined ? String(data.name).trim() : existing.name,
       email: data.email !== undefined ? String(data.email).trim().toLowerCase() : existing.email,
@@ -784,6 +841,20 @@ class Database {
     }
 
     await this.writeCustomers(customers);
+    await appendAuditEntry(this.auditLogPath, {
+      action: "customer.update",
+      actorId: actor,
+      actorRole: "admin",
+      entityType: "customer",
+      entityId: id,
+      before,
+      after: sanitizeAuditValue({
+        name: customers[customerIndex].name,
+        email: customers[customerIndex].email,
+        phone: customers[customerIndex].phone,
+        status: customers[customerIndex].status,
+      }),
+    });
     return customers[customerIndex];
   }
 
@@ -816,11 +887,33 @@ class Database {
     const customer = customers.find((item) => item.id === id && !item.deletedAt);
     if (!customer) return false;
 
+    const before = sanitizeAuditValue({
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      status: customer.status,
+      deletedAt: customer.deletedAt || null,
+    });
     const deletedAt = new Date().toISOString();
     customer.deletedAt = deletedAt;
     customer.updated_by = actor;
     customer.updatedAt = deletedAt;
     await this.writeCustomers(customers);
+    await appendAuditEntry(this.auditLogPath, {
+      action: "customer.delete",
+      actorId: actor,
+      actorRole: "admin",
+      entityType: "customer",
+      entityId: id,
+      before,
+      after: sanitizeAuditValue({
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        status: customer.status,
+        deletedAt: customer.deletedAt,
+      }),
+    });
     return true;
   }
 
@@ -880,6 +973,19 @@ class Database {
         this.customerInteractionsPath,
         JSON.stringify(interactions, null, 2),
       );
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.create",
+        actorId: actor,
+        actorRole: "admin",
+        entityType: "customer_interaction",
+        entityId: interaction.id,
+        before: null,
+        after: sanitizeAuditValue({
+          customerId,
+          type: interaction.type,
+          note: interaction.note,
+        }),
+      });
       return interaction;
     });
   }
@@ -894,6 +1000,10 @@ class Database {
         entry.id === interactionId && entry.customerId === customerId
       ));
       if (!interaction) return null;
+      const before = sanitizeAuditValue({
+        type: interaction.type,
+        note: interaction.note,
+      });
       Object.assign(interaction, interactionData, {
         updated_by: actor,
         updatedAt: new Date().toISOString(),
@@ -902,11 +1012,24 @@ class Database {
         this.customerInteractionsPath,
         JSON.stringify(interactions, null, 2),
       );
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.update",
+        actorId: actor,
+        actorRole: "admin",
+        entityType: "customer_interaction",
+        entityId: interactionId,
+        before,
+        after: sanitizeAuditValue({
+          type: interaction.type,
+          note: interaction.note,
+        }),
+      });
       return interaction;
     });
   }
 
-  async deleteCustomerInteraction(customerId, interactionId) {
+  async deleteCustomerInteraction(customerId, interactionId, actorId) {
+    const actor = typeof actorId === "string" && actorId.trim() ? actorId.trim() : "system";
     return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
       if (!await this.getCustomerById(customerId)) return false;
       const interactions = await this.readCustomerInteractions();
@@ -914,11 +1037,24 @@ class Database {
         entry.id === interactionId && entry.customerId === customerId
       ));
       if (index < 0) return false;
+      const before = sanitizeAuditValue({
+        type: interactions[index].type,
+        note: interactions[index].note,
+      });
       interactions.splice(index, 1);
       await atomicWriteFile(
         this.customerInteractionsPath,
         JSON.stringify(interactions, null, 2),
       );
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.delete",
+        actorId: actor,
+        actorRole: "admin",
+        entityType: "customer_interaction",
+        entityId: interactionId,
+        before,
+        after: null,
+      });
       return true;
     });
   }
@@ -1125,9 +1261,18 @@ class Database {
         }
       });
       let updatedOrder = null;
-      const nextLines = lines.map((line, index) => {
+      const nextLines = [];
+      for (const [index, line] of lines.entries()) {
         const order = parsedLines[index];
         if (order && order.orderId === orderId) {
+          const before = sanitizeAuditValue({
+            status: order.status,
+            paymentStatus: order.paymentStatus,
+            items: order.items,
+            subtotal: order.subtotal,
+            discount: order.discount,
+            total: order.total,
+          });
           if (
             status !== undefined &&
             !isOrderStatusTransitionAllowedForRole(order.status, status, actorRole)
@@ -1153,10 +1298,27 @@ class Database {
           if (paymentStatus) order.paymentStatus = paymentStatus;
           order.updatedAt = new Date().toISOString();
           updatedOrder = order;
-          return JSON.stringify(order);
+          await appendAuditEntry(this.auditLogPath, {
+            action: "order.status.update",
+            actorId: options.actorId || actorRole,
+            actorRole,
+            entityType: "order",
+            entityId: orderId,
+            before,
+            after: sanitizeAuditValue({
+              status: order.status,
+              paymentStatus: order.paymentStatus,
+              items: order.items,
+              subtotal: order.subtotal,
+              discount: order.discount,
+              total: order.total,
+            }),
+          });
+          nextLines.push(JSON.stringify(order));
+          continue;
         }
-        return line;
-      });
+        nextLines.push(line);
+      }
 
       if (!updatedOrder) return null;
       await atomicWriteFile(filePath, `${nextLines.join("\n")}\n`);

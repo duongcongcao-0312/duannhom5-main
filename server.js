@@ -18,6 +18,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { readAuditEntries } = require("./backend/audit");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
@@ -1160,6 +1161,7 @@ function createServer({
   booksPath,
   couponsPath,
   customerInteractionsPath,
+  auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
@@ -1203,6 +1205,7 @@ function createServer({
       booksPath,
       couponsPath,
       customerInteractionsPath,
+      auditLogPath,
     }));
   const sessionRepositoryMethods = [
     "saveSessionRecord",
@@ -1218,6 +1221,9 @@ function createServer({
     : null;
   if (process.env.NODE_ENV === "production" && !sessionRepository) {
     throw new Error("Production requires a shared PostgreSQL session store.");
+  }
+  if (db && typeof db === "object") {
+    db.auditLogPath = auditLogPath;
   }
   const sessionStore = new SessionStore({
     repository: sessionRepository,
@@ -2226,8 +2232,8 @@ function createServer({
       }
 
       if (interactionId && request.method === "DELETE") {
-        await requireCustomerPermission(request, "interaction:delete");
-        const deleted = await db.deleteCustomerInteraction(customerId, interactionId);
+        const user = await requireCustomerPermission(request, "interaction:delete");
+        const deleted = await db.deleteCustomerInteraction(customerId, interactionId, user.userId);
         if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, { success: true });
         return;
@@ -2443,6 +2449,7 @@ function createServer({
       const safePayload = { ...payload };
       let orderUpdateOptions = {};
       orderUpdateOptions.actorRole = requester.role;
+      orderUpdateOptions.actorId = requester.userId;
       if (
         requester.role === ROLES.USER &&
         (payload.paymentStatus !== undefined || payload.items !== undefined)
@@ -2524,6 +2531,7 @@ function createServer({
         };
         orderUpdateOptions = {
           actorRole: requester.role,
+          actorId: requester.userId,
           inventory,
           totals: { subtotal, discount, total },
           validateOrder,
@@ -2922,6 +2930,34 @@ function createServer({
         ]),
       );
       sendJson(response, 200, { staff, rolePermissions });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/audit" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:users");
+      const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "50", 10);
+      const offset = Number.parseInt(requestUrl.searchParams.get("offset") || "0", 10);
+      const entries = await readAuditEntries(auditLogPath);
+      const safeEntries = entries
+        .slice(Math.max(0, offset), Math.max(0, offset + (Number.isFinite(limit) && limit > 0 ? limit : 50)))
+        .map((entry) => ({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          action: entry.action,
+          actorId: entry.actorId,
+          actorRole: entry.actorRole,
+          entityType: entry.entityType,
+          entityId: entry.entityId,
+          requestId: entry.requestId,
+          before: entry.before,
+          after: entry.after,
+          metadata: entry.metadata,
+          hash: entry.hash,
+        }));
+      sendJson(response, 200, { entries: safeEntries, total: entries.length, limit: safeEntries.length, offset });
       return;
     }
 

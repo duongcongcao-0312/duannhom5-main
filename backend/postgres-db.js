@@ -1,6 +1,8 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 const { Pool } = require("pg");
+const { appendAuditEntry, sanitizeAuditValue } = require("./audit");
 const {
   CustomerError,
   getSocialAccounts,
@@ -232,11 +234,12 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
 }
 
 class PostgresDatabase {
-  constructor({ connectionString = process.env.DATABASE_URL, pool } = {}) {
+  constructor({ connectionString = process.env.DATABASE_URL, pool, auditLogPath } = {}) {
     if (!pool && !connectionString) {
       throw new Error("DATABASE_URL là bắt buộc khi dùng PostgreSQL.");
     }
     this.pool = pool || new Pool(createDatabasePoolConfig(connectionString));
+    this.auditLogPath = auditLogPath || path.join(process.cwd(), "data", "admin-audit.jsonl");
     this.initialization = null;
   }
 

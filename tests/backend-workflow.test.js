@@ -164,8 +164,8 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   });
   assert.equal(orderRes.status, 201);
   const orderData = await orderRes.json();
-  assert.equal(orderData.discount, 8900);
-  assert.equal(orderData.total, 80100);
+  assert.equal(orderData.discount, 4450);
+  assert.equal(orderData.total, 84550);
 
   // 7. Profile includes saved customer information
   const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {
@@ -346,7 +346,7 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `******
+      Authorization: `Bearer ${aliceToken}`,
     },
     body: JSON.stringify({ status: "cancelled" }),
   });

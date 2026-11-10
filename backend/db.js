@@ -49,6 +49,49 @@ class CustomerError extends Error {
   }
 }
 
+const SOCIAL_PROVIDERS = new Set(["google.com", "facebook.com"]);
+
+function normalizeSocialAccount(provider, providerId) {
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const normalizedProviderId = String(providerId || "").trim();
+  if (
+    !SOCIAL_PROVIDERS.has(normalizedProvider) ||
+    !normalizedProviderId ||
+    normalizedProviderId.length > 128 ||
+    /[\u0000-\u001F\u007F]/.test(normalizedProviderId)
+  ) {
+    throw new CustomerError(400, "Thông tin tài khoản social không hợp lệ.");
+  }
+  return { provider: normalizedProvider, providerId: normalizedProviderId };
+}
+
+function getSocialAccounts(user) {
+  const accounts = Array.isArray(user.socialAccounts)
+    ? user.socialAccounts.filter((account) => (
+      account &&
+      SOCIAL_PROVIDERS.has(String(account.provider || "").toLowerCase()) &&
+      typeof account.providerId === "string" &&
+      account.providerId.trim()
+    )).map((account) => ({
+      provider: String(account.provider).toLowerCase(),
+      providerId: account.providerId.trim(),
+    }))
+    : [];
+  if (
+    SOCIAL_PROVIDERS.has(String(user.authProvider || "").toLowerCase()) &&
+    typeof user.providerId === "string" &&
+    user.providerId.trim()
+  ) {
+    accounts.push({
+      provider: String(user.authProvider).toLowerCase(),
+      providerId: user.providerId.trim(),
+    });
+  }
+  return [...new Map(
+    accounts.map((account) => [`${account.provider}\0${account.providerId}`, account]),
+  ).values()];
+}
+
 function sanitizeTextValue(value, { maxLength = 255, allowEmpty = false, fieldName = "dữ liệu" } = {}) {
   const stringValue = typeof value === "string" ? value : String(value ?? "");
   const cleaned = stringValue
@@ -242,6 +285,7 @@ class Database {
       admin.email = configuredEmail;
       admin.role = "admin";
       admin.password = hashPassword(configuredPassword);
+      admin.passwordAuthEnabled = true;
       admin.studentType = admin.studentType || "other";
       admin.studentId = String(admin.studentId || "").trim();
       admin.updatedAt = new Date().toISOString();
@@ -265,6 +309,7 @@ class Database {
       if (defaultAdmin) {
         defaultAdmin.role = "user";
         defaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+        defaultAdmin.passwordAuthEnabled = false;
         defaultAdmin.updatedAt = new Date().toISOString();
       }
     }
@@ -353,6 +398,7 @@ class Database {
       ));
       if (!user) return null;
       user.password = hashPassword(password);
+      user.passwordAuthEnabled = true;
       delete user.passwordReset;
       user.updatedAt = new Date().toISOString();
       return user.id;
@@ -397,6 +443,7 @@ class Database {
         name: sanitizeTextValue(data.name, { maxLength: 120, fieldName: "Họ tên" }),
         email: cleanEmail,
         password: hashPassword(data.password),
+        passwordAuthEnabled: true,
         role: normalizedRole,
         isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
@@ -419,22 +466,39 @@ class Database {
   async findOrCreateSocialUser(data) {
     return this.updateUsers((users) => {
       const email = sanitizeTextValue(data.email || "", { maxLength: 254, fieldName: "Email" }).toLowerCase();
-      let user = email ? users.find((u) => u.email.toLowerCase() === email) : null;
+      const socialAccount = normalizeSocialAccount(data.authProvider, data.providerId);
+      if (data.emailVerified !== true) {
+        throw new CustomerError(401, "Thông tin tài khoản social chưa được xác minh.");
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new CustomerError(400, "Email social không hợp lệ.");
+      }
+      const matches = users.filter((entry) => getSocialAccounts(entry).some((account) => (
+        account.providerId === socialAccount.providerId
+      )));
+      if (matches.length > 1) {
+        throw new CustomerError(409, "Không thể hoàn tất đăng nhập social. Hãy liên hệ hỗ trợ.");
+      }
+      let user = matches[0] || null;
       const now = new Date().toISOString();
       if (user) {
         if (user.isActive === false) {
           throw new CustomerError(403, "Tài khoản đã bị vô hiệu hóa.");
         }
-        user.authProvider = sanitizeTextValue(data.authProvider || user.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google";
-        if (data.providerId) user.providerId = sanitizeTextValue(data.providerId, { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" });
         if (!user.studentVerification) {
           user.studentVerification = {
             status: STUDENT_VERIFICATION_STATUSES.PENDING,
             requestedAt: user.createdAt || now,
           };
         }
-        user.updatedAt = now;
         return user;
+      }
+      user = users.find((entry) => String(entry.email || "").toLowerCase() === email) || null;
+      if (user) {
+        throw new CustomerError(
+          409,
+          "Không thể hoàn tất đăng nhập social với thông tin đã cung cấp. Hãy đăng nhập bằng phương thức hiện tại để liên kết tài khoản.",
+        );
       }
       const actor = sanitizeTextValue(data.authProvider || "social", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "social";
       const newUser = {
@@ -442,6 +506,7 @@ class Database {
         name: sanitizeTextValue(data.name || email.split("@")[0] || "Thành viên BookNest", { maxLength: 120, allowEmpty: true, fieldName: "Họ tên" }),
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
+        passwordAuthEnabled: false,
         role: ROLES.USER,
         isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
@@ -450,8 +515,9 @@ class Database {
           status: STUDENT_VERIFICATION_STATUSES.PENDING,
           requestedAt: now,
         },
-        authProvider: sanitizeTextValue(data.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google",
-        providerId: sanitizeTextValue(data.providerId || "", { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" }),
+        authProvider: socialAccount.provider,
+        providerId: socialAccount.providerId,
+        socialAccounts: [socialAccount],
         customerInfo: {},
         createdBy: actor,
         updatedBy: actor,
@@ -463,10 +529,75 @@ class Database {
     });
   }
 
+  async linkSocialAccount(userId, provider, providerId) {
+    const socialAccount = normalizeSocialAccount(provider, providerId);
+    return this.updateUsers((users) => {
+      const matches = users.filter((entry) => getSocialAccounts(entry).some((account) => (
+        account.providerId === socialAccount.providerId
+      )));
+      const user = users.find((entry) => entry.id === userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
+        throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
+      }
+      const accounts = getSocialAccounts(user);
+      if (accounts.some((account) => (
+        account.provider === socialAccount.provider &&
+        account.providerId !== socialAccount.providerId
+      ))) {
+        throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
+      }
+      if (!accounts.some((account) => (
+        account.provider === socialAccount.provider &&
+        account.providerId === socialAccount.providerId
+      ))) {
+        accounts.push(socialAccount);
+      }
+      user.socialAccounts = accounts;
+      if (!user.providerId) {
+        user.authProvider = accounts[0].provider;
+        user.providerId = accounts[0].providerId;
+      }
+      user.updatedAt = new Date().toISOString();
+      return user;
+    });
+  }
+
+  async unlinkSocialAccount(userId, provider) {
+    const normalizedProvider = String(provider || "").trim().toLowerCase();
+    if (!SOCIAL_PROVIDERS.has(normalizedProvider)) {
+      throw new CustomerError(400, "Nhà cung cấp social không hợp lệ.");
+    }
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+        throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
+      }
+      const remainingAccounts = getSocialAccounts(user).filter(
+        (account) => account.provider !== normalizedProvider,
+      );
+      if (remainingAccounts.length === getSocialAccounts(user).length) {
+        throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
+      }
+      user.socialAccounts = remainingAccounts;
+      const primary = remainingAccounts[0];
+      if (String(user.authProvider || "").toLowerCase() === normalizedProvider) {
+        if (primary) {
+          user.authProvider = primary.provider;
+          user.providerId = primary.providerId;
+        } else {
+          delete user.authProvider;
+          delete user.providerId;
+        }
+      }
+      user.updatedAt = new Date().toISOString();
+      return user;
+    });
+  }
+
   async getStaffUsers() {
     return (await this.getUsers())
       .filter((user) => ["sales", "support"].includes(user.role))
-      .map(({ password, passwordReset, ...user }) => user)
+      .map(({ password, passwordAuthEnabled, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -540,7 +671,7 @@ class Database {
       if (isActive !== undefined) user.isActive = isActive;
       user.updatedBy = actor;
       user.updatedAt = new Date().toISOString();
-      const { password, passwordReset, ...safeUser } = user;
+      const { password, passwordAuthEnabled, passwordReset, ...safeUser } = user;
       return safeUser;
     });
   }
@@ -1256,7 +1387,10 @@ class Database {
 module.exports = {
   CustomerError,
   Database,
+  getSocialAccounts,
   isOrderStatusTransitionAllowed,
+  normalizeSocialAccount,
+  SOCIAL_PROVIDERS,
   validateCustomerActor,
   validateCustomerInteractionData,
   validateCustomerData,

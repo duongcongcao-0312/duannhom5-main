@@ -3,6 +3,9 @@ const fs = require("node:fs");
 const { Pool } = require("pg");
 const {
   CustomerError,
+  getSocialAccounts,
+  normalizeSocialAccount,
+  SOCIAL_PROVIDERS,
   isOrderStatusTransitionAllowedForRole,
   validateCustomerActor,
   validateCustomerInteractionData,
@@ -307,17 +310,17 @@ class PostgresDatabase {
               email,
               password: hashPassword(password),
               role: ROLES.ADMIN,
+              passwordAuthEnabled: true,
               studentType: "other",
               studentId: "",
               customerInfo: {},
               createdAt: new Date().toISOString(),
             };
             users.push(admin);
-          } else if (usersChanged) {
-            await this.writeRelationalCollection(this.pool, "users", users);
           } else {
             admin.password = hashPassword(password);
             admin.role = "admin";
+            admin.passwordAuthEnabled = true;
           }
           const legacyDefaultAdmin = users.find(
             (user) =>
@@ -328,6 +331,7 @@ class PostgresDatabase {
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
             legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+            legacyDefaultAdmin.passwordAuthEnabled = false;
             legacyDefaultAdmin.updatedAt = new Date().toISOString();
           }
           await this.writeRelationalCollection(this.pool, "users", users);
@@ -340,7 +344,10 @@ class PostgresDatabase {
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
             legacyDefaultAdmin.password = hashPassword(crypto.randomBytes(32).toString("hex"));
+            legacyDefaultAdmin.passwordAuthEnabled = false;
             legacyDefaultAdmin.updatedAt = new Date().toISOString();
+          }
+          if (legacyDefaultAdmin || usersChanged) {
             await this.writeRelationalCollection(this.pool, "users", users);
           }
         }
@@ -937,6 +944,7 @@ class PostgresDatabase {
       ));
       if (!user) return null;
       user.password = hashPassword(password);
+      user.passwordAuthEnabled = true;
       delete user.passwordReset;
       user.updatedAt = new Date().toISOString();
       return user.id;
@@ -960,6 +968,7 @@ class PostgresDatabase {
         name: String(data.name).trim(),
         email,
         password: hashPassword(data.password),
+        passwordAuthEnabled: true,
         role,
         isActive: true,
         studentType: data.studentType || "other",
@@ -982,7 +991,7 @@ class PostgresDatabase {
   async getStaffUsers() {
     return (await this.getUsers())
       .filter((user) => ["sales", "support"].includes(user.role))
-      .map(({ password, passwordReset, ...user }) => user)
+      .map(({ password, passwordAuthEnabled, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -1055,7 +1064,7 @@ class PostgresDatabase {
         if (isActive !== undefined) user.isActive = isActive;
         user.updatedBy = actor;
         user.updatedAt = new Date().toISOString();
-        const { password, passwordReset, ...safeUser } = user;
+        const { password, passwordAuthEnabled, passwordReset, ...safeUser } = user;
         return safeUser;
       });
     } catch (error) {
@@ -1080,19 +1089,39 @@ class PostgresDatabase {
   async findOrCreateSocialUser(data) {
     return this.updateCollection("users", (users) => {
       const email = String(data.email || "").trim().toLowerCase();
-      let user = email ? users.find((u) => u.email.toLowerCase() === email) : null;
+      const socialAccount = normalizeSocialAccount(data.authProvider, data.providerId);
+      if (data.emailVerified !== true) {
+        throw new CustomerError(401, "Thông tin tài khoản social chưa được xác minh.");
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+        throw new CustomerError(400, "Email social không hợp lệ.");
+      }
+      const matches = users.filter((entry) => getSocialAccounts(entry).some((account) => (
+        account.providerId === socialAccount.providerId
+      )));
+      if (matches.length > 1) {
+        throw new CustomerError(409, "Không thể hoàn tất đăng nhập social. Hãy liên hệ hỗ trợ.");
+      }
+      let user = matches[0] || null;
       const now = new Date().toISOString();
       if (user) {
-        user.authProvider = data.authProvider || user.authProvider || "google";
-        if (data.providerId) user.providerId = data.providerId;
+        if (user.isActive === false) {
+          throw new CustomerError(403, "Tài khoản đã bị vô hiệu hóa.");
+        }
         if (!user.studentVerification) {
           user.studentVerification = {
             status: STUDENT_VERIFICATION_STATUSES.PENDING,
             requestedAt: user.createdAt || now,
           };
         }
-        user.updatedAt = now;
         return user;
+      }
+      user = users.find((entry) => String(entry.email || "").toLowerCase() === email) || null;
+      if (user) {
+        throw new CustomerError(
+          409,
+          "Không thể hoàn tất đăng nhập social với thông tin đã cung cấp. Hãy đăng nhập bằng phương thức hiện tại để liên kết tài khoản.",
+        );
       }
       const actor = String(data.authProvider || "social").trim();
       const newUser = {
@@ -1100,6 +1129,7 @@ class PostgresDatabase {
         name: String(data.name || email.split("@")[0] || "Thành viên BookNest").trim(),
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
+        passwordAuthEnabled: false,
         role: ROLES.USER,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
@@ -1107,8 +1137,9 @@ class PostgresDatabase {
           status: STUDENT_VERIFICATION_STATUSES.PENDING,
           requestedAt: now,
         },
-        authProvider: data.authProvider || "google",
-        providerId: String(data.providerId || "").trim(),
+        authProvider: socialAccount.provider,
+        providerId: socialAccount.providerId,
+        socialAccounts: [socialAccount],
         customerInfo: {},
         createdBy: actor,
         updatedBy: actor,
@@ -1117,6 +1148,70 @@ class PostgresDatabase {
       };
       users.push(newUser);
       return newUser;
+    });
+  }
+
+  async linkSocialAccount(userId, provider, providerId) {
+    const socialAccount = normalizeSocialAccount(provider, providerId);
+    return this.updateCollection("users", (users) => {
+      const matches = users.filter((entry) => getSocialAccounts(entry).some((account) => (
+        account.providerId === socialAccount.providerId
+      )));
+      const user = users.find((entry) => entry.id === userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
+        throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
+      }
+      const accounts = getSocialAccounts(user);
+      if (accounts.some((account) => (
+        account.provider === socialAccount.provider &&
+        account.providerId !== socialAccount.providerId
+      ))) {
+        throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
+      }
+      if (!accounts.some((account) => (
+        account.provider === socialAccount.provider &&
+        account.providerId === socialAccount.providerId
+      ))) {
+        accounts.push(socialAccount);
+      }
+      user.socialAccounts = accounts;
+      if (!user.providerId) {
+        user.authProvider = accounts[0].provider;
+        user.providerId = accounts[0].providerId;
+      }
+      user.updatedAt = new Date().toISOString();
+      return user;
+    });
+  }
+
+  async unlinkSocialAccount(userId, provider) {
+    const normalizedProvider = String(provider || "").trim().toLowerCase();
+    if (!SOCIAL_PROVIDERS.has(normalizedProvider)) {
+      throw new CustomerError(400, "Nhà cung cấp social không hợp lệ.");
+    }
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.id === userId);
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+        throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
+      }
+      const accounts = getSocialAccounts(user);
+      const remainingAccounts = accounts.filter((account) => account.provider !== normalizedProvider);
+      if (remainingAccounts.length === accounts.length) {
+        throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
+      }
+      user.socialAccounts = remainingAccounts;
+      const primary = remainingAccounts[0];
+      if (String(user.authProvider || "").toLowerCase() === normalizedProvider) {
+        if (primary) {
+          user.authProvider = primary.provider;
+          user.providerId = primary.providerId;
+        } else {
+          delete user.authProvider;
+          delete user.providerId;
+        }
+      }
+      user.updatedAt = new Date().toISOString();
+      return user;
     });
   }
 

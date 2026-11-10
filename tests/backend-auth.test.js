@@ -505,3 +505,196 @@ test("auth customer-info rejects null or malformed payloads without crashing", a
   const badPayloadBody = await badPayloadRes.json();
   assert.match(String(badPayloadBody.error || badPayloadBody.message || ""), /không hợp lệ|invalid|dữ liệu/i);
 });
+
+test("social login never links by email and account changes require password reauthentication", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-social-link-test-"),
+  );
+  const identities = {
+    collision: {
+      uid: "google-id-collision",
+      email: "existing-password@example.com",
+      emailVerified: true,
+      provider: "google.com",
+    },
+    google: {
+      uid: "google-id-new",
+      email: "social-reader@example.com",
+      emailVerified: true,
+      provider: "google.com",
+    },
+    googleEmailChanged: {
+      uid: "google-id-new",
+      email: "changed-email@example.com",
+      emailVerified: true,
+      provider: "google.com",
+    },
+    facebook: {
+      uid: "facebook-id-link",
+      email: "facebook-reader@example.com",
+      emailVerified: true,
+      provider: "facebook.com",
+    },
+    unverified: {
+      uid: "google-id-unverified",
+      email: "existing-password@example.com",
+      emailVerified: false,
+      provider: "google.com",
+    },
+  };
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath,
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    socialTokenVerifier: async (token) => {
+      if (!identities[token]) throw new Error("invalid token");
+      return identities[token];
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const request = (pathName, body, token) => fetch(`${baseUrl}${pathName}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const register = async (email, password) => {
+    const response = await request("/api/auth/register", {
+      name: "Test User",
+      email,
+      password,
+    });
+    assert.equal(response.status, 201);
+    return (await response.json()).token;
+  };
+  const existingPassword = "existing-password-123";
+  await register("existing-password@example.com", existingPassword);
+
+  const emailCollision = await request(
+    "/api/auth/social",
+    { email: "existing-password@example.com" },
+    "collision",
+  );
+  assert.equal(emailCollision.status, 409);
+  const collisionBody = await emailCollision.json();
+  assert.doesNotMatch(JSON.stringify(collisionBody), /existing-password@example\.com|google-id-collision/);
+
+  const passwordLogin = await request("/api/auth/login", {
+    email: "existing-password@example.com",
+    password: existingPassword,
+  });
+  assert.equal(passwordLogin.status, 200);
+
+  const socialLogin = await request(
+    "/api/auth/social",
+    { email: "social-reader@example.com" },
+    "google",
+  );
+  assert.equal(socialLogin.status, 200);
+  const socialLoginBody = await socialLogin.json();
+  const socialUser = socialLoginBody.user;
+  const storedUsers = JSON.parse(await fsPromises.readFile(usersPath, "utf8"));
+  const storedSocialUser = storedUsers.find((user) => user.id === socialUser.id);
+  delete storedSocialUser.socialAccounts;
+  delete storedSocialUser.passwordAuthEnabled;
+  await fsPromises.writeFile(usersPath, JSON.stringify(storedUsers), "utf8");
+  const sameProviderLogin = await request(
+    "/api/auth/social",
+    { email: "changed-email@example.com" },
+    "googleEmailChanged",
+  );
+  assert.equal(sameProviderLogin.status, 200);
+  assert.equal((await sameProviderLogin.json()).user.id, socialUser.id);
+  const socialProfile = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${socialLoginBody.token}` },
+  });
+  assert.equal((await socialProfile.json()).user.email, "social-reader@example.com");
+
+  const passwordOwner = await register("password-owner@example.com", "password-owner-123");
+  const badLinkPassword = await request(
+    "/api/auth/social/link",
+    { idToken: "facebook", password: "wrong-password-123" },
+    passwordOwner,
+  );
+  assert.equal(badLinkPassword.status, 401);
+
+  const goodLink = await request(
+    "/api/auth/social/link",
+    { idToken: "facebook", password: "password-owner-123" },
+    passwordOwner,
+  );
+  assert.equal(goodLink.status, 200);
+  const linkedUserId = (await goodLink.json()).user.id;
+  assert.equal(linkedUserId, (await (await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${passwordOwner}` },
+  })).json()).user.id);
+  const linkedSocialLogin = await request(
+    "/api/auth/social",
+    { email: "facebook-reader@example.com" },
+    "facebook",
+  );
+  assert.equal(linkedSocialLogin.status, 200);
+  assert.equal((await linkedSocialLogin.json()).user.id, linkedUserId);
+
+  const duplicateLink = await request(
+    "/api/auth/social/link",
+    { idToken: "google", password: "password-owner-123" },
+    passwordOwner,
+  );
+  assert.equal(duplicateLink.status, 409);
+
+  const badUnlinkPassword = await request(
+    "/api/auth/social/unlink",
+    { provider: "facebook.com", password: "wrong-password-123" },
+    passwordOwner,
+  );
+  assert.equal(badUnlinkPassword.status, 401);
+
+  const unlink = await request(
+    "/api/auth/social/unlink",
+    { provider: "facebook.com", password: "password-owner-123" },
+    passwordOwner,
+  );
+  assert.equal(unlink.status, 200);
+  const passwordLoginAfterUnlink = await request("/api/auth/login", {
+    email: "password-owner@example.com",
+    password: "password-owner-123",
+  });
+  assert.equal(passwordLoginAfterUnlink.status, 200);
+
+  const unverifiedLogin = await request(
+    "/api/auth/social",
+    { email: "unverified@example.com" },
+    "unverified",
+  );
+  assert.equal(unverifiedLogin.status, 401);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const failedReauthentication = await request(
+      "/api/auth/social/unlink",
+      { provider: "google.com", password: "wrong-password-123" },
+      passwordOwner,
+    );
+    assert.equal(failedReauthentication.status, 401);
+  }
+  const limitedReauthentication = await request(
+    "/api/auth/social/unlink",
+    { provider: "google.com", password: "password-owner-123" },
+    passwordOwner,
+  );
+  assert.equal(limitedReauthentication.status, 429);
+});

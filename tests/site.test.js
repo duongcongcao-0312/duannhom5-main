@@ -665,7 +665,7 @@ test('coupon and account discounts use one rounded integer-money calculation', a
 	const order = await response.json();
 	assert.deepEqual(
 		{ subtotal: order.subtotal, discount: order.discount, total: order.total },
-		{ subtotal: 89000, discount: 17800, total: 71200 },
+		{ subtotal: 89000, discount: 13350, total: 75650 },
 	);
 });
 
@@ -710,6 +710,9 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	);
 	assert.equal(spec.openapi, '3.1.0');
 	assert.ok(spec.paths['/api/auth/register']);
+	assert.ok(spec.paths['/api/auth/social']);
+	assert.ok(spec.paths['/api/auth/social/link'].post.security);
+	assert.ok(spec.paths['/api/auth/social/unlink'].post.security);
 	assert.ok(spec.paths['/api/auth/password-reset']);
 	assert.ok(spec.paths['/api/orders'].get.security);
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);

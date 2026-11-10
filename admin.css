@@ -420,6 +420,31 @@ body {
     font-size: 0.9rem;
 }
 
+.btn-danger {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    padding: 0.6rem 1.25rem;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.staff-role-select {
+    min-width: 110px;
+}
+
+.staff-active-toggle {
+    white-space: nowrap;
+}
+
+.staff-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
 .btn-refresh {
     background: #fff;
     border: 1px solid var(--border);

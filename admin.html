@@ -23,7 +23,7 @@
                 <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
                 <button class="nav-tab" data-view="coupons" type="button">🏷️ Coupon</button>
                 <button class="nav-tab" data-view="services" type="button">🤝 Yêu cầu dịch vụ</button>
-                <button class="nav-tab" data-view="users" type="button">👥 Thành viên</button>
+                <button class="nav-tab" data-view="users" type="button">👥 Thành viên & nhân viên</button>
             </nav>
             <div class="header-right">
                 <div class="admin-user-pill" id="adminUserPill">
@@ -272,12 +272,63 @@
             <section id="viewUsers" class="admin-view">
                 <div class="view-header">
                     <div>
-                        <h1>Danh sách thành viên</h1>
-                        <p class="subtitle">Tài khoản người dùng đã đăng ký trên hệ thống máy chủ</p>
+                        <h1>Quản lý nhân viên & thành viên</h1>
+                        <p class="subtitle">Tạo tài khoản nhân viên, gán vai trò và vô hiệu hóa quyền truy cập</p>
                     </div>
                 </div>
 
+                <section class="card" aria-labelledby="createStaffHeading">
+                    <h2 id="createStaffHeading">Tạo tài khoản nhân viên</h2>
+                    <p class="subtitle">Chọn vai trò sales hoặc support. Quyền của nhân viên được áp dụng và kiểm tra ở máy chủ.</p>
+                    <form id="staffForm" class="dialog-form">
+                        <div class="form-row">
+                            <label class="form-group">
+                                <span>Họ và tên *</span>
+                                <input name="name" class="form-input" required maxlength="120" autocomplete="name">
+                            </label>
+                            <label class="form-group">
+                                <span>Email *</span>
+                                <input name="email" class="form-input" type="email" required maxlength="254" autocomplete="email">
+                            </label>
+                        </div>
+                        <div class="form-row">
+                            <label class="form-group">
+                                <span>Mật khẩu tạm thời *</span>
+                                <input name="password" class="form-input" type="password" required minlength="12" maxlength="128" autocomplete="new-password">
+                                <small>Ít nhất 12 ký tự.</small>
+                            </label>
+                            <label class="form-group">
+                                <span>Vai trò *</span>
+                                <select name="role" class="form-select" required>
+                                    <option value="sales">Sales</option>
+                                    <option value="support">Support</option>
+                                </select>
+                            </label>
+                        </div>
+                        <button class="btn-primary" type="submit">Tạo nhân viên</button>
+                    </form>
+                </section>
+
                 <div class="table-responsive card">
+                    <h2>Nhân viên và quyền thao tác</h2>
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Nhân viên</th>
+                                <th>Vai trò</th>
+                                <th>Quyền được cấp</th>
+                                <th>Trạng thái</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="staffTableBody">
+                            <tr><td colspan="5" class="text-center">Đang tải nhân viên...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="table-responsive card">
+                    <h2>Thành viên</h2>
                     <table class="admin-table">
                         <thead>
                             <tr>
@@ -298,6 +349,28 @@
             </section>
         </main>
     </div>
+
+    <dialog id="staffEditDialog" class="admin-dialog">
+        <div class="dialog-header">
+            <h2>Cập nhật tài khoản nhân viên</h2>
+            <button id="closeStaffEditDialog" class="btn-close" type="button" aria-label="Đóng">×</button>
+        </div>
+        <form id="staffEditForm" class="dialog-form">
+            <input type="hidden" name="id">
+            <label class="form-group">
+                <span>Họ và tên *</span>
+                <input name="name" class="form-input" required maxlength="120" autocomplete="name">
+            </label>
+            <label class="form-group">
+                <span>Email *</span>
+                <input name="email" class="form-input" type="email" required maxlength="254" autocomplete="email">
+            </label>
+            <div class="dialog-footer">
+                <button class="btn-secondary" id="cancelStaffEditDialog" type="button">Hủy</button>
+                <button class="btn-primary" type="submit">Lưu thay đổi</button>
+            </div>
+        </form>
+    </dialog>
 
     <!-- MODAL: ADD / EDIT BOOK -->
     <dialog id="bookModal" class="admin-dialog">

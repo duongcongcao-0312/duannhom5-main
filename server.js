@@ -33,6 +33,8 @@ const { createEmailMailer } = require("./backend/email");
 const { getCouponUnavailableReason } = require("./backend/coupons");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
 const {
+  CUSTOMER_ROLE_PERMISSIONS,
+  ROLE_PERMISSIONS,
   hasPermission,
   requireCustomerPermission: requireCustomerPermissionMiddleware,
   requireRole: requireRoleMiddleware,
@@ -131,6 +133,17 @@ const payloadSchemas = {
     required: ["email", "password"],
     types: { email: "string", password: "string" },
     preserveStrings: ["password"],
+  },
+  staff: {
+    allowed: ["name", "email", "password", "role"],
+    required: ["name", "email", "password", "role"],
+    types: { name: "string", email: "string", password: "string", role: "string" },
+    preserveStrings: ["password"],
+  },
+  staffUpdate: {
+    allowed: ["name", "email", "role", "isActive"],
+    types: { name: "string", email: "string", role: "string", isActive: "boolean" },
+    minProperties: 1,
   },
   socialAuth: {
     allowed: [
@@ -1809,7 +1822,7 @@ function createServer({
       ).toLowerCase();
       const password = typeof payload.password === "string" ? payload.password : "";
       const user = await db.findUserByEmail(email);
-      if (!user || !verifyPassword(password, user.password)) {
+      if (!user || user.isActive === false || !verifyPassword(password, user.password)) {
         throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
       }
       loginAttempts.delete(address);
@@ -1852,6 +1865,9 @@ function createServer({
         throw new RequestError(401, "Thông tin Firebase chưa được xác minh đầy đủ.");
       }
       const existingUser = await db.findUserByEmail(email);
+      if (existingUser?.isActive === false) {
+        throw new RequestError(403, "Tài khoản đã bị vô hiệu hóa.");
+      }
       if (existingUser?.role === ROLES.ADMIN) {
         throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
       }
@@ -2700,6 +2716,87 @@ function createServer({
     }
 
     // --- Admin API: Users Management ---
+    if (
+      requestUrl.pathname === "/api/admin/staff" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:staff");
+      const staff = await db.getStaffUsers();
+      const rolePermissions = Object.fromEntries(
+        ["sales", "support"].map((role) => [
+          role,
+          [
+            ...(ROLE_PERMISSIONS[role] || []),
+            ...(CUSTOMER_ROLE_PERMISSIONS[role] || []).map((permission) => `customer:${permission}`),
+          ],
+        ]),
+      );
+      sendJson(response, 200, { staff, rolePermissions });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/staff" &&
+      request.method === "POST"
+    ) {
+      const actor = await requireRole(request, "write:staff");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu nhân viên không hợp lệ.",
+        payloadSchemas.staff,
+      );
+      if (!isPasswordValid(payload.password)) {
+        throw new RequestError(
+          400,
+          `Mật khẩu nhân viên phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự.`,
+        );
+      }
+      const name = sanitizePlainText(payload.name, 120);
+      const email = sanitizePlainText(payload.email, 254).toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new RequestError(400, "Địa chỉ email nhân viên không hợp lệ.");
+      }
+      const staff = await db.createStaffUser({
+        name,
+        email,
+        password: payload.password,
+        role: payload.role,
+      }, actor.userId);
+      const { password, passwordReset, ...safeStaff } = staff;
+      sendJson(response, 201, safeStaff);
+      return;
+    }
+
+    const staffMatch = requestUrl.pathname.match(
+      /^\/api\/admin\/staff\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+    );
+    if (staffMatch && request.method === "PATCH") {
+      const actor = await requireRole(request, "write:staff");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật nhân viên không hợp lệ.",
+        payloadSchemas.staffUpdate,
+      );
+      if (payload.role !== undefined && !["sales", "support"].includes(payload.role)) {
+        throw new RequestError(400, "Vai trò nhân viên chỉ có thể là sales hoặc support.");
+      }
+      if (payload.name !== undefined) {
+        payload.name = sanitizePlainText(payload.name, 120);
+        if (!payload.name) throw new RequestError(400, "Họ tên nhân viên không hợp lệ.");
+      }
+      if (payload.email !== undefined) {
+        payload.email = sanitizePlainText(payload.email, 254).toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
+          throw new RequestError(400, "Địa chỉ email nhân viên không hợp lệ.");
+        }
+      }
+      const staff = await db.updateStaffUser(staffMatch[1], payload, actor.userId);
+      if (!staff) throw new RequestError(404, "Không tìm thấy nhân viên.");
+      await sessionStore.destroyUserSessions(staff.id);
+      sendJson(response, 200, staff);
+      return;
+    }
+
     if (
       requestUrl.pathname === "/api/admin/users" &&
       request.method === "GET"

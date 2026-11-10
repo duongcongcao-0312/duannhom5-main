@@ -387,6 +387,7 @@ class Database {
         email: cleanEmail,
         password: hashPassword(data.password),
         role: normalizedRole,
+        isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
         studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
         customerInfo: {},
@@ -406,6 +407,9 @@ class Database {
       let user = email ? users.find((u) => u.email.toLowerCase() === email) : null;
       const now = new Date().toISOString();
       if (user) {
+        if (user.isActive === false) {
+          throw new CustomerError(403, "Tài khoản đã bị vô hiệu hóa.");
+        }
         user.authProvider = sanitizeTextValue(data.authProvider || user.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google";
         if (data.providerId) user.providerId = sanitizeTextValue(data.providerId, { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" });
         user.updatedAt = now;
@@ -418,6 +422,7 @@ class Database {
         email,
         password: hashPassword(crypto.randomBytes(24).toString("hex")),
         role: ROLES.USER,
+        isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
         studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
         authProvider: sanitizeTextValue(data.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google",
@@ -430,6 +435,65 @@ class Database {
       };
       users.push(newUser);
       return newUser;
+    });
+  }
+
+  async getStaffUsers() {
+    return (await this.getUsers())
+      .filter((user) => ["sales", "support"].includes(user.role))
+      .map(({ password, passwordReset, ...user }) => user)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async createStaffUser(data, actorId) {
+    const actor = validateCustomerActor(actorId);
+    if (!["sales", "support"].includes(data.role)) {
+      throw new CustomerError(400, "Nhân viên chỉ có thể được gán vai trò sales hoặc support.");
+    }
+    try {
+      return await this.createUser({
+        ...data,
+        createdBy: actor,
+        updatedBy: actor,
+      });
+    } catch (error) {
+      if (error.message.includes("đã được đăng ký")) {
+        throw new CustomerError(409, error.message);
+      }
+      if (error.message.includes("Vai trò người dùng không hợp lệ")) {
+        throw new CustomerError(400, error.message);
+      }
+      throw error;
+    }
+  }
+
+  async updateStaffUser(id, { name, email, role, isActive }, actorId) {
+    const actor = validateCustomerActor(actorId);
+    const updatedName = name === undefined
+      ? undefined
+      : sanitizeTextValue(name, { maxLength: 120, fieldName: "Họ tên" });
+    const updatedEmail = email === undefined
+      ? undefined
+      : sanitizeTextValue(email, { maxLength: 254, fieldName: "Email" }).toLowerCase();
+    if ((role !== undefined && !["sales", "support"].includes(role)) ||
+        (isActive !== undefined && typeof isActive !== "boolean") ||
+        (name === undefined && email === undefined && role === undefined && isActive === undefined)) {
+      throw new CustomerError(400, "Cập nhật nhân viên không hợp lệ.");
+    }
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user || !["sales", "support"].includes(user.role)) return null;
+      if (updatedEmail && users.some((entry) => entry.id !== id && entry.email.toLowerCase() === updatedEmail)) {
+        throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
+      }
+      if (updatedName !== undefined) user.name = updatedName;
+      if (updatedEmail !== undefined) user.email = updatedEmail;
+      if (role !== undefined) user.role = role;
+      if (isActive !== undefined) user.isActive = isActive;
+      user.updatedBy = actor;
+      user.updatedAt = new Date().toISOString();
+      const { password, passwordReset, ...safeUser } = user;
+      return safeUser;
     });
   }
 

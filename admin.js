@@ -8,6 +8,8 @@
     let allCoupons = [];
     let allServices = [];
     let allUsers = [];
+    let allStaff = [];
+    let staffRolePermissions = {};
 
     // Helper: Toast Notifications
     function showToast(message, type = 'success') {
@@ -760,20 +762,184 @@
 
     // --- VIEW: USERS ---
     async function loadUsers() {
-        const tbody = document.getElementById('usersTableBody');
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Đang tải danh sách người dùng...</td></tr>';
+        const usersBody = document.getElementById('usersTableBody');
+        const staffBody = document.getElementById('staffTableBody');
+        usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Đang tải danh sách người dùng...</td></tr>';
+        staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải nhân viên...</td></tr>';
         try {
-            const res = await apiFetch('/api/admin/users');
-            if (res.ok) {
-                allUsers = await res.json();
+            const [usersResponse, staffResponse] = await Promise.all([
+                apiFetch('/api/admin/users'),
+                apiFetch('/api/admin/staff')
+            ]);
+            if (usersResponse.ok) {
+                allUsers = await usersResponse.json();
                 renderUsers();
             } else {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center">Không thể tải danh sách người dùng.</td></tr>';
+                usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Không thể tải danh sách người dùng.</td></tr>';
+            }
+            if (staffResponse.ok) {
+                const data = await staffResponse.json();
+                allStaff = Array.isArray(data.staff) ? data.staff : [];
+                staffRolePermissions = data.rolePermissions || {};
+                renderStaff();
+            } else {
+                staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải danh sách nhân viên.</td></tr>';
             }
         } catch {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            usersBody.innerHTML = '<tr><td colspan="7" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
         }
     }
+
+    const permissionLabels = {
+        'read:dashboard': 'Xem thống kê',
+        'read:orders': 'Xem đơn hàng',
+        'write:orders': 'Cập nhật đơn hàng',
+        'read:services': 'Xem yêu cầu dịch vụ',
+        'write:services': 'Cập nhật yêu cầu dịch vụ',
+        'read:customers': 'Xem khách hàng',
+        'write:customers': 'Quản lý khách hàng',
+        'customer:view': 'Xem hồ sơ khách hàng',
+        'customer:create': 'Tạo hồ sơ khách hàng',
+        'customer:update': 'Cập nhật hồ sơ khách hàng',
+        'customer:delete': 'Xóa hồ sơ khách hàng',
+        'customer:interaction:view': 'Xem lịch sử chăm sóc',
+        'customer:interaction:create': 'Ghi nhận chăm sóc',
+        'customer:interaction:update': 'Cập nhật lịch sử chăm sóc',
+        'customer:interaction:delete': 'Xóa lịch sử chăm sóc'
+    };
+
+    function renderStaff() {
+        const tbody = document.getElementById('staffTableBody');
+        if (!allStaff.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Chưa có tài khoản nhân viên.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = allStaff.map((staff) => {
+            const active = staff.isActive !== false;
+            const permissions = staffRolePermissions[staff.role] || [];
+            const permissionMarkup = permissions.length
+                ? permissions.map((permission) => `<span class="status-badge">${escapeHtml(permissionLabels[permission] || permission)}</span>`).join(' ')
+                : 'Không có quyền nào.';
+            return `
+                <tr>
+                    <td><b>${escapeHtml(staff.name)}</b><br><small>${escapeHtml(staff.email)}</small></td>
+                    <td>
+                        <select class="form-select staff-role-select" data-id="${escapeHtml(staff.id)}" aria-label="Vai trò nhân viên">
+                            <option value="sales" ${staff.role === 'sales' ? 'selected' : ''}>Sales</option>
+                            <option value="support" ${staff.role === 'support' ? 'selected' : ''}>Support</option>
+                        </select>
+                    </td>
+                    <td>${permissionMarkup}</td>
+                    <td><span class="status-badge ${active ? 'status-completed' : 'status-cancelled'}">${active ? 'Đang hoạt động' : 'Đã vô hiệu hóa'}</span></td>
+                    <td>
+                        <div class="staff-actions">
+                            <button class="btn-secondary staff-edit-button" data-id="${escapeHtml(staff.id)}" type="button">Sửa thông tin</button>
+                            <button class="${active ? 'btn-danger' : 'btn-secondary'} staff-active-toggle" data-id="${escapeHtml(staff.id)}" data-active="${active}" type="button">${active ? 'Vô hiệu hóa' : 'Kích hoạt'}</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.querySelectorAll('.staff-role-select').forEach((select) => {
+            select.addEventListener('change', async (event) => {
+                const staff = allStaff.find((entry) => entry.id === event.target.dataset.id);
+                if (!staff || staff.role === event.target.value) return;
+                await updateStaff(staff.id, { role: event.target.value }, 'Đã cập nhật vai trò nhân viên.');
+            });
+        });
+
+        tbody.querySelectorAll('.staff-active-toggle').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const active = button.dataset.active === 'true';
+                const message = active
+                    ? 'Vô hiệu hóa tài khoản này? Nhân viên sẽ bị đăng xuất và không thể đăng nhập.'
+                    : 'Kích hoạt lại tài khoản nhân viên này?';
+                if (!window.confirm(message)) return;
+                await updateStaff(button.dataset.id, { isActive: !active }, active
+                    ? 'Đã vô hiệu hóa và thu hồi phiên đăng nhập của nhân viên.'
+                    : 'Đã kích hoạt tài khoản nhân viên.');
+            });
+        });
+
+        tbody.querySelectorAll('.staff-edit-button').forEach((button) => {
+            button.addEventListener('click', () => {
+                const staff = allStaff.find((entry) => entry.id === button.dataset.id);
+                if (!staff) return;
+                const form = document.getElementById('staffEditForm');
+                form.querySelector('[name="id"]').value = staff.id;
+                form.elements.name.value = staff.name || '';
+                form.elements.email.value = staff.email || '';
+                document.getElementById('staffEditDialog').showModal();
+            });
+        });
+    }
+
+    async function updateStaff(id, changes, successMessage) {
+        try {
+            const response = await apiFetch(`/api/admin/staff/${encodeURIComponent(id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify(changes)
+            });
+            if (!response.ok) {
+                const result = await response.json();
+                showToast(result.error || 'Không thể cập nhật nhân viên.', 'error');
+                await loadUsers();
+                return false;
+            }
+            showToast(successMessage);
+            await loadUsers();
+            return true;
+        } catch (error) {
+            showToast('Lỗi kết nối khi cập nhật nhân viên.', 'error');
+            await loadUsers();
+            return false;
+        }
+    }
+
+    const staffEditDialog = document.getElementById('staffEditDialog');
+    const staffEditForm = document.getElementById('staffEditForm');
+    document.getElementById('closeStaffEditDialog').addEventListener('click', () => staffEditDialog.close());
+    document.getElementById('cancelStaffEditDialog').addEventListener('click', () => staffEditDialog.close());
+    staffEditForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(staffEditForm);
+        const id = formData.get('id');
+        const saved = await updateStaff(id, {
+            name: formData.get('name'),
+            email: formData.get('email')
+        }, 'Đã cập nhật thông tin nhân viên.');
+        if (saved) staffEditDialog.close();
+    });
+
+    document.getElementById('staffForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const submitButton = form.querySelector('button[type="submit"]');
+        const formData = new FormData(form);
+        const staff = Object.fromEntries(formData.entries());
+        submitButton.disabled = true;
+        try {
+            const response = await apiFetch('/api/admin/staff', {
+                method: 'POST',
+                body: JSON.stringify(staff)
+            });
+            if (!response.ok) {
+                const result = await response.json();
+                showToast(result.error || 'Không thể tạo tài khoản nhân viên.', 'error');
+                return;
+            }
+            form.reset();
+            showToast('Đã tạo tài khoản nhân viên.');
+            await loadUsers();
+        } catch (error) {
+            showToast('Lỗi kết nối khi tạo tài khoản nhân viên.', 'error');
+        } finally {
+            submitButton.disabled = false;
+        }
+    });
 
     function renderUsers() {
         const tbody = document.getElementById('usersTableBody');

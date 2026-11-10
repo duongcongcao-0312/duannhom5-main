@@ -35,6 +35,8 @@ test("role policy matrix grants only the intended admin permissions", () => {
     "read:coupons",
     "write:coupons",
     "read:users",
+    "read:staff",
+    "write:staff",
     "read:customers",
     "write:customers",
     "delete:customers",
@@ -43,6 +45,8 @@ test("role policy matrix grants only the intended admin permissions", () => {
     assert.equal(hasPermission({ role: "admin" }, permission), true);
   }
   assert.equal(hasPermission({ role: "sales" }, "read:users"), false);
+  assert.equal(hasPermission({ role: "sales" }, "read:staff"), false);
+  assert.equal(hasPermission({ role: "support" }, "write:staff"), false);
   assert.equal(hasPermission({ role: "support" }, "write:orders"), false);
   assert.equal(hasPermission({ role: "user" }, "read:orders"), false);
 });
@@ -59,6 +63,10 @@ test("authentication middleware rejects missing sessions and authorizes valid ro
   );
   await assert.rejects(
     requireRole(requestFor(sales), "read:users", sessionStore(sales), TestRequestError),
+    (error) => error.status === 403,
+  );
+  await assert.rejects(
+    requireRole(requestFor(sales), "write:staff", sessionStore(sales), TestRequestError),
     (error) => error.status === 403,
   );
 });

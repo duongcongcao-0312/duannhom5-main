@@ -176,6 +176,9 @@ Các endpoint chính hiện có:
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
 | `GET` | `/api/admin/users` | Quản trị | Liệt kê người dùng. |
+| `GET` | `/api/admin/staff` | `read:staff` | Liệt kê nhân viên và các quyền hiệu lực theo vai trò. |
+| `POST` | `/api/admin/staff` | `write:staff` | Tạo tài khoản nhân viên với vai trò `sales` hoặc `support` và mật khẩu tối thiểu 12 ký tự. |
+| `PATCH` | `/api/admin/staff/:id` | `write:staff` | Cập nhật tên/email/vai trò hoặc kích hoạt/vô hiệu hóa nhân viên; phiên hiện có bị thu hồi. |
 
 ## Cổng quản trị
 
@@ -187,6 +190,7 @@ Mở `/admin.html` sau khi server khởi động. Tính năng gồm:
 4. Tạo/sửa coupon, cấu hình mức giảm, đơn tối thiểu, thời gian áp dụng, giới hạn lượt và bật/tắt.
 5. Tiếp nhận và cập nhật yêu cầu thuê/thu mua/đổi sách.
 6. Xem người dùng, vai trò và thông tin phân loại.
+7. Tạo và cập nhật tên/email nhân viên vai trò `sales` hoặc `support`, xem quyền gắn với từng vai trò, đổi vai trò và kích hoạt/vô hiệu hóa tài khoản. Vô hiệu hóa chặn đăng nhập (bao gồm đăng nhập xã hội) và thu hồi phiên đang hoạt động. Chỉ tài khoản admin được quản lý nhân viên; API kiểm tra quyền ở backend và không cho phép gán vai trò admin qua màn hình này.
 
 Thông tin quản trị phải được cung cấp qua `ADMIN_EMAIL` và `ADMIN_PASSWORD` trong môi trường chạy. Nếu mã nguồn hoặc dữ liệu development có credential mẫu, credential đó chỉ dùng để kiểm thử local và phải được đổi trước khi chia sẻ hoặc deploy; README không cung cấp mật khẩu mặc định.
 

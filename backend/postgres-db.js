@@ -18,6 +18,7 @@ const {
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
 } = require("./business-constants");
 
 const databaseConnectionTimeoutMs = 5_000;
@@ -280,6 +281,16 @@ class PostgresDatabase {
         }
 
         let users = await this.readRelationalCollection(this.pool, "users");
+        let usersChanged = false;
+        for (const user of users) {
+          if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(user.studentVerification?.status)) {
+            user.studentVerification = {
+              status: STUDENT_VERIFICATION_STATUSES.PENDING,
+              requestedAt: user.createdAt || new Date().toISOString(),
+            };
+            usersChanged = true;
+          }
+        }
         if (users.length === 0 && !hasAdminConfig) {
           throw new Error(
             "Đặt ADMIN_EMAIL và ADMIN_PASSWORD (tối thiểu 12 ký tự) để tạo tài khoản quản trị đầu tiên.",
@@ -302,6 +313,8 @@ class PostgresDatabase {
               createdAt: new Date().toISOString(),
             };
             users.push(admin);
+          } else if (usersChanged) {
+            await this.writeRelationalCollection(this.pool, "users", users);
           } else {
             admin.password = hashPassword(password);
             admin.role = "admin";
@@ -951,6 +964,10 @@ class PostgresDatabase {
         isActive: true,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         customerInfo: {},
         createdBy: actor,
         updatedBy: actor,
@@ -967,6 +984,29 @@ class PostgresDatabase {
       .filter((user) => ["sales", "support"].includes(user.role))
       .map(({ password, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async updateStudentVerification(id, status, actorId) {
+    const actor = validateActor(actorId);
+    if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(status)) {
+      throw new CustomerError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
+    }
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user || user.role !== ROLES.USER) return null;
+      const now = new Date().toISOString();
+      user.studentVerification = {
+        status,
+        requestedAt: user.studentVerification?.requestedAt || user.createdAt || now,
+        ...(status === STUDENT_VERIFICATION_STATUSES.VERIFIED
+          ? { verifiedAt: now, verifiedBy: actor }
+          : { revokedAt: now, revokedBy: actor }),
+      };
+      user.updatedBy = actor;
+      user.updatedAt = now;
+      const { password, passwordReset, ...safeUser } = user;
+      return safeUser;
+    });
   }
 
   async createStaffUser(data, actorId) {
@@ -1045,6 +1085,12 @@ class PostgresDatabase {
       if (user) {
         user.authProvider = data.authProvider || user.authProvider || "google";
         if (data.providerId) user.providerId = data.providerId;
+        if (!user.studentVerification) {
+          user.studentVerification = {
+            status: STUDENT_VERIFICATION_STATUSES.PENDING,
+            requestedAt: user.createdAt || now,
+          };
+        }
         user.updatedAt = now;
         return user;
       }
@@ -1057,6 +1103,10 @@ class PostgresDatabase {
         role: ROLES.USER,
         studentType: data.studentType || "other",
         studentId: String(data.studentId || "").trim(),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         authProvider: data.authProvider || "google",
         providerId: String(data.providerId || "").trim(),
         customerInfo: {},

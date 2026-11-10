@@ -77,6 +77,7 @@ class SessionStore {
       role: user.role || "user",
       studentType: user.studentType || "other",
       studentId: user.studentId || "",
+      studentVerification: user.studentVerification || { status: "pending" },
       customerInfo: user.customerInfo || {},
       createdAt: now,
       updatedAt: now,

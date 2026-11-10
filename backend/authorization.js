@@ -12,6 +12,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     "read:coupons",
     "write:coupons",
     "read:users",
+    "write:users",
     "read:staff",
     "write:staff",
     "read:customers",

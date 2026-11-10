@@ -45,6 +45,7 @@ const {
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
 } = require("./backend/business-constants");
 
 const root = __dirname;
@@ -473,6 +474,7 @@ function publicUser(user) {
     role: user.role,
     studentType: user.studentType,
     studentId: user.studentId,
+    studentVerification: user.studentVerification || { status: STUDENT_VERIFICATION_STATUSES.PENDING },
     authProvider: user.authProvider || undefined,
     customerInfo: user.customerInfo || {},
   };
@@ -790,8 +792,9 @@ function createOrder(payload, userId = null, requester = null, coupon = null) {
     typeof payload.paymentMethod === "string" ? payload.paymentMethod : "",
     32,
   );
-  const isStudentAccount = requester?.studentType === "student" ||
-    requester?.studentType === "university";
+  const isStudentAccount =
+    requester?.studentVerification?.status === STUDENT_VERIFICATION_STATUSES.VERIFIED &&
+    (requester?.studentType === "student" || requester?.studentType === "university");
   const discountRate = requester ? (isStudentAccount ? 0.1 : 0.05) : 0;
   const couponCode = sanitizePlainText(
     typeof payload.couponCode === "string" ? payload.couponCode : "",
@@ -2821,9 +2824,38 @@ function createServer({
         role: u.role,
         studentType: u.studentType,
         studentId: u.studentId,
+        studentVerification: u.studentVerification || { status: STUDENT_VERIFICATION_STATUSES.PENDING },
         createdAt: u.createdAt,
       }));
       sendJson(response, 200, safeUsers);
+      return;
+    }
+
+    const adminUserMatch = requestUrl.pathname.match(
+      /^\/api\/admin\/users\/([0-9a-f-]+)$/i,
+    );
+    if (adminUserMatch && request.method === "PATCH") {
+      const actor = await requireRole(request, "write:users");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu xác minh sinh viên không hợp lệ.",
+        {
+          allowed: ["studentVerificationStatus"],
+          required: ["studentVerificationStatus"],
+          types: { studentVerificationStatus: "string" },
+        },
+      );
+      if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(payload.studentVerificationStatus)) {
+        throw new RequestError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
+      }
+      const updated = await db.updateStudentVerification(
+        adminUserMatch[1],
+        payload.studentVerificationStatus,
+        actor.userId,
+      );
+      if (!updated) throw new RequestError(404, "Không tìm thấy tài khoản người dùng.");
+      await sessionStore.destroyUserSessions(updated.id);
+      sendJson(response, 200, publicUser(updated));
       return;
     }
 

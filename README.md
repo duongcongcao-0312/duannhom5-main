@@ -36,6 +36,7 @@ BookNest là ứng dụng bán sách trực tuyến gồm storefront cho khách 
 - Cổng quản trị cho đơn hàng, sách, dịch vụ, người dùng và thống kê.
 - Giao diện responsive cho desktop và mobile.
 - Tùy chọn đăng ký bằng Google/Facebook qua Firebase Authentication nếu đã cấu hình.
+- Ưu đãi học sinh/sinh viên chỉ được áp dụng sau khi quản trị viên xác minh tài khoản.
 
 ## Công nghệ và kiến trúc
 

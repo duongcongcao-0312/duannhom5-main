@@ -54,6 +54,12 @@ const PAYMENT_METHODS = Object.freeze({
   TRANSFER: "transfer",
 });
 
+const STUDENT_VERIFICATION_STATUSES = Object.freeze({
+  PENDING: "pending",
+  VERIFIED: "verified",
+  REVOKED: "revoked",
+});
+
 const ORDER_STATUS_TRANSITIONS = Object.freeze({
   [ORDER_STATUSES.RECEIVED]: Object.freeze([
     ORDER_STATUSES.PROCESSING,
@@ -118,6 +124,7 @@ module.exports = {
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
   customerStatusValues,
   customerInteractionTypeValues,
   isOrderStatusTransitionAllowed,

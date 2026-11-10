@@ -330,7 +330,7 @@ test("order creation calculates catalog prices and rejects invalid checkout data
   });
   assert.equal(studentOrderResponse.status, 201);
   const studentOrder = await studentOrderResponse.json();
-  assert.equal(studentOrder.discount, 8900);
+  assert.equal(studentOrder.discount, 4450);
   const studentQuoteResponse = await fetch(`${baseUrl}/api/orders/quote`, {
     method: "POST",
     headers: {

@@ -11,6 +11,7 @@ const {
   ROLES,
   SERVICE_STATUSES,
   SERVICE_TYPES,
+  STUDENT_VERIFICATION_STATUSES,
   customerStatusValues,
   isOrderStatusTransitionAllowed,
   isOrderStatusTransitionAllowedForRole,
@@ -269,6 +270,15 @@ class Database {
     }
 
     if (users.length > 0) {
+      const verificationStatuses = new Set(Object.values(STUDENT_VERIFICATION_STATUSES));
+      for (const user of users) {
+        if (!verificationStatuses.has(user.studentVerification?.status)) {
+          user.studentVerification = {
+            status: STUDENT_VERIFICATION_STATUSES.PENDING,
+            requestedAt: user.createdAt || new Date().toISOString(),
+          };
+        }
+      }
       await atomicWriteFile(this.usersPath, JSON.stringify(users, null, 2));
     }
 
@@ -391,6 +401,10 @@ class Database {
         isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
         studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         customerInfo: {},
         createdBy: actorName,
         updatedBy: actorName,
@@ -413,6 +427,12 @@ class Database {
         }
         user.authProvider = sanitizeTextValue(data.authProvider || user.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google";
         if (data.providerId) user.providerId = sanitizeTextValue(data.providerId, { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" });
+        if (!user.studentVerification) {
+          user.studentVerification = {
+            status: STUDENT_VERIFICATION_STATUSES.PENDING,
+            requestedAt: user.createdAt || now,
+          };
+        }
         user.updatedAt = now;
         return user;
       }
@@ -426,6 +446,10 @@ class Database {
         isActive: true,
         studentType: sanitizeTextValue(data.studentType || "other", { maxLength: 32, allowEmpty: true, fieldName: "Loại học sinh" }) || "other",
         studentId: sanitizeTextValue(data.studentId || "", { maxLength: 64, allowEmpty: true, fieldName: "Mã sinh viên" }),
+        studentVerification: {
+          status: STUDENT_VERIFICATION_STATUSES.PENDING,
+          requestedAt: now,
+        },
         authProvider: sanitizeTextValue(data.authProvider || "google", { maxLength: 32, allowEmpty: true, fieldName: "Nhà cung cấp" }) || "google",
         providerId: sanitizeTextValue(data.providerId || "", { maxLength: 128, allowEmpty: true, fieldName: "Provider ID" }),
         customerInfo: {},
@@ -444,6 +468,29 @@ class Database {
       .filter((user) => ["sales", "support"].includes(user.role))
       .map(({ password, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async updateStudentVerification(id, status, actorId) {
+    const actor = validateCustomerActor(actorId);
+    if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(status)) {
+      throw new CustomerError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
+    }
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user || user.role !== ROLES.USER) return null;
+      const now = new Date().toISOString();
+      user.studentVerification = {
+        status,
+        requestedAt: user.studentVerification?.requestedAt || user.createdAt || now,
+        ...(status === STUDENT_VERIFICATION_STATUSES.VERIFIED
+          ? { verifiedAt: now, verifiedBy: actor }
+          : { revokedAt: now, revokedBy: actor }),
+      };
+      user.updatedBy = actor;
+      user.updatedAt = now;
+      const { password, passwordReset, ...safeUser } = user;
+      return safeUser;
+    });
   }
 
   async createStaffUser(data, actorId) {

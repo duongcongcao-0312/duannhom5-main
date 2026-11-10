@@ -167,6 +167,10 @@ Các endpoint chính hiện có:
 | `POST` | `/api/admin/books` | Quản trị | Thêm sách. |
 | `PUT` | `/api/admin/books/:id` | `write:books` | Cập nhật thông tin, thể loại và tồn kho; gửi `If-Match` với `updatedAt` để phát hiện cập nhật cũ. |
 | `DELETE` | `/api/admin/books/:id` | Quản trị | Xóa sách. |
+| `GET` | `/api/admin/coupons` | `read:coupons` | Liệt kê coupon và lượt sử dụng. |
+| `POST` | `/api/admin/coupons` | `write:coupons` | Tạo coupon. |
+| `PUT` / `PATCH` | `/api/admin/coupons/:code` | `write:coupons` | Cập nhật điều kiện hoặc bật/tắt coupon. |
+| `GET` | `/api/coupons/:code` | Công khai | Kiểm tra coupon còn hiệu lực. |
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
 | `GET` | `/api/admin/users` | Quản trị | Liệt kê người dùng. |
@@ -178,8 +182,9 @@ Mở `/admin.html` sau khi server khởi động. Tính năng gồm:
 1. Xem thống kê doanh thu, đơn hàng, sách và thành viên.
 2. Xem, lọc và cập nhật trạng thái đơn hàng.
 3. Thêm, sửa, xóa sách tùy chỉnh; cập nhật tồn kho và thể loại của sách trong catalog. Sách mẫu không thể xóa.
-4. Tiếp nhận và cập nhật yêu cầu thuê/thu mua/đổi sách.
-5. Xem người dùng, vai trò và thông tin phân loại.
+4. Tạo/sửa coupon, cấu hình mức giảm, đơn tối thiểu, thời gian áp dụng, giới hạn lượt và bật/tắt.
+5. Tiếp nhận và cập nhật yêu cầu thuê/thu mua/đổi sách.
+6. Xem người dùng, vai trò và thông tin phân loại.
 
 Thông tin quản trị phải được cung cấp qua `ADMIN_EMAIL` và `ADMIN_PASSWORD` trong môi trường chạy. Nếu mã nguồn hoặc dữ liệu development có credential mẫu, credential đó chỉ dùng để kiểm thử local và phải được đổi trước khi chia sẻ hoặc deploy; README không cung cấp mật khẩu mặc định.
 
@@ -198,7 +203,9 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 ### PostgreSQL/Supabase
 
-`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+
+Coupon được xác thực và tính giảm ở backend khi báo giá và tạo đơn. Mức giảm coupon cộng với ưu đãi tài khoản bị giới hạn tổng cộng 30%; đơn hàng phải đạt mức tối thiểu, coupon phải đang bật/trong thời hạn và chưa vượt giới hạn lượt. Lượt chỉ được ghi nhận khi đơn được tạo thành công. Local lưu coupon trong `data/coupons.json`; PostgreSQL cần chạy `npm run migrate` để áp dụng migration 006.
 
 Với PostgreSQL, endpoint tạo đơn lưu khóa `Idempotency-Key` và giữ tồn kho trong database dùng chung; đơn hàng và lượng tồn kho được cập nhật nguyên tử. Retry cùng nội dung trả lại đơn đã tạo, còn tái sử dụng khóa với payload khác trả HTTP 409. Cần chạy `npm run migrate` để cài các migration trước khi triển khai các instance mới.
 

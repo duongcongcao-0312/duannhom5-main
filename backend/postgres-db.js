@@ -8,6 +8,7 @@ const {
 } = require("./db");
 const { hashPassword } = require("./auth");
 const { hashOrderRequest } = require("./order-idempotency");
+const { getCouponUnavailableReason } = require("./coupons");
 const {
   CUSTOMER_STATUSES,
   ORDER_STATUSES,
@@ -125,6 +126,22 @@ function rowToRecord(collection, row) {
     phone: row.phone,
     note: row.note,
     status: row.status,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function couponRowToRecord(row) {
+  return {
+    code: row.code,
+    label: row.label,
+    rate: Number(row.rate),
+    minSubtotal: Number(row.min_subtotal),
+    maxUses: row.max_uses === null ? null : Number(row.max_uses),
+    usedCount: Number(row.used_count),
+    startsAt: row.starts_at ? new Date(row.starts_at).toISOString() : null,
+    expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+    enabled: row.enabled,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -453,6 +470,114 @@ class PostgresDatabase {
     if (!collections.has(name)) throw new Error(`Unknown data collection: ${name}`);
     await this.init();
     return this.readRelationalCollection(this.pool, name);
+  }
+
+  async getCoupons() {
+    await this.init();
+    const { rows } = await this.pool.query(
+      "SELECT * FROM coupon_promotions ORDER BY created_at, code",
+    );
+    return rows.map(couponRowToRecord);
+  }
+
+  async saveCoupon(coupon, expectedUpdatedAt, createOnly = false) {
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query(
+        "SELECT * FROM coupon_promotions WHERE code = $1 FOR UPDATE",
+        [coupon.code],
+      );
+      const existing = current.rows[0] ? couponRowToRecord(current.rows[0]) : null;
+      if (existing && createOnly) {
+        throw new CustomerError(409, "Mã coupon đã tồn tại.");
+      }
+      if (expectedUpdatedAt !== undefined && (existing?.updatedAt || "") !== expectedUpdatedAt) {
+        throw new CustomerError(
+          existing ? 409 : 404,
+          existing
+            ? "Coupon đã được cập nhật bởi người khác. Vui lòng tải lại dữ liệu."
+            : "Không tìm thấy coupon.",
+        );
+      }
+      if (existing && coupon.maxUses !== null && coupon.maxUses < existing.usedCount) {
+        throw new CustomerError(409, "Giới hạn lượt dùng không thể thấp hơn số lượt đã sử dụng.");
+      }
+      const result = await client.query(
+        `INSERT INTO coupon_promotions
+          (code, label, rate, min_subtotal, max_uses, starts_at, expires_at, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ${createOnly ? "ON CONFLICT (code) DO NOTHING" : `ON CONFLICT (code) DO UPDATE SET
+           label = EXCLUDED.label,
+           rate = EXCLUDED.rate,
+           min_subtotal = EXCLUDED.min_subtotal,
+           max_uses = EXCLUDED.max_uses,
+           starts_at = EXCLUDED.starts_at,
+           expires_at = EXCLUDED.expires_at,
+           enabled = EXCLUDED.enabled,
+           updated_at = NOW()`}
+         RETURNING *`,
+        [
+          coupon.code,
+          coupon.label,
+          coupon.rate,
+          coupon.minSubtotal,
+          coupon.maxUses,
+          coupon.startsAt,
+          coupon.expiresAt,
+          coupon.enabled,
+        ],
+      );
+      if (!result.rows[0]) {
+        throw new CustomerError(409, "Mã coupon đã tồn tại.");
+      }
+      await client.query("COMMIT");
+      return couponRowToRecord(result.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async redeemCoupon(code, subtotal, now = Date.now(), expectedRate) {
+    await this.init();
+    const result = await this.pool.query(
+      `UPDATE coupon_promotions
+       SET used_count = used_count + 1
+       WHERE code = $1
+         AND enabled = TRUE
+         AND (starts_at IS NULL OR starts_at <= $3)
+         AND (expires_at IS NULL OR expires_at > $3)
+         AND min_subtotal <= $2
+         AND ($4::numeric IS NULL OR rate = $4)
+         AND (max_uses IS NULL OR used_count < max_uses)
+       RETURNING *`,
+      [code, subtotal, new Date(now).toISOString(), expectedRate],
+    );
+    if (result.rows[0]) return couponRowToRecord(result.rows[0]);
+    const { rows } = await this.pool.query(
+      "SELECT * FROM coupon_promotions WHERE code = $1",
+      [code],
+    );
+    const reason = getCouponUnavailableReason(
+      rows[0] ? couponRowToRecord(rows[0]) : null,
+      { subtotal, now },
+    );
+    throw new CustomerError(409, reason || "Mã ưu đãi vừa hết lượt sử dụng.");
+  }
+
+  async releaseCoupon(code) {
+    await this.init();
+    const { rowCount } = await this.pool.query(
+      `UPDATE coupon_promotions
+       SET used_count = GREATEST(used_count - 1, 0)
+       WHERE code = $1`,
+      [code],
+    );
+    return rowCount > 0;
   }
 
   async updateCollection(name, update) {
@@ -911,7 +1036,13 @@ class PostgresDatabase {
     });
   }
 
-  async addOrderIdempotently(order, requestHash, inventory = [], validateOrder = () => {}) {
+  async addOrderIdempotently(
+    order,
+    requestHash,
+    inventory = [],
+    validateOrder = () => {},
+    couponCode = null,
+  ) {
     if (!order?.idempotencyKey || !/^[a-f0-9]{64}$/.test(requestHash || "") ||
         !Array.isArray(inventory)) {
       throw new Error("A valid idempotency key, request hash, and inventory are required.");
@@ -954,6 +1085,24 @@ class PostgresDatabase {
 
       const orders = await this.readRelationalCollection(client, "orders", true);
       await validateOrder(orders);
+      if (couponCode) {
+        const coupon = await client.query(
+          `UPDATE coupon_promotions
+           SET used_count = used_count + 1
+           WHERE code = $1
+             AND enabled = TRUE
+             AND (starts_at IS NULL OR starts_at <= NOW())
+             AND (expires_at IS NULL OR expires_at > NOW())
+             AND min_subtotal <= $2
+             AND rate = $3
+             AND (max_uses IS NULL OR used_count < max_uses)
+           RETURNING code`,
+          [couponCode, order.subtotal, order.couponRate],
+        );
+        if (!coupon.rowCount) {
+          throw new CustomerError(409, "Mã ưu đãi vừa hết lượt sử dụng hoặc không còn áp dụng được.");
+        }
+      }
       for (const item of [...inventory].sort((left, right) => left.title.localeCompare(right.title))) {
         await client.query(
           `INSERT INTO store_products (product_id, title, author, price, stock, is_custom)

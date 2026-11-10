@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
+const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
 const {
   CUSTOMER_STATUSES,
   ORDER_STATUSES,
@@ -120,8 +121,10 @@ class Database {
     this.customersPath = options.customersPath || path.join(dataDir, "customers.json");
     this.servicesPath = options.servicesPath || path.join(dataDir, "service-requests.jsonl");
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
+    this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.initialized = false;
+    this.initializationPromise = null;
     this.userWriteQueue = Promise.resolve();
     this.fileWriteQueues = new Map();
   }
@@ -135,6 +138,18 @@ class Database {
 
   async init() {
     if (this.initialized) return;
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.initialize();
+    }
+    try {
+      await this.initializationPromise;
+    } catch (error) {
+      this.initializationPromise = null;
+      throw error;
+    }
+  }
+
+  async initialize() {
     await fs.mkdir(path.dirname(this.usersPath), { recursive: true });
 
     const configuredEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
@@ -548,6 +563,86 @@ class Database {
       if (err.code === "ENOENT") return [];
       throw err;
     }
+  }
+
+  async readCouponRecords() {
+    try {
+      const content = await fs.readFile(this.couponsPath, "utf8");
+      const records = JSON.parse(content);
+      if (!Array.isArray(records)) throw new Error("Tệp coupon phải chứa một danh sách.");
+      return records;
+    } catch (error) {
+      if (error.code === "ENOENT") return DEFAULT_COUPONS.map((coupon) => ({ ...coupon }));
+      if (error instanceof SyntaxError) {
+        throw new Error(`Tệp coupon bị hỏng: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  async getCoupons() {
+    return this.readCouponRecords();
+  }
+
+  async saveCoupon(coupon, expectedUpdatedAt, createOnly = false) {
+    return this.enqueueFileWrite(this.couponsPath, async () => {
+      const coupons = await this.readCouponRecords();
+      const index = coupons.findIndex((entry) => entry.code === coupon.code);
+      const existing = index < 0 ? null : coupons[index];
+      if (existing && createOnly) {
+        throw new CustomerError(409, "Mã coupon đã tồn tại.");
+      }
+      if (expectedUpdatedAt !== undefined && (existing?.updatedAt || "") !== expectedUpdatedAt) {
+        throw new CustomerError(409, "Coupon đã được cập nhật bởi người khác. Vui lòng tải lại dữ liệu.");
+      }
+      if (!existing && expectedUpdatedAt !== undefined) {
+        throw new CustomerError(404, "Không tìm thấy coupon.");
+      }
+      if (existing && coupon.maxUses !== null && coupon.maxUses < existing.usedCount) {
+        throw new CustomerError(409, "Giới hạn lượt dùng không thể thấp hơn số lượt đã sử dụng.");
+      }
+      const now = new Date().toISOString();
+      const saved = {
+        ...existing,
+        ...coupon,
+        usedCount: existing?.usedCount || 0,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      };
+      if (index < 0) coupons.push(saved);
+      else coupons[index] = saved;
+      await fs.mkdir(path.dirname(this.couponsPath), { recursive: true });
+      await atomicWriteFile(this.couponsPath, JSON.stringify(coupons, null, 2));
+      return saved;
+    });
+  }
+
+  async redeemCoupon(code, subtotal, now = Date.now(), expectedRate) {
+    return this.enqueueFileWrite(this.couponsPath, async () => {
+      const coupons = await this.readCouponRecords();
+      const coupon = coupons.find((entry) => entry.code === code);
+      const reason = getCouponUnavailableReason(coupon, { subtotal, now });
+      if (reason) throw new CustomerError(409, reason);
+      if (expectedRate !== undefined && coupon.rate !== expectedRate) {
+        throw new CustomerError(409, "Điều kiện coupon vừa được cập nhật. Vui lòng tải lại báo giá.");
+      }
+      coupon.usedCount += 1;
+      await fs.mkdir(path.dirname(this.couponsPath), { recursive: true });
+      await atomicWriteFile(this.couponsPath, JSON.stringify(coupons, null, 2));
+      return coupon;
+    });
+  }
+
+  async releaseCoupon(code) {
+    return this.enqueueFileWrite(this.couponsPath, async () => {
+      const coupons = await this.readCouponRecords();
+      const coupon = coupons.find((entry) => entry.code === code);
+      if (!coupon) return false;
+      coupon.usedCount = Math.max(0, coupon.usedCount - 1);
+      await fs.mkdir(path.dirname(this.couponsPath), { recursive: true });
+      await atomicWriteFile(this.couponsPath, JSON.stringify(coupons, null, 2));
+      return true;
+    });
   }
 
   async addOrder(order, ordersPathOverride) {

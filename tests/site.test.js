@@ -389,6 +389,7 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	const html = read('index.html');
 	const script = read('main.js');
 	const server = read('server.js');
+	const coupons = read('backend/coupons.js');
 	assert.match(html, /id="sortFilter"/);
 	assert.match(html, /id="favoritesFilter"/);
 	assert.match(html, /id="couponInput"/);
@@ -400,7 +401,7 @@ test('catalog supports sorting, favorites, coupons and order tracking', () => {
 	assert.match(script, /booknestApiFetch\('\/api\/orders'/);
 	assert.match(script, /booknestApiFetch\('\/api\/orders\/quote'/);
 	assert.match(script, /Authorization: `Bearer \$\{token\}`/);
-	assert.match(server, /BOOKNEST10/);
+	assert.match(coupons, /BOOKNEST10/);
 	assert.match(server, /couponCode/);
 });
 

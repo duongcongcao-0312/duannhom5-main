@@ -32,6 +32,8 @@ test("role policy matrix grants only the intended admin permissions", () => {
     "write:services",
     "read:books",
     "write:books",
+    "read:coupons",
+    "write:coupons",
     "read:users",
     "read:customers",
     "write:customers",

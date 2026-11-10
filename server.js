@@ -29,6 +29,7 @@ const {
   verifyPassword,
 } = require("./backend/auth");
 const { createEmailMailer } = require("./backend/email");
+const { getCouponUnavailableReason } = require("./backend/coupons");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
 const {
   hasPermission,
@@ -213,6 +214,72 @@ const payloadSchemas = {
       couponCode: "string",
       items: "array",
     },
+    coupon: {
+      allowed: [
+        "code",
+        "label",
+        "rate",
+        "minSubtotal",
+        "maxUses",
+        "startsAt",
+        "expiresAt",
+        "enabled",
+      ],
+      required: [
+        "code",
+        "label",
+        "rate",
+        "minSubtotal",
+        "maxUses",
+        "startsAt",
+        "expiresAt",
+        "enabled",
+      ],
+      types: {
+        code: "string",
+        label: "string",
+        rate: "number",
+        minSubtotal: "number",
+        maxUses: "number",
+        startsAt: "string",
+        expiresAt: "string",
+        enabled: "boolean",
+      },
+    },
+    couponUpdate: {
+      allowed: [
+        "label",
+        "rate",
+        "minSubtotal",
+        "maxUses",
+        "startsAt",
+        "expiresAt",
+        "enabled",
+      ],
+      required: [
+        "label",
+        "rate",
+        "minSubtotal",
+        "maxUses",
+        "startsAt",
+        "expiresAt",
+        "enabled",
+      ],
+      types: {
+        label: "string",
+        rate: "number",
+        minSubtotal: "number",
+        maxUses: "number",
+        startsAt: "string",
+        expiresAt: "string",
+        enabled: "boolean",
+      },
+    },
+    couponToggle: {
+      allowed: ["enabled"],
+      required: ["enabled"],
+      types: { enabled: "boolean" },
+    },
   },
   orderUpdate: {
     allowed: ["status", "paymentStatus", "items"],
@@ -313,10 +380,6 @@ const customerQuerySchema = {
   limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
 };
 const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
-const coupons = new Map([
-  ["BOOKNEST10", { rate: 0.1, label: "Ưu đãi BookNest" }],
-  ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
-]);
 const maxRequestBytes = 1024 * 1024;
 class RequestError extends Error {
   constructor(status, message, cause) {
@@ -495,6 +558,51 @@ function normalizeAdminBook(payload, existing) {
   };
 }
 
+function normalizeCoupon(payload, code) {
+  const normalizedCode = sanitizePlainText(code, 32).toUpperCase();
+  const label = sanitizePlainText(payload.label, 120);
+  const rate = payload.rate;
+  const minSubtotal = payload.minSubtotal;
+  const maxUses = payload.maxUses === 0 ? null : payload.maxUses;
+  const startsAt = payload.startsAt
+    ? new Date(payload.startsAt)
+    : null;
+  const expiresAt = payload.expiresAt
+    ? new Date(payload.expiresAt)
+    : null;
+
+  if (!/^[A-Z0-9_-]{3,32}$/.test(normalizedCode)) {
+    throw new RequestError(400, "Mã coupon chỉ được gồm 3-32 ký tự A-Z, 0-9, dấu gạch ngang hoặc gạch dưới.");
+  }
+  if (!label || !Number.isFinite(rate) || rate < 0.01 || rate > 0.3) {
+    throw new RequestError(400, "Tên coupon và mức giảm từ 1% đến 30% là bắt buộc.");
+  }
+  if (!Number.isSafeInteger(minSubtotal) || minSubtotal < 0 || minSubtotal > 1_000_000_000_000) {
+    throw new RequestError(400, "Giá trị đơn hàng tối thiểu không hợp lệ.");
+  }
+  if (maxUses !== null && (!Number.isSafeInteger(maxUses) || maxUses < 1 || maxUses > 2_147_483_647)) {
+    throw new RequestError(400, "Giới hạn lượt dùng phải là số nguyên dương.");
+  }
+  if (
+    (startsAt && !Number.isFinite(startsAt.getTime())) ||
+    (expiresAt && !Number.isFinite(expiresAt.getTime())) ||
+    (startsAt && expiresAt && expiresAt <= startsAt)
+  ) {
+    throw new RequestError(400, "Thời gian áp dụng coupon không hợp lệ.");
+  }
+
+  return {
+    code: normalizedCode,
+    label,
+    rate,
+    minSubtotal,
+    maxUses,
+    startsAt: startsAt ? startsAt.toISOString() : null,
+    expiresAt: expiresAt ? expiresAt.toISOString() : null,
+    enabled: payload.enabled,
+  };
+}
+
 function sanitizePayload(value) {
   if (value === null || value === undefined) {
     return value;
@@ -625,7 +733,7 @@ function validateApiPath(pathname) {
   }
 }
 
-function createOrder(payload, userId = null, requester = null) {
+function createOrder(payload, userId = null, requester = null, coupon = null) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
   }
@@ -689,7 +797,7 @@ function createOrder(payload, userId = null, requester = null) {
   ) {
     throw new RequestError(400, "Mã ưu đãi không hợp lệ hoặc đã hết hạn.");
   }
-  if (couponCode && !coupons.has(couponCode)) {
+  if (couponCode && (!coupon || coupon.code !== couponCode)) {
     throw new RequestError(400, "Mã ưu đãi không hợp lệ hoặc đã hết hạn.");
   }
   if (
@@ -761,7 +869,11 @@ function createOrder(payload, userId = null, requester = null) {
   if (!Number.isSafeInteger(subtotal)) {
     throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
   }
-  const couponRate = couponCode ? coupons.get(couponCode).rate : 0;
+  const couponReason = couponCode
+    ? getCouponUnavailableReason(coupon, { subtotal })
+    : "";
+  if (couponReason) throw new RequestError(400, couponReason);
+  const couponRate = couponCode ? coupon.rate : 0;
   const discount = roundMoney(
     subtotal * Math.min(discountRate + couponRate, 0.3),
   );
@@ -777,6 +889,7 @@ function createOrder(payload, userId = null, requester = null) {
     paymentMethod,
     discountRate,
     couponCode: couponCode || null,
+    couponRate,
     subtotal,
     discount,
     total: subtotal - discount,
@@ -927,6 +1040,7 @@ function createServer({
   customersPath,
   servicesPath,
   booksPath,
+  couponsPath,
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
@@ -965,6 +1079,7 @@ function createServer({
       customersPath,
       servicesPath,
       booksPath,
+      couponsPath,
     }));
   const sessionRepositoryMethods = [
     "saveSessionRecord",
@@ -1040,7 +1155,53 @@ function createServer({
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     await waitForCatalogReady();
     const operation = orderWriteQueue.then(async () => {
-      const order = createOrder(payload, userId, requester);
+      const couponCode = typeof payload?.couponCode === "string"
+        ? sanitizePlainText(payload.couponCode, 32).toUpperCase()
+        : "";
+      const existingOrders = await db.getAllOrders(ordersPath);
+      const existingOrder = existingOrders.find(
+        (entry) => entry.idempotencyKey === idempotencyKey,
+      );
+      if (existingOrder) {
+        if (existingOrder.couponCode !== (couponCode || null)) {
+          throw new RequestError(
+            409,
+            "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
+          );
+        }
+        let replayCoupon = null;
+        if (couponCode) {
+          const currentCoupons = await db.getCoupons();
+          const currentCoupon = currentCoupons.find((entry) => entry.code === couponCode);
+          const rate = Number.isFinite(existingOrder.couponRate)
+            ? existingOrder.couponRate
+            : currentCoupon?.rate;
+          if (!Number.isFinite(rate)) {
+            throw new RequestError(409, "Không thể phát lại đơn hàng đã sử dụng coupon này.");
+          }
+          replayCoupon = {
+            code: couponCode,
+            rate,
+            minSubtotal: 0,
+            maxUses: null,
+            usedCount: 0,
+            enabled: true,
+          };
+        }
+        const replayOrder = createOrder(payload, userId, requester, replayCoupon);
+        const replayHash = hashOrderRequest(replayOrder);
+        if (existingOrder.idempotencyHash && existingOrder.idempotencyHash !== replayHash) {
+          throw new RequestError(
+            409,
+            "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
+          );
+        }
+        return { order: existingOrder, replayed: true };
+      }
+
+      const coupons = couponCode ? await db.getCoupons() : [];
+      const coupon = coupons.find((entry) => entry.code === couponCode) || null;
+      const order = createOrder(payload, userId, requester, coupon);
       const requestHash = hashOrderRequest(order);
       order.idempotencyKey = idempotencyKey;
       order.idempotencyHash = requestHash;
@@ -1085,6 +1246,7 @@ function createServer({
           requestHash,
           inventory,
           validateStock,
+          couponCode || null,
         );
         if (result.conflict) {
           throw new RequestError(
@@ -1095,21 +1257,21 @@ function createServer({
         return result;
       }
 
-      const existingOrders = await db.getAllOrders(ordersPath);
-      const existingOrder = existingOrders.find(
-        (entry) => entry.idempotencyKey === idempotencyKey,
-      );
-      if (existingOrder) {
-        if (existingOrder.idempotencyHash && existingOrder.idempotencyHash !== requestHash) {
-          throw new RequestError(
-            409,
-            "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
-          );
-        }
-        return { order: existingOrder, replayed: true };
-      }
       validateStock(existingOrders);
-      await db.addOrder(order, ordersPath);
+      if (couponCode) {
+        await db.redeemCoupon(
+          couponCode,
+          order.subtotal,
+          Date.now(),
+          order.couponRate,
+        );
+      }
+      try {
+        await db.addOrder(order, ordersPath);
+      } catch (error) {
+        if (couponCode) await db.releaseCoupon(couponCode);
+        throw error;
+      }
       return { order, replayed: false };
     });
     orderWriteQueue = operation.catch(() => {});
@@ -1365,14 +1527,21 @@ function createServer({
       /^\/api\/coupons\/([A-Za-z0-9_-]+)$/,
     );
     if (couponMatch && request.method === "GET") {
-      const coupon = coupons.get(couponMatch[1].toUpperCase());
-      if (!coupon) {
+      const code = couponMatch[1].toUpperCase();
+      const coupon = (await db.getCoupons()).find((entry) => entry.code === code);
+      const reason = getCouponUnavailableReason(coupon);
+      if (reason) {
         sendJson(response, 404, {
-          error: "Mã ưu đãi không hợp lệ hoặc đã hết hạn.",
+          error: reason,
         });
         return;
       }
-      sendJson(response, 200, coupon);
+      sendJson(response, 200, {
+        code: coupon.code,
+        label: coupon.label,
+        rate: coupon.rate,
+        minSubtotal: coupon.minSubtotal,
+      });
       return;
     }
 
@@ -1877,6 +2046,12 @@ function createServer({
         payloadSchemas.orderQuote,
       );
       const requester = await getAuthUser(request);
+      const couponCode = typeof payload.couponCode === "string"
+        ? sanitizePlainText(payload.couponCode, 32).toUpperCase()
+        : "";
+      const coupon = couponCode
+        ? (await db.getCoupons()).find((entry) => entry.code === couponCode) || null
+        : null;
       const quote = createOrder({
         customerName: "Báo giá",
         address: "Xem trước đơn hàng",
@@ -1885,10 +2060,11 @@ function createServer({
         couponCode: payload.couponCode,
         discountRate: payload.discountRate,
         items: payload.items,
-      }, requester?.userId || null, requester);
+      }, requester?.userId || null, requester, coupon);
       sendJson(response, 200, {
         discountRate: quote.discountRate,
         couponCode: quote.couponCode,
+        couponRate: quote.couponRate,
         subtotal: quote.subtotal,
         discount: quote.discount,
         total: quote.total,
@@ -2021,7 +2197,11 @@ function createServer({
         if (!allowedDiscountRates.has(order.discountRate)) {
           throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
         }
-        const couponRate = order.couponCode ? coupons.get(order.couponCode)?.rate : 0;
+        const couponRate = Number.isFinite(order.couponRate)
+          ? order.couponRate
+          : order.couponCode
+            ? (await db.getCoupons()).find((coupon) => coupon.code === order.couponCode)?.rate
+            : 0;
         if (order.couponCode && couponRate === undefined) {
           throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
         }
@@ -2291,6 +2471,68 @@ function createServer({
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy yêu cầu.");
       }
+      sendJson(response, 200, updated);
+      return;
+    }
+
+    // --- Admin API: Coupon Management ---
+    if (
+      requestUrl.pathname === "/api/admin/coupons" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:coupons");
+      sendJson(response, 200, await db.getCoupons());
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/coupons" &&
+      request.method === "POST"
+    ) {
+      await requireRole(request, "write:coupons");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu coupon không hợp lệ.",
+        payloadSchemas.coupon,
+      );
+      const coupon = normalizeCoupon(payload, payload.code);
+      if ((await db.getCoupons()).some((entry) => entry.code === coupon.code)) {
+        throw new RequestError(409, "Mã coupon đã tồn tại.");
+      }
+      sendJson(response, 201, await db.saveCoupon(coupon, undefined, true));
+      return;
+    }
+
+    const adminCouponMatch = requestUrl.pathname.match(
+      /^\/api\/admin\/coupons\/([A-Za-z0-9_-]{3,32})$/,
+    );
+    if (
+      adminCouponMatch &&
+      (request.method === "PUT" || request.method === "PATCH")
+    ) {
+      await requireRole(request, "write:coupons");
+      const code = adminCouponMatch[1].toUpperCase();
+      const existing = (await db.getCoupons()).find((entry) => entry.code === code);
+      if (!existing) throw new RequestError(404, "Không tìm thấy coupon.");
+      const expectedUpdatedAt = request.headers["if-match"];
+      if (!expectedUpdatedAt) {
+        throw new RequestError(428, "Cần gửi If-Match để cập nhật coupon mới nhất.");
+      }
+      const schema = request.method === "PATCH"
+        ? payloadSchemas.couponToggle
+        : payloadSchemas.couponUpdate;
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu cập nhật coupon không hợp lệ.",
+        schema,
+      );
+      const coupon = request.method === "PATCH"
+        ? { ...existing, enabled: payload.enabled }
+        : normalizeCoupon(payload, code);
+      const updated = await db.saveCoupon(
+        coupon,
+        expectedUpdatedAt,
+      );
       sendJson(response, 200, updated);
       return;
     }

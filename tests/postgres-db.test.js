@@ -206,6 +206,55 @@ test("relational collection writes are transactional and persist product rows", 
   assert.equal(statements.at(-1).sql, "RELEASE");
 });
 
+test("coupon redemption is committed atomically with a PostgreSQL order", async (t) => {
+  withAdminConfig(t);
+  const statements = [];
+  const pool = createPool({
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          statements.push({ sql, values });
+          if (sql.includes("INSERT INTO order_idempotency")) {
+            return { rows: [{ order_record: {} }], rowCount: 1 };
+          }
+          if (sql.includes("SELECT orders.*")) return { rows: [], rowCount: 0 };
+          if (sql.includes("UPDATE coupon_promotions")) {
+            return { rows: [{ code: "ONETIME" }], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() { statements.push({ sql: "RELEASE" }); },
+      };
+    },
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  const order = {
+    orderId: "123e4567-e89b-12d3-a456-426614174000",
+    idempotencyKey: "coupon-order-0001",
+    subtotal: 100000,
+    couponRate: 0.1,
+    items: [],
+  };
+  const result = await db.addOrderIdempotently(
+    order,
+    "a".repeat(64),
+    [],
+    () => {},
+    "ONETIME",
+  );
+  assert.equal(result.conflict, false);
+  const redemptionIndex = statements.findIndex(({ sql }) => sql.includes("UPDATE coupon_promotions"));
+  const orderCommitIndex = statements.findIndex(({ sql }) => sql === "COMMIT");
+  assert.ok(redemptionIndex >= 0);
+  assert.ok(redemptionIndex < orderCommitIndex);
+  assert.equal(statements[redemptionIndex].values[0], "ONETIME");
+  assert.equal(statements[redemptionIndex].values[1], 100000);
+  assert.equal(statements[redemptionIndex].values[2], 0.1);
+  assert.match(statements[redemptionIndex].sql, /AND rate = \$3/);
+});
+
 test("collection updates roll back when a mutator fails", async (t) => {
   withAdminConfig(t);
   const statements = [];

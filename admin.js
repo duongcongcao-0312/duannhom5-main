@@ -5,6 +5,7 @@
     let currentAdmin = null;
     let allOrders = [];
     let allBooks = [];
+    let allCoupons = [];
     let allServices = [];
     let allUsers = [];
 
@@ -168,6 +169,7 @@
         dashboard: document.getElementById('viewDashboard'),
         orders: document.getElementById('viewOrders'),
         books: document.getElementById('viewBooks'),
+        coupons: document.getElementById('viewCoupons'),
         services: document.getElementById('viewServices'),
         users: document.getElementById('viewUsers')
     };
@@ -200,6 +202,7 @@
         if (activeView === 'dashboard') loadDashboard();
         else if (activeView === 'orders') loadOrders();
         else if (activeView === 'books') loadBooks();
+        else if (activeView === 'coupons') loadCoupons();
         else if (activeView === 'services') loadServices();
         else if (activeView === 'users') loadUsers();
     }
@@ -536,6 +539,148 @@
             }
         } catch {
             showToast('Lỗi kết nối máy chủ.', 'error');
+        }
+    });
+
+    // --- VIEW: COUPONS ---
+    const couponModal = document.getElementById('couponModal');
+    const couponForm = document.getElementById('couponForm');
+
+    async function loadCoupons() {
+        const tbody = document.getElementById('couponsTableBody');
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Đang tải coupon...</td></tr>';
+        try {
+            const res = await apiFetch('/api/admin/coupons');
+            if (!res.ok) {
+                const error = await res.json();
+                throw new Error(error.error || 'Không thể tải coupon.');
+            }
+            allCoupons = await res.json();
+            renderCoupons();
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Không thể tải danh sách coupon.</td></tr>';
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    }
+
+    function renderCoupons() {
+        const tbody = document.getElementById('couponsTableBody');
+        if (!allCoupons.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Chưa có coupon nào.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = allCoupons.map((coupon) => {
+            const dateRange = [
+                coupon.startsAt ? new Date(coupon.startsAt).toLocaleString('vi-VN') : '',
+                coupon.expiresAt ? new Date(coupon.expiresAt).toLocaleString('vi-VN') : ''
+            ].filter(Boolean).join(' – ') || 'Không giới hạn';
+            const useLimit = coupon.maxUses === null
+                ? `${coupon.usedCount} / Không giới hạn`
+                : `${coupon.usedCount} / ${coupon.maxUses}`;
+            return `
+                <tr>
+                    <td><strong>${escapeHtml(coupon.code)}</strong><br><small>${escapeHtml(coupon.label)}</small></td>
+                    <td>${Number(coupon.rate * 100).toLocaleString('vi-VN')}%</td>
+                    <td>${formatCurrency(coupon.minSubtotal)}</td>
+                    <td>${useLimit}</td>
+                    <td><small>${escapeHtml(dateRange)}</small></td>
+                    <td><span class="status-badge ${coupon.enabled ? 'status-completed' : 'status-cancelled'}">${coupon.enabled ? 'Đang bật' : 'Đang tắt'}</span></td>
+                    <td>
+                        <div style="display: flex; gap: 0.4rem;">
+                            <button class="btn-sm btn-edit edit-coupon-btn" data-code="${escapeHtml(coupon.code)}" type="button">Sửa</button>
+                            <button class="btn-sm btn-delete toggle-coupon-btn" data-code="${escapeHtml(coupon.code)}" type="button">${coupon.enabled ? 'Tắt' : 'Bật'}</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.querySelectorAll('.edit-coupon-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                const coupon = allCoupons.find((entry) => entry.code === button.dataset.code);
+                if (!coupon) return;
+                document.getElementById('couponModalTitle').textContent = `Sửa coupon ${coupon.code}`;
+                couponForm.elements.code.value = coupon.code;
+                couponForm.elements.code.disabled = true;
+                couponForm.elements.label.value = coupon.label;
+                couponForm.elements.rate.value = coupon.rate * 100;
+                couponForm.elements.minSubtotal.value = coupon.minSubtotal;
+                couponForm.elements.maxUses.value = coupon.maxUses ?? '';
+                couponForm.elements.startsAt.value = coupon.startsAt
+                    ? new Date(new Date(coupon.startsAt).getTime() - new Date(coupon.startsAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+                    : '';
+                couponForm.elements.expiresAt.value = coupon.expiresAt
+                    ? new Date(new Date(coupon.expiresAt).getTime() - new Date(coupon.expiresAt).getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+                    : '';
+                couponForm.elements.enabled.checked = coupon.enabled;
+                couponModal.showModal();
+            });
+        });
+
+        tbody.querySelectorAll('.toggle-coupon-btn').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const coupon = allCoupons.find((entry) => entry.code === button.dataset.code);
+                if (!coupon) return;
+                try {
+                    const res = await apiFetch(`/api/admin/coupons/${encodeURIComponent(coupon.code)}`, {
+                        method: 'PATCH',
+                        headers: { 'If-Match': coupon.updatedAt || '' },
+                        body: JSON.stringify({ enabled: !coupon.enabled })
+                    });
+                    const result = await res.json();
+                    if (!res.ok) throw new Error(result.error || 'Không thể cập nhật coupon.');
+                    showToast(result.enabled ? 'Đã bật coupon.' : 'Đã tắt coupon.');
+                    await loadCoupons();
+                } catch (error) {
+                    showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+                }
+            });
+        });
+    }
+
+    document.getElementById('openAddCouponBtn')?.addEventListener('click', () => {
+        couponForm.reset();
+        couponForm.elements.code.disabled = false;
+        couponForm.elements.maxUses.value = '';
+        couponForm.elements.enabled.checked = true;
+        document.getElementById('couponModalTitle').textContent = 'Tạo coupon mới';
+        couponModal.showModal();
+    });
+    document.getElementById('closeCouponModal')?.addEventListener('click', () => couponModal.close());
+    document.getElementById('cancelCouponModal')?.addEventListener('click', () => couponModal.close());
+
+    couponForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(couponForm);
+        const code = String(couponForm.elements.code.value || '').trim().toUpperCase();
+        const existing = allCoupons.find((coupon) => coupon.code === code);
+        const payload = {
+            label: formData.get('label'),
+            rate: Number(formData.get('rate')) / 100,
+            minSubtotal: Number(formData.get('minSubtotal')),
+            maxUses: Number(formData.get('maxUses')) || 0,
+            startsAt: formData.get('startsAt') ? new Date(formData.get('startsAt')).toISOString() : '',
+            expiresAt: formData.get('expiresAt') ? new Date(formData.get('expiresAt')).toISOString() : '',
+            enabled: couponForm.elements.enabled.checked
+        };
+        try {
+            const res = await apiFetch(
+                existing
+                    ? `/api/admin/coupons/${encodeURIComponent(code)}`
+                    : '/api/admin/coupons',
+                {
+                    method: existing ? 'PUT' : 'POST',
+                    headers: existing ? { 'If-Match': existing.updatedAt || '' } : {},
+                    body: JSON.stringify(existing ? payload : { ...payload, code })
+                }
+            );
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Không thể lưu coupon.');
+            showToast(existing ? 'Đã cập nhật coupon.' : 'Đã tạo coupon.');
+            couponModal.close();
+            await loadCoupons();
+        } catch (error) {
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
         }
     });
 

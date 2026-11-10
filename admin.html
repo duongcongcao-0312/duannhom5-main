@@ -21,6 +21,7 @@
                 <button class="nav-tab active" data-view="dashboard" type="button">📊 Tổng quan</button>
                 <button class="nav-tab" data-view="orders" type="button">📦 Đơn hàng</button>
                 <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
+                <button class="nav-tab" data-view="coupons" type="button">🏷️ Coupon</button>
                 <button class="nav-tab" data-view="services" type="button">🤝 Yêu cầu dịch vụ</button>
                 <button class="nav-tab" data-view="users" type="button">👥 Thành viên</button>
             </nav>
@@ -206,6 +207,36 @@
                 </div>
             </section>
 
+            <!-- VIEW: COUPONS -->
+            <section id="viewCoupons" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý coupon & khuyến mãi</h1>
+                        <p class="subtitle">Thiết lập mức giảm, điều kiện đơn hàng, thời hạn và giới hạn lượt sử dụng</p>
+                    </div>
+                    <button class="btn-primary" id="openAddCouponBtn" type="button">➕ Tạo coupon</button>
+                </div>
+
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Mã coupon</th>
+                                <th>Mức giảm</th>
+                                <th>Đơn tối thiểu</th>
+                                <th>Lượt dùng</th>
+                                <th>Thời hạn</th>
+                                <th>Trạng thái</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="couponsTableBody">
+                            <tr><td colspan="7" class="text-center">Đang tải coupon...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <!-- VIEW: SERVICES -->
             <section id="viewServices" class="admin-view">
                 <div class="view-header">
@@ -322,6 +353,57 @@
             <div class="dialog-footer">
                 <button type="button" id="cancelBookModal" class="btn-secondary">Hủy</button>
                 <button type="submit" class="btn-primary">Lưu cuốn sách</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- MODAL: CREATE / EDIT COUPON -->
+    <dialog id="couponModal" class="admin-dialog">
+        <div class="dialog-header">
+            <h2 id="couponModalTitle">Tạo coupon mới</h2>
+            <button id="closeCouponModal" class="btn-close" type="button">×</button>
+        </div>
+        <form id="couponForm" class="dialog-form">
+            <div class="form-row">
+                <label class="form-group">
+                    <span>Mã coupon *</span>
+                    <input type="text" name="code" class="form-input" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_-]+" placeholder="VD: SUMMER10">
+                </label>
+                <label class="form-group">
+                    <span>Tên ưu đãi *</span>
+                    <input type="text" name="label" class="form-input" required maxlength="120" placeholder="Ưu đãi mùa hè">
+                </label>
+            </div>
+            <div class="form-row">
+                <label class="form-group">
+                    <span>Mức giảm (%) *</span>
+                    <input type="number" name="rate" class="form-input" min="1" max="30" step="0.1" required>
+                </label>
+                <label class="form-group">
+                    <span>Đơn tối thiểu (VNĐ) *</span>
+                    <input type="number" name="minSubtotal" class="form-input" min="0" max="1000000000000" step="1" value="0" required>
+                </label>
+                <label class="form-group">
+                    <span>Giới hạn lượt dùng</span>
+                    <input type="number" name="maxUses" class="form-input" min="1" max="2147483647" step="1" placeholder="Để trống = không giới hạn">
+                </label>
+            </div>
+            <div class="form-row">
+                <label class="form-group">
+                    <span>Bắt đầu áp dụng</span>
+                    <input type="datetime-local" name="startsAt" class="form-input">
+                </label>
+                <label class="form-group">
+                    <span>Hết hạn</span>
+                    <input type="datetime-local" name="expiresAt" class="form-input">
+                </label>
+            </div>
+            <label class="form-group">
+                <span><input type="checkbox" name="enabled" checked> Kích hoạt coupon</span>
+            </label>
+            <div class="dialog-footer">
+                <button type="button" id="cancelCouponModal" class="btn-secondary">Hủy</button>
+                <button type="submit" class="btn-primary">Lưu coupon</button>
             </div>
         </form>
     </dialog>

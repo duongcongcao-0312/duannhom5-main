@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { after, test } = require("node:test");
 const { createServer } = require("../server");
+const { Database } = require("../backend/db");
 
 const previousAdminEnvironment = {
   ADMIN_EMAIL: process.env.ADMIN_EMAIL,
@@ -21,6 +22,26 @@ function configureTestAdmin() {
   process.env.ADMIN_EMAIL = "admin@example.com";
   process.env.ADMIN_PASSWORD = "local-test-admin-password-123";
 }
+
+test("file database initialization is shared across concurrent reads", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-database-init-test-"),
+  );
+  const database = new Database({
+    usersPath: path.join(temporaryDirectory, "users.json"),
+  });
+  t.after(() => fsPromises.rm(temporaryDirectory, { recursive: true, force: true }));
+
+  const [firstInit, users, secondInit] = await Promise.all([
+    database.init(),
+    database.getUsers(),
+    database.init(),
+  ]);
+  assert.equal(firstInit, undefined);
+  assert.equal(secondInit, undefined);
+  assert.equal(users.length, 1);
+});
 
 test("admin order updates reject null payloads without crashing", async (t) => {
   configureTestAdmin();
@@ -244,4 +265,217 @@ test("admin book catalog validates changes and persists stock and category updat
   assert.equal(reflectedBook.stock, 37);
   assert.equal(reflectedBook.category, "ky-nang");
   assert.equal(publicCatalog.some((book) => book.id === customBook.id), false);
+});
+
+test("admin coupons enforce dates, minimum spend, and redemption limits on the server", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-coupons-test-"),
+  );
+  const database = new Database({
+    root: temporaryDirectory,
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    booksPath: path.join(temporaryDirectory, "books.json"),
+    couponsPath: path.join(temporaryDirectory, "coupons.json"),
+  });
+  await database.init();
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const booksPath = path.join(temporaryDirectory, "books.json");
+  const couponsPath = path.join(temporaryDirectory, "coupons.json");
+  const server = createServer({
+    ordersPath,
+    usersPath,
+    servicesPath,
+    booksPath,
+    couponsPath,
+    database,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "admin@example.com",
+      password: "local-test-admin-password-123",
+    }),
+  });
+  const { token } = await login.json();
+  const adminHeaders = { Authorization: `Bearer ${token}` };
+
+  const deniedAdminRead = await fetch(`${baseUrl}/api/admin/coupons`);
+  assert.equal(deniedAdminRead.status, 401);
+
+  const createCoupon = (coupon) => fetch(`${baseUrl}/api/admin/coupons`, {
+    method: "POST",
+    headers: { ...adminHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code: coupon.code,
+      label: coupon.label || coupon.code,
+      rate: coupon.rate ?? 0.1,
+      minSubtotal: coupon.minSubtotal ?? 0,
+      maxUses: coupon.maxUses ?? 0,
+      startsAt: coupon.startsAt || "",
+      expiresAt: coupon.expiresAt || "",
+      enabled: coupon.enabled ?? true,
+    }),
+  });
+
+  const createdCouponRes = await createCoupon({
+    code: "ONETIME",
+    minSubtotal: 100000,
+    maxUses: 1,
+  });
+  assert.equal(createdCouponRes.status, 201);
+  const createdCoupon = await createdCouponRes.json();
+  const adminCouponList = await fetch(`${baseUrl}/api/admin/coupons`, {
+    headers: adminHeaders,
+  });
+  assert.equal(adminCouponList.status, 200);
+  assert.ok((await adminCouponList.json()).some((coupon) => coupon.code === "ONETIME"));
+
+  const expiredCouponRes = await createCoupon({
+    code: "EXPIRED",
+    expiresAt: new Date(Date.now() - 86400000).toISOString(),
+  });
+  assert.equal(expiredCouponRes.status, 201);
+  assert.equal(
+    (await fetch(`${baseUrl}/api/coupons/EXPIRED`)).status,
+    404,
+  );
+
+  const goodCouponRes = await fetch(`${baseUrl}/api/coupons/ONETIME`);
+  assert.equal(goodCouponRes.status, 200);
+  const publicCoupon = await goodCouponRes.json();
+  assert.equal(publicCoupon.minSubtotal, 100000);
+  assert.equal("usedCount" in publicCoupon, false);
+
+  const quote = (couponCode, quantity) => fetch(`${baseUrl}/api/orders/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      couponCode,
+      items: [{ title: "Nhà giả kim", quantity }],
+    }),
+  });
+  const minimumQuote = await quote("ONETIME", 1);
+  assert.equal(minimumQuote.status, 400);
+  assert.match((await minimumQuote.json()).error, /tối thiểu/i);
+  const eligibleQuote = await quote("ONETIME", 2);
+  assert.equal(eligibleQuote.status, 200);
+  assert.equal((await eligibleQuote.json()).discount, 17800);
+
+  const createOrder = (idempotencyKey, couponCode = "ONETIME") => fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn A",
+      address: "123 Đường Sách Hà Nội",
+      phone: "0912345678",
+      paymentMethod: "cod",
+      couponCode,
+      discountRate: 0.1,
+      subtotal: 1,
+      discount: 0,
+      total: 1,
+      items: [{ title: "Nhà giả kim", quantity: 2 }],
+    }),
+  });
+  const firstOrderRes = await createOrder("coupon-order-0001");
+  assert.equal(firstOrderRes.status, 201);
+  const firstOrder = await firstOrderRes.json();
+  assert.equal(firstOrder.subtotal, 178000);
+  assert.equal(firstOrder.discount, 17800);
+  assert.equal(firstOrder.total, 160200);
+
+  const exhaustedQuote = await quote("ONETIME", 2);
+  assert.equal(exhaustedQuote.status, 400);
+  assert.match((await exhaustedQuote.json()).error, /hết lượt/i);
+  const secondOrderRes = await createOrder("coupon-order-0002");
+  assert.equal(secondOrderRes.status, 400);
+
+  const editPayload = {
+    label: "Ưu đãi cập nhật",
+    rate: 0.1,
+    minSubtotal: 100000,
+    maxUses: 1,
+    startsAt: "",
+    expiresAt: "",
+    enabled: true,
+  };
+  const editCouponRes = await fetch(
+    `${baseUrl}/api/admin/coupons/ONETIME`,
+    {
+      method: "PUT",
+      headers: {
+        ...adminHeaders,
+        "Content-Type": "application/json",
+        "If-Match": createdCoupon.updatedAt,
+      },
+      body: JSON.stringify(editPayload),
+    },
+  );
+  assert.equal(editCouponRes.status, 200);
+  const editedCoupon = await editCouponRes.json();
+  assert.equal(editedCoupon.label, "Ưu đãi cập nhật");
+  const staleEditRes = await fetch(
+    `${baseUrl}/api/admin/coupons/ONETIME`,
+    {
+      method: "PUT",
+      headers: {
+        ...adminHeaders,
+        "Content-Type": "application/json",
+        "If-Match": createdCoupon.updatedAt,
+      },
+      body: JSON.stringify(editPayload),
+    },
+  );
+  assert.equal(staleEditRes.status, 409);
+
+  const raceCouponRes = await createCoupon({ code: "RACE" });
+  assert.equal(raceCouponRes.status, 201);
+  const originalRedeemCoupon = database.redeemCoupon.bind(database);
+  database.redeemCoupon = async (code, subtotal, now, expectedRate) => {
+    const coupon = (await database.getCoupons()).find((entry) => entry.code === code);
+    await database.saveCoupon(
+      { ...coupon, rate: 0.2 },
+      coupon.updatedAt,
+    );
+    return originalRedeemCoupon(code, subtotal, now, expectedRate);
+  };
+  const changedRateOrder = await createOrder("coupon-order-race-01", "RACE");
+  assert.equal(changedRateOrder.status, 409);
+  assert.match((await changedRateOrder.json()).error, /điều kiện coupon vừa được cập nhật/i);
+
+  const updatedCouponRes = await fetch(
+    `${baseUrl}/api/admin/coupons/ONETIME`,
+    {
+      method: "PATCH",
+      headers: {
+        ...adminHeaders,
+        "Content-Type": "application/json",
+        "If-Match": editedCoupon.updatedAt,
+      },
+      body: JSON.stringify({ enabled: false }),
+    },
+  );
+  assert.equal(updatedCouponRes.status, 200);
+  assert.equal((await updatedCouponRes.json()).enabled, false);
 });

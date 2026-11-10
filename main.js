@@ -592,7 +592,10 @@ document.querySelector('#applyCoupon')?.addEventListener('click', async () => {
 		if (!response.ok) throw new Error(result.error || 'Mã ưu đãi không hợp lệ.');
 		state.coupon = code;
 		localStorage.setItem(COUPON_STORAGE_KEY, code);
-		message.textContent = `${result.label}: giảm ${result.rate * 100}%.`;
+		const minimumMessage = result.minSubtotal > 0
+			? ` Đơn hàng tối thiểu ${formatPrice(result.minSubtotal)}.`
+			: '';
+		message.textContent = `${result.label}: giảm ${result.rate * 100}%.${minimumMessage}`;
 		renderCart();
 	} catch (error) {
 		state.coupon = '';

@@ -4,6 +4,7 @@ const {
   ORDER_STATUS_TRANSITIONS,
   ORDER_STATUSES,
   isOrderStatusTransitionAllowed,
+  isOrderStatusTransitionAllowedForRole,
 } = require("../backend/business-constants");
 
 test("order state machine allows the supported forward and cancellation paths", () => {
@@ -44,4 +45,31 @@ test("order state machine rejects skipped, backward and terminal transitions", (
   );
   assert.deepEqual(ORDER_STATUS_TRANSITIONS[ORDER_STATUSES.CANCELLED], []);
   assert.equal(isOrderStatusTransitionAllowed("unknown", ORDER_STATUSES.RECEIVED), false);
+});
+
+test("order state machine applies role-specific transition permissions", () => {
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.RECEIVED,
+      ORDER_STATUSES.PROCESSING,
+      "admin",
+    ),
+    true,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.RECEIVED,
+      ORDER_STATUSES.PROCESSING,
+      "user",
+    ),
+    false,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.RECEIVED,
+      ORDER_STATUSES.CANCELLED,
+      "user",
+    ),
+    true,
+  );
 });

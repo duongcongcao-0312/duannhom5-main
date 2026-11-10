@@ -13,7 +13,6 @@ const books = require("./books-data");
 const {
   CustomerError,
   Database,
-  isOrderStatusTransitionAllowed,
   validateCustomerInteractionData,
   validateCustomerData,
 } = require("./backend/db");
@@ -2288,6 +2287,16 @@ function createServer({
       );
       const safePayload = { ...payload };
       let orderUpdateOptions = {};
+      orderUpdateOptions.actorRole = requester.role;
+      if (
+        requester.role === ROLES.USER &&
+        (payload.paymentStatus !== undefined || payload.items !== undefined)
+      ) {
+        throw new RequestError(
+          403,
+          "Người mua chỉ được phép hủy đơn hàng ở trạng thái phù hợp.",
+        );
+      }
       if (payload.items !== undefined) {
         if (order.status === "cancelled" || payload.status === "cancelled") {
           throw new RequestError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
@@ -2359,6 +2368,7 @@ function createServer({
           }
         };
         orderUpdateOptions = {
+          actorRole: requester.role,
           inventory,
           totals: { subtotal, discount, total },
           validateOrder,
@@ -2496,7 +2506,7 @@ function createServer({
       adminOrderMatch &&
       (request.method === "PATCH" || request.method === "PUT")
     ) {
-      await requireRole(request, "write:orders");
+      const requester = await requireRole(request, "write:orders");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật đơn hàng không hợp lệ.",
@@ -2527,6 +2537,7 @@ function createServer({
         adminOrderMatch[1],
         safePayload,
         ordersPath,
+        { actorRole: requester.role },
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");

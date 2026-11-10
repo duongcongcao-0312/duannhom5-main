@@ -13,6 +13,7 @@ const {
   SERVICE_TYPES,
   customerStatusValues,
   isOrderStatusTransitionAllowed,
+  isOrderStatusTransitionAllowedForRole,
 } = require("./business-constants");
 
 async function atomicWriteFile(filePath, contents) {
@@ -880,6 +881,13 @@ class Database {
     if (paymentStatus !== undefined && !allowedPaymentStatuses.has(String(paymentStatus).trim())) {
       throw new Error("Trạng thái thanh toán không hợp lệ.");
     }
+    const actorRole = String(options.actorRole || "").trim().toLowerCase();
+    if (!actorRole) {
+      throw new CustomerError(403, "Không xác định được vai trò thực hiện cập nhật đơn hàng.");
+    }
+    if (actorRole === ROLES.USER && (paymentStatus !== undefined || payload.items !== undefined)) {
+      throw new CustomerError(403, "Người mua chỉ được phép hủy đơn hàng ở trạng thái phù hợp.");
+    }
     if (payload.items !== undefined) {
       if (!Array.isArray(payload.items) || payload.items.length === 0 || payload.items.length > 50) {
         throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
@@ -944,9 +952,12 @@ class Database {
         if (order && order.orderId === orderId) {
           if (
             status !== undefined &&
-            !isOrderStatusTransitionAllowed(order.status, status)
+            !isOrderStatusTransitionAllowedForRole(order.status, status, actorRole)
           ) {
-            throw new CustomerError(400, "Không thể chuyển trạng thái đơn hàng.");
+            throw new CustomerError(
+              actorRole === ROLES.USER ? 403 : 400,
+              "Vai trò hiện tại không được phép chuyển trạng thái đơn hàng.",
+            );
           }
           if (payload.items !== undefined) {
             if (order.status === "cancelled" || status === "cancelled") {

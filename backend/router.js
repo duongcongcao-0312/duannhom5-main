@@ -12,6 +12,7 @@ const routes = [
   { name: "admin:order:update", permission: "write:orders", match: (path) => /^\/api\/admin\/orders\/[0-9a-f-]+$/i.test(path) },
   { name: "admin:services", permission: "read:services", method: "GET", match: (path) => path === "/api/admin/services" },
   { name: "admin:service:update", permission: "write:services", match: (path) => /^\/api\/admin\/services\/[0-9a-f-]+$/i.test(path) },
+  { name: "admin:books", permission: "read:books", method: "GET", match: (path) => path === "/api/admin/books" },
   { name: "admin:books:create", permission: "write:books", method: "POST", match: (path) => path === "/api/admin/books" },
   { name: "admin:books", permission: "write:books", match: (path) => /^\/api\/admin\/books\/[A-Za-z0-9_-]+$/.test(path) },
   { name: "admin:users", permission: "read:users", method: "GET", match: (path) => path === "/api/admin/users" },

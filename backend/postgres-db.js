@@ -1247,7 +1247,93 @@ class PostgresDatabase {
   }
 
   async getCustomBooks() {
-    return this.readCollection("books");
+    return (await this.readCollection("books")).filter((book) => !book.catalogOverride);
+  }
+
+  async getCatalogBookOverrides() {
+    return (await this.readCollection("books")).filter((book) => book.catalogOverride);
+  }
+
+  async persistAdminBookUpdate(id, updateData, expectedUpdatedAt, catalogOverride, baseBook) {
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const records = await this.readRelationalCollection(client, "books", true);
+      const index = records.findIndex(
+        (record) => record.id === id && Boolean(record.catalogOverride) === catalogOverride,
+      );
+      const stored = index < 0 ? null : records[index];
+      const current = stored || (catalogOverride ? baseBook : null);
+      if (expectedUpdatedAt !== undefined && (stored?.updatedAt || "") !== expectedUpdatedAt) {
+        throw new CustomerError(409, "Sách đã được cập nhật bởi người khác. Vui lòng tải lại dữ liệu.");
+      }
+      if (!current && !catalogOverride) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      const now = new Date().toISOString();
+      const updated = {
+        ...current,
+        ...updateData,
+        id,
+        ...(catalogOverride ? { catalogOverride: true } : {}),
+        createdAt: current?.createdAt || now,
+        updatedAt: now,
+      };
+      if (index < 0) records.push(updated);
+      else records[index] = updated;
+
+      if (current?.title) {
+        const inventory = await client.query(
+          "SELECT reserved FROM book_inventory WHERE book_title = $1 FOR UPDATE",
+          [current.title],
+        );
+        if (inventory.rows[0] && updated.stock < inventory.rows[0].reserved) {
+          throw new CustomerError(409, "Tồn kho không thể thấp hơn số sách đã được đặt trước.");
+        }
+        if (current.title !== updated.title && inventory.rows[0]) {
+          const targetInventory = await client.query(
+            "SELECT book_title FROM book_inventory WHERE book_title = $1 FOR UPDATE",
+            [updated.title],
+          );
+          if (targetInventory.rowCount) {
+            throw new CustomerError(409, "Không thể đổi tên sách vì tên mới đã có tồn kho.");
+          }
+          await client.query(
+            `UPDATE book_inventory
+             SET book_title = $2, stock = $3, updated_at = NOW()
+             WHERE book_title = $1`,
+            [current.title, updated.title, updated.stock],
+          );
+        } else if (inventory.rows[0]) {
+          await client.query(
+            `UPDATE book_inventory
+             SET stock = $2, updated_at = NOW()
+             WHERE book_title = $1`,
+            [current.title, updated.stock],
+          );
+        }
+        await client.query(
+          "UPDATE store_products SET stock = $2, updated_at = NOW() WHERE product_id = $1",
+          [`inventory-${current.title}`, updated.stock],
+        );
+      }
+
+      await this.writeRelationalCollection(client, "books", records);
+      await client.query("COMMIT");
+      return updated;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateCatalogBook(id, book, expectedUpdatedAt, baseBook) {
+    return this.persistAdminBookUpdate(id, book, expectedUpdatedAt, true, baseBook);
   }
 
   async addCustomBook(book) {
@@ -1268,13 +1354,8 @@ class PostgresDatabase {
     });
   }
 
-  async updateCustomBook(id, updateData) {
-    return this.updateCollection("books", (books) => {
-      const index = books.findIndex((book) => book.id === id || book.title === id);
-      if (index < 0) return null;
-      books[index] = { ...books[index], ...updateData, updatedAt: new Date().toISOString() };
-      return books[index];
-    });
+  async updateCustomBook(id, updateData, expectedUpdatedAt) {
+    return this.persistAdminBookUpdate(id, updateData, expectedUpdatedAt, false);
   }
 
   async deleteCustomBook(id) {

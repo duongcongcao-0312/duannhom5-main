@@ -373,7 +373,7 @@
         const tbody = document.getElementById('booksTableBody');
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">Đang tải danh mục sách...</td></tr>';
         try {
-            const res = await apiFetch('/api/books');
+            const res = await apiFetch('/api/admin/books');
             if (res.ok) {
                 allBooks = await res.json();
                 renderFilteredBooks();
@@ -434,7 +434,7 @@
                     <td>
                         <div style="display: flex; gap: 0.4rem;">
                             <button class="btn-sm btn-edit edit-book-btn" data-id="${escapeHtml(id)}" type="button">Sửa</button>
-                            ${book.id ? `<button class="btn-sm btn-delete delete-book-btn" data-id="${escapeHtml(id)}" type="button">Xóa</button>` : ''}
+                            ${book.isCustom ? `<button class="btn-sm btn-delete delete-book-btn" data-id="${escapeHtml(id)}" type="button">Xóa</button>` : ''}
                         </div>
                     </td>
                 </tr>
@@ -498,6 +498,9 @@
         e.preventDefault();
         const data = new FormData(bookForm);
         const bookId = data.get('id');
+        const currentBook = bookId
+            ? allBooks.find((book) => book.id === bookId)
+            : null;
         const payload = {
             title: data.get('title'),
             author: data.get('author'),
@@ -513,6 +516,7 @@
             if (bookId) {
                 res = await apiFetch(`/api/admin/books/${encodeURIComponent(bookId)}`, {
                     method: 'PUT',
+                    headers: { 'If-Match': currentBook?.updatedAt || '' },
                     body: JSON.stringify(payload)
                 });
             } else {

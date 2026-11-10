@@ -765,63 +765,118 @@ class Database {
   }
 
   // --- Custom Books & Catalog Extensions ---
-  async getCustomBooks() {
+  async readBookRecords() {
     await this.init();
+    let content;
     try {
-      const content = await fs.readFile(this.booksPath, "utf8");
-      const books = JSON.parse(content);
-      return Array.isArray(books) ? books : [];
-    } catch {
-      return [];
+      content = await fs.readFile(this.booksPath, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
     }
+    let records;
+    try {
+      records = JSON.parse(content);
+    } catch (error) {
+      if (error instanceof SyntaxError) return [];
+      throw error;
+    }
+    return Array.isArray(records) ? records : [];
+  }
+
+  async getCustomBooks() {
+    return (await this.readBookRecords()).filter((book) => !book.catalogOverride);
+  }
+
+  async getCatalogBookOverrides() {
+    return (await this.readBookRecords()).filter((book) => book.catalogOverride);
+  }
+
+  async updateCatalogBook(id, book, expectedUpdatedAt, baseBook) {
+    return this.enqueueFileWrite(this.booksPath, async () => {
+      const records = await this.readBookRecords();
+      const index = records.findIndex(
+        (record) => record.catalogOverride && record.id === id,
+      );
+      const stored = index < 0 ? null : records[index];
+      const current = stored || baseBook;
+      if (expectedUpdatedAt !== undefined && (stored?.updatedAt || "") !== expectedUpdatedAt) {
+        throw new CustomerError(409, "Sách đã được cập nhật bởi người khác. Vui lòng tải lại dữ liệu.");
+      }
+
+      const now = new Date().toISOString();
+      const updated = {
+        ...current,
+        ...book,
+        id,
+        catalogOverride: true,
+        createdAt: current?.createdAt || now,
+        updatedAt: now,
+      };
+      if (index < 0) records.push(updated);
+      else records[index] = updated;
+      await atomicWriteFile(this.booksPath, JSON.stringify(records, null, 2));
+      return updated;
+    });
   }
 
   async addCustomBook(book) {
-    await this.init();
-    const books = await this.getCustomBooks();
-    const newBook = {
-      id: crypto.randomUUID(),
-      title: sanitizeTextValue(book.title || "", { maxLength: 200, fieldName: "Tên sách" }),
-      author: sanitizeTextValue(book.author || "", { maxLength: 200, fieldName: "Tác giả" }),
-      category: sanitizeTextValue(book.category || "", { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc",
-      price: Number(book.price) || 0,
-      stock: Number.isInteger(book.stock) ? book.stock : 12,
-      cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
-      description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
-      createdAt: new Date().toISOString()
-    };
-    books.push(newBook);
-    await atomicWriteFile(this.booksPath, JSON.stringify(books, null, 2));
-    return newBook;
+    return this.enqueueFileWrite(this.booksPath, async () => {
+      const books = await this.readBookRecords();
+      const newBook = {
+        id: crypto.randomUUID(),
+        title: sanitizeTextValue(book.title || "", { maxLength: 200, fieldName: "Tên sách" }),
+        author: sanitizeTextValue(book.author || "", { maxLength: 200, fieldName: "Tác giả" }),
+        category: sanitizeTextValue(book.category || "", { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc",
+        price: Number(book.price) || 0,
+        stock: Number.isInteger(book.stock) ? book.stock : 12,
+        cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
+        description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
+        createdAt: new Date().toISOString()
+      };
+      books.push(newBook);
+      await atomicWriteFile(this.booksPath, JSON.stringify(books, null, 2));
+      return newBook;
+    });
   }
 
-  async updateCustomBook(id, updateData) {
-    await this.init();
-    const books = await this.getCustomBooks();
-    const index = books.findIndex((b) => b.id === id || b.title === id);
-    if (index === -1) return null;
-    const safeUpdate = { ...updateData };
-    if (safeUpdate.title !== undefined) safeUpdate.title = sanitizeTextValue(safeUpdate.title, { maxLength: 200, fieldName: "Tên sách" });
-    if (safeUpdate.author !== undefined) safeUpdate.author = sanitizeTextValue(safeUpdate.author, { maxLength: 200, fieldName: "Tác giả" });
-    if (safeUpdate.category !== undefined) safeUpdate.category = sanitizeTextValue(safeUpdate.category, { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc";
-    if (safeUpdate.description !== undefined) safeUpdate.description = sanitizeTextValue(safeUpdate.description, { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" });
-    if (safeUpdate.cover !== undefined) safeUpdate.cover = sanitizeTextValue(safeUpdate.cover, { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80";
-    books[index] = {
-      ...books[index],
-      ...safeUpdate,
-      updatedAt: new Date().toISOString()
-    };
-    await atomicWriteFile(this.booksPath, JSON.stringify(books, null, 2));
-    return books[index];
+  async updateCustomBook(id, updateData, expectedUpdatedAt) {
+    return this.enqueueFileWrite(this.booksPath, async () => {
+      const records = await this.readBookRecords();
+      const index = records.findIndex(
+        (book) => !book.catalogOverride && (book.id === id || book.title === id),
+      );
+      if (index === -1) return null;
+      const current = records[index];
+      if (expectedUpdatedAt !== undefined && (current.updatedAt || "") !== expectedUpdatedAt) {
+        throw new CustomerError(409, "Sách đã được cập nhật bởi người khác. Vui lòng tải lại dữ liệu.");
+      }
+      const safeUpdate = { ...updateData };
+      if (safeUpdate.title !== undefined) safeUpdate.title = sanitizeTextValue(safeUpdate.title, { maxLength: 200, fieldName: "Tên sách" });
+      if (safeUpdate.author !== undefined) safeUpdate.author = sanitizeTextValue(safeUpdate.author, { maxLength: 200, fieldName: "Tác giả" });
+      if (safeUpdate.category !== undefined) safeUpdate.category = sanitizeTextValue(safeUpdate.category, { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc";
+      if (safeUpdate.description !== undefined) safeUpdate.description = sanitizeTextValue(safeUpdate.description, { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" });
+      if (safeUpdate.cover !== undefined) safeUpdate.cover = sanitizeTextValue(safeUpdate.cover, { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80";
+      records[index] = {
+        ...current,
+        ...safeUpdate,
+        updatedAt: new Date().toISOString(),
+      };
+      await atomicWriteFile(this.booksPath, JSON.stringify(records, null, 2));
+      return records[index];
+    });
   }
 
   async deleteCustomBook(id) {
-    await this.init();
-    const books = await this.getCustomBooks();
-    const nextBooks = books.filter((b) => b.id !== id && b.title !== id);
-    if (nextBooks.length === books.length) return false;
-    await atomicWriteFile(this.booksPath, JSON.stringify(nextBooks, null, 2));
-    return true;
+    return this.enqueueFileWrite(this.booksPath, async () => {
+      const records = await this.readBookRecords();
+      const nextRecords = records.filter(
+        (book) => book.catalogOverride || (book.id !== id && book.title !== id),
+      );
+      if (nextRecords.length === records.length) return false;
+      await atomicWriteFile(this.booksPath, JSON.stringify(nextRecords, null, 2));
+      return true;
+    });
   }
 
   // --- Statistics ---

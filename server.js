@@ -3,6 +3,7 @@ const http = require("node:http");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const {
+  createHash,
   createHmac,
   randomBytes,
   randomUUID,
@@ -77,7 +78,20 @@ const publicRootFiles = new Set([
   "sitemap.xml",
   "terms.html",
 ]);
-const bookCatalog = new Map(books.map((book) => [book.title, book]));
+const catalogBookId = (book) =>
+  `catalog-${createHash("sha256").update(book.title).digest("hex")}`;
+const catalogBookById = new Map(
+  books.map((book) => [catalogBookId(book), book]),
+);
+const defaultBookStock = 12;
+let bookCatalog = new Map(
+  books.map((book) => [
+    book.title,
+    { ...book, id: catalogBookId(book), stock: book.stock ?? defaultBookStock, isCustom: false },
+  ]),
+);
+let catalogBookOverrides = new Map();
+const allowedBookCategories = new Set(books.map((book) => book.category));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
 const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
 const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
@@ -304,7 +318,6 @@ const coupons = new Map([
   ["WELCOME5", { rate: 0.05, label: "Ưu đãi chào mừng" }],
 ]);
 const maxRequestBytes = 1024 * 1024;
-const defaultBookStock = 12;
 class RequestError extends Error {
   constructor(status, message, cause) {
     super(message);
@@ -439,6 +452,47 @@ function sanitizePlainText(value, maxLength = 0) {
   }
 
   return cleaned;
+}
+
+function normalizeAdminBook(payload, existing) {
+  const title = payload.title === undefined
+    ? existing?.title
+    : sanitizePlainText(payload.title, 200);
+  const author = payload.author === undefined
+    ? existing?.author
+    : sanitizePlainText(payload.author, 200);
+  const category = payload.category === undefined
+    ? existing?.category
+    : sanitizePlainText(payload.category, 64);
+  const price = payload.price === undefined ? existing?.price : payload.price;
+  const stock = payload.stock === undefined ? existing?.stock : payload.stock;
+
+  if (!title || !author) {
+    throw new RequestError(400, "Vui lòng nhập tên sách và tác giả.");
+  }
+  if (!allowedBookCategories.has(category)) {
+    throw new RequestError(400, "Thể loại sách không hợp lệ.");
+  }
+  if (!Number.isFinite(price) || price < 0) {
+    throw new RequestError(400, "Giá sách phải là số không âm.");
+  }
+  if (!Number.isSafeInteger(stock) || stock < 0 || stock > 1_000_000_000) {
+    throw new RequestError(400, "Tồn kho phải là số nguyên từ 0 đến 1.000.000.000.");
+  }
+
+  return {
+    title,
+    author,
+    category,
+    price,
+    stock,
+    cover: payload.cover === undefined
+      ? existing?.cover || ""
+      : sanitizePlainText(payload.cover, 500),
+    description: payload.description === undefined
+      ? existing?.description || ""
+      : sanitizePlainText(payload.description, 1000),
+  };
 }
 
 function sanitizePayload(value) {
@@ -948,18 +1002,43 @@ function createServer({
       .filter(Boolean),
   );
 
-  // Load custom books into catalog cache
-  db.getCustomBooks()
-    .then((custom) => {
-      for (const b of custom) {
-        if (b && b.title) bookCatalog.set(b.title, b);
+  let catalogLoadError;
+  const catalogReady = Promise.all([
+    db.getCustomBooks(),
+    typeof db.getCatalogBookOverrides === "function"
+      ? db.getCatalogBookOverrides()
+      : Promise.resolve([]),
+  ])
+    .then(([custom, overrides]) => {
+      for (const override of overrides) {
+        const baseBook = catalogBookById.get(override.id);
+        if (!baseBook) continue;
+        if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
+        catalogBookOverrides.set(override.id, override);
+        bookCatalog.set(override.title, {
+          ...baseBook,
+          ...override,
+          isCustom: false,
+        });
+      }
+      for (const book of custom) {
+        if (book && book.title) {
+          bookCatalog.set(book.title, { ...book, isCustom: true });
+        }
       }
     })
     .catch((error) => {
+      catalogLoadError = error;
       console.error("Không thể tải sách quản trị:", error);
     });
 
+  async function waitForCatalogReady() {
+    await catalogReady;
+    if (catalogLoadError) throw catalogLoadError;
+  }
+
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
+    await waitForCatalogReady();
     const operation = orderWriteQueue.then(async () => {
       const order = createOrder(payload, userId, requester);
       const requestHash = hashOrderRequest(order);
@@ -1083,6 +1162,70 @@ function createServer({
     return filtered.slice(start, start + normalizedLimit);
   }
 
+  async function assertUniqueBookTitle(title, excludedId) {
+    await waitForCatalogReady();
+    const normalizedTitle = title.toLocaleLowerCase("vi");
+    const duplicate = [...bookCatalog.values()].find(
+      (book) =>
+        book.id !== excludedId &&
+        String(book.title || "").toLocaleLowerCase("vi") === normalizedTitle,
+    );
+    if (duplicate) {
+      throw new RequestError(409, "Tên sách đã tồn tại trong danh mục.");
+    }
+  }
+
+  async function assertStockCoversReservations(title, stock) {
+    const orders = await db.getAllOrders(ordersPath);
+    const reserved = orders
+      .filter((order) => order.status !== "cancelled")
+      .reduce(
+        (total, order) =>
+          total +
+          (order.items || [])
+            .filter((item) => item.title === title)
+            .reduce((quantity, item) => quantity + Number(item.quantity || 0), 0),
+        0,
+      );
+    if (stock < reserved) {
+      throw new RequestError(409, "Tồn kho không thể thấp hơn số sách đã được đặt trước.");
+    }
+  }
+
+  async function getCatalogBookList() {
+    await waitForCatalogReady();
+    const [custom, overrides] = await Promise.all([
+      db.getCustomBooks(),
+      typeof db.getCatalogBookOverrides === "function"
+        ? db.getCatalogBookOverrides()
+        : Promise.resolve([]),
+    ]);
+    const refreshedCatalog = new Map();
+    const refreshedOverrides = new Map();
+    const overridesById = new Map(overrides.map((book) => [book.id, book]));
+    const baseBooks = books.map((book) => {
+      const id = catalogBookId(book);
+      const override = overridesById.get(id);
+      const current = {
+        ...book,
+        stock: defaultBookStock,
+        ...override,
+        id,
+        isCustom: false,
+      };
+      if (override) refreshedOverrides.set(id, override);
+      refreshedCatalog.set(current.title, current);
+      return current;
+    });
+    const customBooks = custom.map((book) => ({ ...book, isCustom: true }));
+    for (const book of customBooks) {
+      if (book.title) refreshedCatalog.set(book.title, book);
+    }
+    bookCatalog = refreshedCatalog;
+    catalogBookOverrides = refreshedOverrides;
+    return [...baseBooks, ...customBooks];
+  }
+
   async function handleRequest(request, response) {
     let requestUrl;
     try {
@@ -1102,7 +1245,7 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, X-Request-Id",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id",
       });
       response.end();
       return;
@@ -2028,9 +2171,16 @@ function createServer({
 
     // --- API: Books Catalog (Base + Custom) ---
     if (requestUrl.pathname === "/api/books" && request.method === "GET") {
-      const custom = await db.getCustomBooks();
-      const allBooks = [...books, ...custom];
-      sendJson(response, 200, allBooks);
+      sendJson(response, 200, await getCatalogBookList());
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/books" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:books");
+      sendJson(response, 200, await getCatalogBookList());
       return;
     }
 
@@ -2156,32 +2306,12 @@ function createServer({
         "Dữ liệu sách không hợp lệ.",
         payloadSchemas.book,
       );
-      const title = sanitizePlainText(
-        typeof payload.title === "string" ? payload.title : String(payload.title || ""),
-        200,
-      );
-      const author = sanitizePlainText(
-        typeof payload.author === "string" ? payload.author : String(payload.author || ""),
-        200,
-      );
-      const price = Number(payload.price);
-      if (!title || !author || !Number.isFinite(price) || price < 0) {
-        throw new RequestError(400, "Vui lòng nhập tên sách, tác giả và giá.");
-      }
-      const newBook = await db.addCustomBook({
-        ...payload,
-        title,
-        author,
-        price,
-        category: sanitizePlainText(
-          typeof payload.category === "string" ? payload.category : "",
-          64,
-        ) || "van-hoc",
-        description: sanitizePlainText(
-          typeof payload.description === "string" ? payload.description : "",
-          1000,
-        ),
-      });
+      const newBookData = normalizeAdminBook(payload);
+      await assertUniqueBookTitle(newBookData.title);
+      const newBook = {
+        ...(await db.addCustomBook(newBookData)),
+        isCustom: true,
+      };
       bookCatalog.set(newBook.title, newBook);
       sendJson(response, 201, newBook);
       return;
@@ -2195,32 +2325,48 @@ function createServer({
       (request.method === "PUT" || request.method === "PATCH")
     ) {
       await requireRole(request, "write:books");
-      const previousBooks = await db.getCustomBooks();
-      const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
+      await waitForCatalogReady();
+      const id = adminBookMatch[1];
+      const isCatalogBook = catalogBookById.has(id);
+      const previousBooks = isCatalogBook ? [] : await db.getCustomBooks();
+      const previous = isCatalogBook
+        ? { ...catalogBookById.get(id), ...catalogBookOverrides.get(id), id, isCustom: false }
+        : previousBooks.find((book) => book.id === id);
+      if (!previous) throw new RequestError(404, "Không tìm thấy sách.");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật sách không hợp lệ.",
         payloadSchemas.bookUpdate,
       );
-      const updated = await db.updateCustomBook(adminBookMatch[1], payload);
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy sách.");
-      }
+      const updatedData = normalizeAdminBook(payload, previous);
+      await assertUniqueBookTitle(updatedData.title, id);
+      await assertStockCoversReservations(previous.title, updatedData.stock);
+      const expectedUpdatedAt = request.headers["if-match"];
+      const updated = isCatalogBook
+        ? await db.updateCatalogBook(id, updatedData, expectedUpdatedAt, previous)
+        : await db.updateCustomBook(id, updatedData, expectedUpdatedAt);
+      if (!updated) throw new RequestError(404, "Không tìm thấy sách.");
+      const updatedBook = { ...updated, isCustom: !isCatalogBook };
       if (previous?.title && previous.title !== updated.title) {
         bookCatalog.delete(previous.title);
       }
-      if (updated.title) bookCatalog.set(updated.title, updated);
-      sendJson(response, 200, updated);
+      if (isCatalogBook) catalogBookOverrides.set(id, updated);
+      if (updatedBook.title) bookCatalog.set(updatedBook.title, updatedBook);
+      sendJson(response, 200, updatedBook);
       return;
     }
 
     if (adminBookMatch && request.method === "DELETE") {
       await requireRole(request, "write:books");
+      if (catalogBookById.has(adminBookMatch[1])) {
+        throw new RequestError(409, "Không thể xóa sách mặc định khỏi danh mục.");
+      }
       const previousBooks = await db.getCustomBooks();
       const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
       const deleted = await db.deleteCustomBook(adminBookMatch[1]);
-      if (deleted && previous?.title) bookCatalog.delete(previous.title);
-      sendJson(response, 200, { success: deleted });
+      if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
+      if (previous?.title) bookCatalog.delete(previous.title);
+      sendJson(response, 200, { success: true });
       return;
     }
 

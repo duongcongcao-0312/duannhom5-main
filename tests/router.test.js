@@ -10,6 +10,8 @@ test("route table identifies public and grouped API handlers", () => {
 });
 
 test("route table preserves admin permission mapping and method restrictions", () => {
+  assert.equal(getAdminPermission("/api/admin/books", "GET"), "read:books");
+  assert.equal(getAdminPermission("/api/admin/books", "POST"), "write:books");
   assert.equal(getAdminPermission("/api/admin/orders", "GET"), "read:orders");
   assert.equal(getAdminPermission("/api/admin/orders/123e4567-e89b-12d3-a456-426614174000", "PATCH"), "write:orders");
   assert.equal(getAdminPermission("/api/admin/customers", "POST"), "write:customers");

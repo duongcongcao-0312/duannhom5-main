@@ -163,8 +163,9 @@ Các endpoint chính hiện có:
 | `GET` | `/api/admin/stats` | Quản trị | Lấy thống kê. |
 | `GET` | `/api/admin/orders` | Quản trị | Liệt kê đơn hàng. |
 | `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn/thanh toán. |
+| `GET` | `/api/admin/books` | `read:books` | Liệt kê sách trong cổng quản trị. |
 | `POST` | `/api/admin/books` | Quản trị | Thêm sách. |
-| `PUT` | `/api/admin/books/:id` | Quản trị | Cập nhật sách và tồn kho. |
+| `PUT` | `/api/admin/books/:id` | `write:books` | Cập nhật thông tin, thể loại và tồn kho; gửi `If-Match` với `updatedAt` để phát hiện cập nhật cũ. |
 | `DELETE` | `/api/admin/books/:id` | Quản trị | Xóa sách. |
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
@@ -176,7 +177,7 @@ Mở `/admin.html` sau khi server khởi động. Tính năng gồm:
 
 1. Xem thống kê doanh thu, đơn hàng, sách và thành viên.
 2. Xem, lọc và cập nhật trạng thái đơn hàng.
-3. Thêm, sửa, xóa sách và quản lý tồn kho.
+3. Thêm, sửa, xóa sách tùy chỉnh; cập nhật tồn kho và thể loại của sách trong catalog. Sách mẫu không thể xóa.
 4. Tiếp nhận và cập nhật yêu cầu thuê/thu mua/đổi sách.
 5. Xem người dùng, vai trò và thông tin phân loại.
 
@@ -190,6 +191,8 @@ Thông tin quản trị phải được cung cấp qua `ADMIN_EMAIL` và `ADMIN_
 - `data/orders.jsonl` lưu mỗi đơn hàng trên một dòng JSON.
 - `data/users.json`, `data/books.json` và các file dữ liệu liên quan lưu dữ liệu backend dạng file nếu không có database.
 - Danh mục mặc định nằm trong `books-data.js`.
+- Các thay đổi với sách mẫu được lưu như bản ghi đè trong `data/books.json` hoặc PostgreSQL; tồn kho ban đầu là 12 quyển nếu chưa được chỉnh sửa.
+- Admin API chỉ chấp nhận thể loại có trong catalog và số tồn kho là số nguyên từ 0 đến 1.000.000.000. Tên sách trùng bị từ chối; cập nhật bằng `If-Match` cũ trả HTTP 409 để tránh ghi đè thay đổi mới.
 
 Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ liệu cá nhân. Không commit dữ liệu thật và cần giới hạn quyền truy cập thư mục này.
 

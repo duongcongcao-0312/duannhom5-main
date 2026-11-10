@@ -15,6 +15,7 @@ BookNest là ứng dụng bán sách trực tuyến gồm storefront cho khách 
 - [API](#api)
 - [Cổng quản trị](#cổng-quản-trị)
 - [Dữ liệu và lưu trữ](#dữ-liệu-và-lưu-trữ)
+- [Backup và monitoring](#backup-và-monitoring)
 - [CRM khách hàng](#crm-khách-hàng)
 - [Kiểm thử](#kiểm-thử)
 - [Triển khai](#triển-khai)
@@ -126,6 +127,16 @@ Các biến thường dùng:
 | `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
 | `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày và phải lớn hơn 0. |
 | `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh chữ ký webhook thanh toán; chỉ lưu trong secret manager. |
+| `BACKUP_DIR` / `DATA_DIR` | Thư mục backup và thư mục dữ liệu file; không đặt hai thư mục trùng hoặc lồng nhau. |
+| `BACKUP_INTERVAL_HOURS` | Chu kỳ backup; mặc định 24 giờ, từ 1 đến 8760. |
+| `BACKUP_RETENTION_DAYS` | Thời gian lưu backup; mặc định 30 ngày. Luôn giữ ít nhất hai bản gần nhất. |
+| `BACKUP_LOG_FILE` | File log JSON Lines cho các lần backup, retention và lỗi. |
+| `BACKUP_ALERT_TIMEOUT_MS` | Timeout webhook backup; mặc định 10 giây. |
+| `BACKUP_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn để nhận cảnh báo khi backup thất bại; cấu hình trong secret manager. |
+| `DATABASE_BACKUP_TIMEOUT_MS` | Timeout cho `pg_dump`/`pg_restore`; mặc định 30 phút, tối đa 24 giờ. |
+| `PG_DUMP_PATH` / `PG_RESTORE_PATH` | Đường dẫn executable PostgreSQL client nếu không có trong `PATH`. |
+| `SMOKE_BASE_URL` / `SMOKE_TIMEOUT_MS` | URL backend và timeout cho smoke checks; mặc định `http://127.0.0.1:8000` và 5 giây. |
+| `SMOKE_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn để cảnh báo khi health/readiness hoặc smoke check thất bại. |
 
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
 
@@ -138,6 +149,8 @@ Nếu PostgreSQL/Supabase báo lỗi TLS `SELF_SIGNED_CERT_IN_CHAIN`, tải CA c
 | `npm start` | Khởi động Node.js server. |
 | `npm test` | Chạy toàn bộ test storefront và backend. |
 | `npm run test:coverage` | Chạy test kèm báo cáo coverage của Node.js. |
+| `npm run backup:schedule` | Tạo backup file hoặc PostgreSQL tùy `DATABASE_URL` ngay khi khởi động rồi lặp theo cấu hình. |
+| `npm run smoke` | Kiểm tra health/readiness và các endpoint thiết yếu; trả mã lỗi khác 0 khi có check thất bại. |
 | `npm run build:pages` | Tạo thư mục `dist/` cho frontend tĩnh. |
 | `npm run migrate` | Chạy migration PostgreSQL khi có `DATABASE_URL`. |
 | `npm run seed:customers` | Seed dữ liệu CRM mẫu cho development; không chạy trên production có dữ liệu thật. |
@@ -212,6 +225,10 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 `npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
 
 Coupon được xác thực và tính giảm ở backend khi báo giá và tạo đơn. Mức giảm coupon cộng với ưu đãi tài khoản bị giới hạn tổng cộng 30%; đơn hàng phải đạt mức tối thiểu, coupon phải đang bật/trong thời hạn và chưa vượt giới hạn lượt. Lượt chỉ được ghi nhận khi đơn được tạo thành công. Local lưu coupon trong `data/coupons.json`; PostgreSQL cần chạy `npm run migrate` để áp dụng migration 006.
+
+### Backup và monitoring
+
+Health endpoint `/health` xác nhận tiến trình đang chạy; `/ready` kiểm tra khởi tạo persistence. `npm run smoke` kiểm tra thêm frontend, books API và các endpoint yêu cầu xác thực mà không tạo yêu cầu đăng nhập/đăng ký thất bại gây tăng bộ đếm rate-limit. Xem [runbook backup/restore và ứng phó sự cố](docs/backup-restore-incident-runbook.md) để cấu hình lịch backup, retention, cảnh báo, và diễn tập restore. PostgreSQL production nên giữ thêm backup/PITR độc lập của nhà cung cấp database.
 
 Với PostgreSQL, endpoint tạo đơn lưu khóa `Idempotency-Key` và giữ tồn kho trong database dùng chung; đơn hàng và lượng tồn kho được cập nhật nguyên tử. Retry cùng nội dung trả lại đơn đã tạo, còn tái sử dụng khóa với payload khác trả HTTP 409. Cần chạy `npm run migrate` để cài các migration trước khi triển khai các instance mới.
 

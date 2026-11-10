@@ -1,13 +1,20 @@
 const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const path = require("node:path");
+const {
+  createPostgresBackup,
+  restorePostgresBackup,
+  verifyPostgresBackup,
+} = require("./postgres-backup");
 
 const DATA_FILES = [
   "users.json",
   "customers.json",
   "books.json",
+  "coupons.json",
   "orders.jsonl",
   "service-requests.jsonl",
+  "customer-interactions.json",
 ];
 const MANIFEST_FILE = "manifest.json";
 
@@ -38,38 +45,72 @@ async function createBackup(dataDir, backupDir, now = new Date()) {
     throw new Error(`Không tìm thấy tệp dữ liệu trong ${dataDir}.`);
   }
 
-  await fs.mkdir(backupDir, { recursive: true });
-  const manifest = {
-    format: 1,
-    createdAt: now.toISOString(),
-    files: {},
-  };
-  for (const name of files) {
-    const source = path.join(dataDir, name);
-    await fs.copyFile(source, path.join(backupDir, name));
-    manifest.files[name] = await digest(source);
+  const parentDir = path.dirname(backupDir);
+  const stagingDir = path.join(parentDir, `.${path.basename(backupDir)}-${crypto.randomUUID()}.tmp`);
+  await fs.mkdir(parentDir, { recursive: true });
+  try {
+    await fs.mkdir(stagingDir, { mode: 0o700 });
+    const manifest = {
+      format: 1,
+      createdAt: now.toISOString(),
+      files: {},
+    };
+    for (const name of files) {
+      const source = path.join(dataDir, name);
+      const before = await digest(source);
+      const destination = path.join(stagingDir, name);
+      await fs.copyFile(source, destination);
+      const [after, copied] = await Promise.all([digest(source), digest(destination)]);
+      if (before.sha256 !== after.sha256 || before.sha256 !== copied.sha256) {
+        throw new Error(`Dữ liệu thay đổi trong khi sao lưu: ${name}. Hãy tạm dừng ghi dữ liệu và thử lại.`);
+      }
+      manifest.files[name] = copied;
+      await fs.chmod(destination, 0o600);
+    }
+    await fs.writeFile(
+      path.join(stagingDir, MANIFEST_FILE),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600, flag: "wx" },
+    );
+    await fs.rename(stagingDir, backupDir);
+    return manifest;
+  } catch (error) {
+    await fs.rm(stagingDir, { recursive: true, force: true });
+    throw error;
   }
-  await fs.writeFile(
-    path.join(backupDir, MANIFEST_FILE),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
-  );
-  return manifest;
 }
 
-async function verifyBackup(backupDir) {
+async function verifyBackup(backupDir, options = {}) {
   let manifest;
   try {
     manifest = JSON.parse(await fs.readFile(path.join(backupDir, MANIFEST_FILE), "utf8"));
   } catch (error) {
     throw new Error(`Backup không có manifest hợp lệ: ${error.message}`);
   }
-  if (!manifest || manifest.format !== 1 || !manifest.files || typeof manifest.files !== "object") {
+  if (manifest?.format === 2 && manifest.storage === "postgresql") {
+    return verifyPostgresBackup(backupDir, manifest, options);
+  }
+  if (
+    !manifest ||
+    manifest.format !== 1 ||
+    !Number.isFinite(Date.parse(manifest.createdAt)) ||
+    !manifest.files ||
+    typeof manifest.files !== "object" ||
+    Array.isArray(manifest.files) ||
+    Object.keys(manifest.files).length === 0
+  ) {
     throw new Error("Manifest backup không đúng định dạng.");
   }
 
   for (const [name, expected] of Object.entries(manifest.files)) {
-    if (!DATA_FILES.includes(name) || !expected || typeof expected.sha256 !== "string" || !Number.isInteger(expected.bytes)) {
+    if (
+      !DATA_FILES.includes(name) ||
+      !expected ||
+      typeof expected.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(expected.sha256) ||
+      !Number.isInteger(expected.bytes) ||
+      expected.bytes < 0
+    ) {
       throw new Error(`Manifest chứa mục dữ liệu không hợp lệ: ${name}.`);
     }
     const actual = await digest(path.join(backupDir, name)).catch((error) => {
@@ -84,9 +125,18 @@ async function verifyBackup(backupDir) {
 
 async function restoreBackup(backupDir, dataDir) {
   const manifest = await verifyBackup(backupDir);
+  if (manifest.storage === "postgresql") {
+    throw new Error("Backup PostgreSQL cần được khôi phục bằng lệnh restore-postgres.");
+  }
   await fs.mkdir(dataDir, { recursive: true });
   for (const name of Object.keys(manifest.files)) {
-    await fs.copyFile(path.join(backupDir, name), path.join(dataDir, name));
+    const restoredPath = path.join(dataDir, name);
+    await fs.copyFile(path.join(backupDir, name), restoredPath);
+    const restored = await digest(restoredPath);
+    const expected = manifest.files[name];
+    if (restored.sha256 !== expected.sha256 || restored.bytes !== expected.bytes) {
+      throw new Error(`Kiểm tra toàn vẹn sau khôi phục thất bại cho ${name}.`);
+    }
   }
   return manifest;
 }
@@ -97,18 +147,49 @@ async function main(args) {
   const dataDir = process.env.DATA_DIR || path.join(root, "data");
   const backupDir = args[1] && path.resolve(args[1]);
 
-  if (!["create", "verify", "restore"].includes(command)) {
+  if (command === "schedule") {
+    const { loadBackupConfig, startBackupScheduler } = require("./backup-scheduler");
+    const config = loadBackupConfig(process.env, root);
+    console.log(JSON.stringify({
+      event: "backup_scheduler_started",
+      intervalHours: config.intervalHours,
+      retentionDays: config.retentionDays,
+      backupDir: config.backupDir,
+      logFile: config.logFile,
+    }));
+    const scheduler = startBackupScheduler(config);
+    const stop = () => {
+      console.log(JSON.stringify({ event: "backup_scheduler_stopping" }));
+      scheduler.stop();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    await scheduler.done;
+    return;
+  }
+  if (!["create", "verify", "restore", "restore-postgres"].includes(command)) {
     throw new Error(
-      "Cú pháp: node scripts/backup.js create <backup-dir> | verify <backup-dir> | restore <backup-dir> <data-dir> --confirm",
+      "Cú pháp: node scripts/backup.js create <backup-dir> | verify <backup-dir> | restore <backup-dir> <data-dir> --confirm | restore-postgres <backup-dir> --confirm | schedule",
     );
   }
   if (!backupDir) throw new Error("Thiếu thư mục backup.");
   if (command === "create") {
-    await createBackup(dataDir, backupDir);
+    if (process.env.DATABASE_URL) {
+      await createPostgresBackup(process.env.DATABASE_URL, backupDir);
+    } else {
+      await createBackup(dataDir, backupDir);
+    }
+    await verifyBackup(backupDir);
     console.log(`Đã tạo backup tại ${backupDir}.`);
   } else if (command === "verify") {
     await verifyBackup(backupDir);
     console.log(`Backup hợp lệ: ${backupDir}.`);
+  } else if (command === "restore-postgres") {
+    if (!args.includes("--confirm")) {
+      throw new Error("Restore PostgreSQL cần cờ --confirm vì thao tác có thể thay thế dữ liệu database đích.");
+    }
+    const manifest = await restorePostgresBackup(backupDir, process.env.DATABASE_URL || "");
+    console.log(`Đã khôi phục PostgreSQL từ backup ${manifest.createdAt}.`);
   } else {
     const targetDir = args[2] && path.resolve(args[2]);
     if (!targetDir || !args.includes("--confirm")) {

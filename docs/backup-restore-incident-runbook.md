@@ -18,14 +18,79 @@ thực tế sau mỗi lần diễn tập và cập nhật bảng này khi có th
 
 ## Lịch backup và lưu giữ
 
-1. File storage: backup mỗi ngày và trước mỗi deploy/migration; giữ ít nhất 14
-   bản ngày, trong đó có 1 bản ngoài máy chủ.
-2. PostgreSQL: bật backup/PITR theo gói Render, kiểm tra bản backup gần nhất mỗi
-   ngày; xuất một bản mã hóa trước migration.
-3. Mỗi backup phải có checksum và được chạy verify ngay sau khi tạo. Hàng tháng
-   restore vào môi trường cô lập và chạy smoke test.
-4. Ghi lại thời điểm, người thực hiện, backup ID, RPO đạt được và thời gian
-   restore trong ticket incident.
+1. File storage: chạy `npm run backup:schedule`; mặc định chạy ngay khi khởi
+   động, sau đó mỗi 24 giờ. Mặc định giữ 30 ngày và luôn giữ ít nhất hai bản.
+   Sao chép bản backup đã verify sang storage ngoài máy chủ.
+2. PostgreSQL: khi `DATABASE_URL` được cấu hình, cùng scheduler tự chạy
+   `pg_dump` theo lịch và verify archive bằng `pg_restore --list`. Cần cài
+   PostgreSQL client tương thích trên host/container, đồng thời bật thêm
+   backup/PITR của nhà cung cấp database cho production.
+3. Mỗi backup file có manifest SHA-256, được verify ngay sau khi tạo; kết quả
+   được ghi JSON Lines vào `BACKUP_LOG_FILE` (mặc định
+   `<BACKUP_DIR>/backup.log`). Lỗi được ghi ra stderr và log; cấu hình webhook
+   HTTPS để gửi cảnh báo.
+4. Hàng tháng restore vào môi trường cô lập, chạy smoke test và ghi thời điểm,
+   backup ID, RPO đạt được cùng thời gian restore vào ticket incident.
+
+Các biến cấu hình:
+
+| Biến | Mặc định | Ý nghĩa |
+| --- | --- | --- |
+| `DATA_DIR` | `./data` | Nguồn file JSON/JSONL. |
+| `BACKUP_DIR` | `./backups` | Nơi tạo thư mục backup theo thời gian. |
+| `BACKUP_INTERVAL_HOURS` | `24` | Chu kỳ, từ 1 đến 8760 giờ. |
+| `BACKUP_RETENTION_DAYS` | `30` | Số ngày giữ; luôn giữ ít nhất hai bản mới nhất. |
+| `BACKUP_LOG_FILE` | `<BACKUP_DIR>/backup.log` | Log kết quả dạng JSON Lines. |
+| `BACKUP_ALERT_WEBHOOK_URL` | Không cấu hình | Webhook HTTPS nhận sự kiện `backup_failed`; lưu URL trong secret manager. |
+| `DATABASE_URL` | Không cấu hình | Nếu có, scheduler backup PostgreSQL thay vì file JSON/JSONL. Không log hoặc truyền URL trong đối số tiến trình. |
+| `DATABASE_BACKUP_TIMEOUT_MS` | `1800000` | Timeout cho `pg_dump`/`pg_restore`; từ 1 đến 86400000 ms. |
+| `PG_DUMP_PATH` / `PG_RESTORE_PATH` | Tên executable trong `PATH` | Đường dẫn client PostgreSQL nếu không nằm trong `PATH`. |
+
+`DATA_DIR` và `BACKUP_DIR` không được trùng hoặc lồng nhau. Để backup đúng
+JSON/JSONL đang hoạt động, chuyển backend sang maintenance hoặc dừng ghi trong
+thời gian sao lưu. Script kiểm tra dữ liệu không đổi trong lúc copy và từ chối
+backup nếu phát hiện file bị cập nhật giữa chừng. PostgreSQL client nhận URL
+qua biến môi trường tiến trình, không đưa credential vào command arguments hoặc
+log. File backup có quyền truy cập giới hạn và không được mã hóa; đặt thư mục
+trên volume mã hóa, hạn chế ACL và sao chép ra storage mã hóa ngoài máy chủ.
+
+Giữ bộ lập lịch chạy bằng service manager để tự khởi động lại sau reboot/crash.
+Ví dụ Linux systemd:
+
+```ini
+# /etc/systemd/system/booknest-backup.service
+[Unit]
+Description=BookNest scheduled file backup
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/booknest
+EnvironmentFile=/etc/booknest/backup.env
+ExecStart=/usr/bin/npm run backup:schedule
+Restart=always
+RestartSec=30
+User=booknest
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Giới hạn quyền đọc `/etc/booknest/backup.env` (ví dụ `chmod 600`), thư mục data,
+backup và log. Trên Windows, tạo Scheduled Task chạy khi máy khởi động với
+working directory repository và action `npm.cmd run backup:schedule`; bật
+restart on failure, cấu hình biến môi trường cho account chạy task, và giới hạn
+ACL của thư mục cấu hình/backup. Không đưa webhook URL hoặc credential vào tham
+số command line.
+
+Health/readiness kiểm tra bằng `npm run smoke`. Mặc định script kiểm tra
+`/health`, `/ready`, trang chủ, books API và endpoint auth/admin yêu cầu đăng
+nhập. Các endpoint auth/admin được kiểm tra bằng request chưa xác thực để
+không tăng bộ đếm rate-limit đăng nhập/đăng ký. Có thể đặt `SMOKE_BASE_URL`,
+`SMOKE_TIMEOUT_MS` (1–120000 ms) và
+`SMOKE_ALERT_WEBHOOK_URL` HTTPS. Chạy lệnh này theo lịch qua monitoring provider
+hoặc task scheduler; check lỗi trả exit code khác 0, log JSON Lines ra stdout/
+stderr và gửi webhook nếu đã cấu hình.
 
 ## File storage: backup và restore
 
@@ -57,9 +122,9 @@ node scripts/backup.js restore ./backups/2026-11-02 ./data --confirm
 node scripts/backup.js verify ./backups/2026-11-02
 ```
 
-4. Khởi động backend, chạy `curl --fail http://127.0.0.1:8000/api/books` và
-   `curl --fail http://127.0.0.1:8000/`, sau đó kiểm tra đăng nhập admin, đơn
-   hàng và yêu cầu dịch vụ thử.
+4. Xác minh dữ liệu khôi phục trong thư mục cô lập, sau đó khởi động backend
+   trỏ vào thư mục đó và chạy `npm run smoke` với `SMOKE_BASE_URL` trỏ tới môi
+   trường kiểm thử; không diễn tập restore trên thư mục production.
 5. Đối chiếu số bản ghi với manifest/backup, mở traffic và theo dõi log ít nhất
    một chu kỳ deploy.
 
@@ -71,30 +136,41 @@ và thực hiện riêng theo phê duyệt incident.
 
 ### Backup
 
-Lấy `DATABASE_URL` từ secret manager, không ghi vào shell history hoặc log:
+Đặt `DATABASE_URL` trong secret manager của service chạy scheduler, cùng
+`BACKUP_DIR`, `BACKUP_INTERVAL_HOURS`, `BACKUP_RETENTION_DAYS` và
+`BACKUP_ALERT_WEBHOOK_URL`. Lệnh `npm run backup:schedule` tự chọn PostgreSQL
+khi URL được cấu hình; cần có `pg_dump` và `pg_restore` trong PATH (hoặc đặt
+`PG_DUMP_PATH`/`PG_RESTORE_PATH`). Không dán URL vào command line hay log.
+
+Kiểm tra thủ công một bản đã tạo:
 
 ```sh
-pg_dump --format=custom --no-owner --file=./backups/booknest-$(date +%Y%m%d).dump "$DATABASE_URL"
-pg_restore --list ./backups/booknest-YYYYMMDD.dump > ./backups/booknest-YYYYMMDD.contents
+node scripts/backup.js verify ./backups/booknest-YYYYMMDDTHHMMSSmmmZ
 ```
 
-Giữ file dump ở storage mã hóa, giới hạn quyền đọc, và kiểm tra file không rỗng.
-Không chạy `pg_dump` khi chưa xác định đúng database production.
+Giữ PostgreSQL provider backup/PITR làm lớp bảo vệ độc lập. Archive PostgreSQL
+chứa dữ liệu nhạy cảm; chỉ lưu trên volume mã hóa, giới hạn quyền đọc và kiểm
+tra định kỳ bản sao ngoài máy chủ.
 
 ### Restore
 
-1. Bật maintenance và chặn ghi; xác nhận backup timestamp đáp ứng RPO.
-2. Tạo database đích rỗng hoặc clone riêng. Ưu tiên restore vào database cô lập
-   để kiểm tra trước khi chuyển traffic.
-3. Restore với `ON_ERROR_STOP`/exit code được kiểm tra:
+1. Bật maintenance và chặn ghi; xác nhận backup timestamp đáp ứng RPO. Tạo
+   database đích cô lập và đặt `DATABASE_URL` qua secret manager cho tiến trình
+   khôi phục.
+2. `restore-postgres` có tùy chọn `--clean --if-exists`; xác nhận đúng database
+   đích vì dữ liệu/schema trùng có thể bị thay thế. Không dùng production làm
+   môi trường diễn tập.
+3. Verify rồi restore với cờ xác nhận bắt buộc:
 
 ```sh
-pg_restore --clean --if-exists --no-owner --dbname="$DATABASE_URL" ./backups/booknest-YYYYMMDD.dump
+node scripts/backup.js verify ./backups/booknest-YYYYMMDDTHHMMSSmmmZ
+node scripts/backup.js restore-postgres ./backups/booknest-YYYYMMDDTHHMMSSmmmZ --confirm
 ```
 
-4. Chạy migration còn thiếu bằng `npm run migrate` nếu release yêu cầu, rồi
-   kiểm tra số bản ghi, API smoke test và log. Không chạy migration ngược trên
-   database production nếu chưa có backup trước migration.
+4. Chạy migration còn thiếu bằng `npm run migrate` nếu release yêu cầu, đặt
+   `SMOKE_BASE_URL` trỏ tới backend cô lập và chạy `npm run smoke`. Đối chiếu
+   bản ghi/log rồi mới chuyển traffic. Không chạy migration ngược trên
+   production nếu chưa có backup trước migration.
 
 ## Ma trận xử lý sự cố
 

@@ -551,12 +551,17 @@ async function sendHtmlError(response, status, pageName) {
 }
 
 async function readJson(request) {
+  const contentType = String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new RequestError(415, "Yêu cầu phải gửi ở định dạng JSON.");
+  }
+
   const rawBody = await readRawBody(request);
   let payload;
   try {
     payload = JSON.parse(rawBody.toString("utf8"));
   } catch {
-    throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
+    throw new RequestError(400, "Dữ liệu yêu cầu không hợp lệ.");
   }
   return payload;
 }

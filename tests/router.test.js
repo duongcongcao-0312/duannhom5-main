@@ -19,5 +19,10 @@ test("route table preserves admin permission mapping and method restrictions", (
   assert.equal(getAdminPermission("/api/admin/orders/123e4567-e89b-12d3-a456-426614174000", "PATCH"), "write:orders");
   assert.equal(getAdminPermission("/api/admin/customers", "POST"), "write:customers");
   assert.equal(getAdminPermission("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000", "DELETE"), "delete:customers");
+  assert.equal(findRoute("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000/interactions", "GET").name, "customer-interactions");
+  assert.equal(getAdminPermission("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000/interactions", "GET"), "read:customers");
+  assert.equal(getAdminPermission("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000/interactions", "POST"), "write:customers");
+  assert.equal(getAdminPermission("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000/interactions/123e4567-e89b-12d3-a456-426614174001", "PATCH"), "write:customers");
+  assert.equal(getAdminPermission("/api/admin/customers/123e4567-e89b-12d3-a456-426614174000/interactions/123e4567-e89b-12d3-a456-426614174001", "DELETE"), "delete:customers");
   assert.equal(getAdminPermission("/api/admin/orders", "POST"), null);
 });

@@ -675,9 +675,13 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 	const schema = fs.readFileSync(schemaPath, 'utf8');
 	const initialMigration = read('data/migrations/001_customer_crm.sql');
 	const alignmentMigration = read('data/migrations/002_align_customer_crm_schema.sql');
+	const interactionMigration = read('data/migrations/007_customer_interaction_audit.sql');
 	const migrationRunner = read('scripts/migrate.js');
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customers/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_interactions/);
+	assert.match(schema, /updated_by VARCHAR\(100\) NOT NULL DEFAULT 'system'/);
+	assert.match(interactionMigration, /ALTER TABLE customer_interactions/);
+	assert.match(interactionMigration, /SET updated_by = COALESCE\(updated_by, created_by\)/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS customer_orders/);
 	assert.match(schema, /CREATE TABLE IF NOT EXISTS consent_records/);
 	assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone/);
@@ -698,6 +702,12 @@ test('customer PostgreSQL migration defines CRM tables, constraints and indexes'
 
 test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	const spec = JSON.parse(read('docs/openapi.json'));
+	assert.ok(spec.paths['/api/customers/{id}/interactions']);
+	assert.ok(spec.paths['/api/customers/{id}/interactions/{interactionId}']);
+	assert.deepEqual(
+		spec.components.schemas.CustomerInteractionInput.properties.type.enum,
+		['call', 'chat', 'email', 'order', 'review', 'support', 'feedback'],
+	);
 	assert.equal(spec.openapi, '3.1.0');
 	assert.ok(spec.paths['/api/auth/register']);
 	assert.ok(spec.paths['/api/auth/password-reset']);

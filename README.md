@@ -170,6 +170,8 @@ Các endpoint chính hiện có:
 | `GET` | `/api/admin/coupons` | `read:coupons` | Liệt kê coupon và lượt sử dụng. |
 | `POST` | `/api/admin/coupons` | `write:coupons` | Tạo coupon. |
 | `PUT` / `PATCH` | `/api/admin/coupons/:code` | `write:coupons` | Cập nhật điều kiện hoặc bật/tắt coupon. |
+| `GET` / `POST` | `/api/admin/customers/:id/interactions` | Quyền CRM | Xem lịch sử có phân trang hoặc ghi nhận tương tác chăm sóc. |
+| `PUT` / `PATCH` / `DELETE` | `/api/admin/customers/:id/interactions/:interactionId` | Quyền CRM | Cập nhật hoặc xoá tương tác; chỉ admin được xoá. |
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra coupon còn hiệu lực. |
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
@@ -203,7 +205,7 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 ### PostgreSQL/Supabase
 
-`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
 
 Coupon được xác thực và tính giảm ở backend khi báo giá và tạo đơn. Mức giảm coupon cộng với ưu đãi tài khoản bị giới hạn tổng cộng 30%; đơn hàng phải đạt mức tối thiểu, coupon phải đang bật/trong thời hạn và chưa vượt giới hạn lượt. Lượt chỉ được ghi nhận khi đơn được tạo thành công. Local lưu coupon trong `data/coupons.json`; PostgreSQL cần chạy `npm run migrate` để áp dụng migration 006.
 

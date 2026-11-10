@@ -241,3 +241,162 @@ test("CRM API completes create, filter, status progression, and soft delete life
   assert.equal(remainingResponse.status, 200);
   assert.equal((await remainingResponse.json()).length, 0);
 });
+
+test("CRM customer interactions support paginated CRUD with role and audit checks", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-crm-interactions-test-"),
+  );
+  const paths = {
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    customersPath: path.join(temporaryDirectory, "customers.json"),
+    customerInteractionsPath: path.join(temporaryDirectory, "customer-interactions.json"),
+  };
+  const db = new Database(paths);
+  const adminUser = await db.createUser({
+    name: "CRM Admin",
+    email: "interactions-admin@example.com",
+    password: "password123",
+    role: "admin",
+  });
+  const supportUser = await db.createUser({
+    name: "CRM Support",
+    email: "interactions-support@example.com",
+    password: "password123",
+    role: "support",
+  });
+  const customer = await db.createCustomer({
+    name: "Interaction Customer",
+    email: "interactions-customer@example.com",
+    phone: "0912345678",
+  }, adminUser.id);
+  const server = createServer(paths);
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = async (email) => {
+    const response = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: "password123" }),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).token;
+  };
+  const adminHeaders = {
+    Authorization: `Bearer ${await login("interactions-admin@example.com")}`,
+    "Content-Type": "application/json",
+  };
+  const supportHeaders = {
+    Authorization: `Bearer ${await login("interactions-support@example.com")}`,
+    "Content-Type": "application/json",
+  };
+  const collectionUrl = `${baseUrl}/api/admin/customers/${customer.id}/interactions`;
+
+  const invalidType = await fetch(collectionUrl, {
+    method: "POST",
+    headers: supportHeaders,
+    body: JSON.stringify({ type: "sms", note: "Not part of the CRM schema" }),
+  });
+  assert.equal(invalidType.status, 400);
+  const oversizedNote = await fetch(collectionUrl, {
+    method: "POST",
+    headers: supportHeaders,
+    body: JSON.stringify({ type: "call", note: "x".repeat(2001) }),
+  });
+  assert.equal(oversizedNote.status, 400);
+
+  const firstCreate = await fetch(collectionUrl, {
+    method: "POST",
+    headers: supportHeaders,
+    body: JSON.stringify({ type: "call", note: "Discussed book recommendations." }),
+  });
+  assert.equal(firstCreate.status, 201);
+  const firstInteraction = await firstCreate.json();
+  assert.equal(firstInteraction.created_by, supportUser.id);
+  assert.equal(firstInteraction.updated_by, supportUser.id);
+  assert.ok(firstInteraction.createdAt);
+  assert.ok(firstInteraction.updatedAt);
+
+  for (const [type, note] of [
+    ["email", "Sent a reading list."],
+    ["support", "Resolved a delivery question."],
+  ]) {
+    const response = await fetch(collectionUrl, {
+      method: "POST",
+      headers: supportHeaders,
+      body: JSON.stringify({ type, note }),
+    });
+    assert.equal(response.status, 201);
+  }
+
+  const badPagination = await fetch(`${collectionUrl}?page=0`, {
+    headers: supportHeaders,
+  });
+  assert.equal(badPagination.status, 400);
+  const pagedResponse = await fetch(`${collectionUrl}?page=1&limit=2`, {
+    headers: supportHeaders,
+  });
+  assert.equal(pagedResponse.status, 200);
+  const paged = await pagedResponse.json();
+  assert.equal(paged.total, 3);
+  assert.equal(paged.page, 1);
+  assert.equal(paged.limit, 2);
+  assert.equal(paged.items.length, 2);
+
+  const interactionUrl = `${collectionUrl}/${firstInteraction.id}`;
+  const deniedUpdate = await fetch(interactionUrl, {
+    method: "PATCH",
+    headers: supportHeaders,
+    body: JSON.stringify({ note: "Changed by support." }),
+  });
+  assert.equal(deniedUpdate.status, 403);
+
+  const updatedResponse = await fetch(interactionUrl, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ type: "feedback", note: "Updated after follow-up." }),
+  });
+  assert.equal(updatedResponse.status, 200);
+  const updated = await updatedResponse.json();
+  assert.equal(updated.type, "feedback");
+  assert.equal(updated.note, "Updated after follow-up.");
+  assert.equal(updated.created_by, supportUser.id);
+  assert.equal(updated.updated_by, adminUser.id);
+  assert.ok(Date.parse(updated.updatedAt) >= Date.parse(firstInteraction.updatedAt));
+
+  const invalidUpdate = await fetch(interactionUrl, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ note: "   " }),
+  });
+  assert.equal(invalidUpdate.status, 400);
+
+  const deniedDelete = await fetch(interactionUrl, {
+    method: "DELETE",
+    headers: supportHeaders,
+  });
+  assert.equal(deniedDelete.status, 403);
+  const deletedResponse = await fetch(interactionUrl, {
+    method: "DELETE",
+    headers: adminHeaders,
+  });
+  assert.equal(deletedResponse.status, 200);
+  assert.deepEqual(await deletedResponse.json(), { success: true });
+  const afterDelete = await (await fetch(collectionUrl, { headers: adminHeaders })).json();
+  assert.equal(afterDelete.total, 2);
+  const missingInteraction = await fetch(
+    `${collectionUrl}/00000000-0000-4000-8000-000000000001`,
+    { method: "DELETE", headers: adminHeaders },
+  );
+  assert.equal(missingInteraction.status, 404);
+});

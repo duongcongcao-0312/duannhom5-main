@@ -75,6 +75,33 @@ test("customer policy matrix separates sales, support and destructive access", a
     await requireCustomerPermission(requestFor(support), "view", sessionStore(support), TestRequestError),
     support,
   );
+  assert.equal(
+    await requireCustomerPermission(
+      requestFor(support),
+      "interaction:create",
+      sessionStore(support),
+      TestRequestError,
+    ),
+    support,
+  );
+  await assert.rejects(
+    requireCustomerPermission(
+      requestFor(support),
+      "interaction:update",
+      sessionStore(support),
+      TestRequestError,
+    ),
+    (error) => error.status === 403,
+  );
+  await assert.rejects(
+    requireCustomerPermission(
+      requestFor(support),
+      "interaction:delete",
+      sessionStore(support),
+      TestRequestError,
+    ),
+    (error) => error.status === 403,
+  );
   await assert.rejects(
     requireCustomerPermission(requestFor(support), "delete", sessionStore(support), TestRequestError),
     (error) => error.status === 403,

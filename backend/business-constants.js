@@ -15,6 +15,16 @@ const CUSTOMER_STATUSES = Object.freeze({
   CUSTOMER: "customer",
 });
 
+const CUSTOMER_INTERACTION_TYPES = Object.freeze({
+  CALL: "call",
+  CHAT: "chat",
+  EMAIL: "email",
+  ORDER: "order",
+  REVIEW: "review",
+  SUPPORT: "support",
+  FEEDBACK: "feedback",
+});
+
 const ORDER_STATUSES = Object.freeze({
   RECEIVED: "received",
   PROCESSING: "processing",
@@ -65,6 +75,7 @@ const values = (constantGroup) => Object.freeze(Object.values(constantGroup));
 const roleValues = values(ROLES);
 const serviceTypeValues = values(SERVICE_TYPES);
 const customerStatusValues = values(CUSTOMER_STATUSES);
+const customerInteractionTypeValues = values(CUSTOMER_INTERACTION_TYPES);
 const orderStatusValues = values(ORDER_STATUSES);
 const paymentStatusValues = values(PAYMENT_STATUSES);
 const serviceStatusValues = values(SERVICE_STATUSES);
@@ -79,6 +90,7 @@ function isOrderStatusTransitionAllowed(currentStatus, nextStatus) {
 
 module.exports = {
   CUSTOMER_STATUSES,
+  CUSTOMER_INTERACTION_TYPES,
   ORDER_STATUS_TRANSITIONS,
   ORDER_STATUSES,
   PAYMENT_METHODS,
@@ -87,6 +99,7 @@ module.exports = {
   SERVICE_STATUSES,
   SERVICE_TYPES,
   customerStatusValues,
+  customerInteractionTypeValues,
   isOrderStatusTransitionAllowed,
   orderStatusValues,
   paymentMethodValues,

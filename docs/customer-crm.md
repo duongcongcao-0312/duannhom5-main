@@ -18,6 +18,11 @@ Token chứa vai trò từ tài khoản đã xác thực; không truyền vai tr
 | `support` | Có | Không | Không | Không |
 | `user` / chưa đăng nhập | Không | Không | Không | Không |
 
+Lịch sử tương tác có quyền riêng: admin và sales có thể xem, ghi, cập nhật;
+support có thể xem và ghi; chỉ admin được xoá tương tác. Các thao tác yêu cầu
+được ghi bằng ID tài khoản đã xác thực, không nhận thông tin người thực hiện từ
+payload.
+
 ## API đang triển khai
 
 Mọi phản hồi đều là JSON. Các ví dụ dùng `http://127.0.0.1:8000`; thay
@@ -128,6 +133,38 @@ Chỉ admin được xoá. Phản hồi `200`: `{"success":true}`. Dữ liệu v
 trong JSON với `deletedAt`, nhưng bị loại khỏi truy vấn; email và điện thoại
 có thể được dùng lại. Hồ sơ không tìm thấy trả `404`.
 
+### Lịch sử tương tác và chăm sóc
+
+Lịch sử gắn với một khách hàng đang hoạt động. Mỗi bản ghi có `type`, `note`,
+`created_by`, `createdAt`, `updated_by` và `updatedAt`; ID người dùng và thời
+gian do server thiết lập. Các loại hợp lệ: `call`, `chat`, `email`, `order`,
+`review`, `support`, `feedback`. Ghi chú bắt buộc, tối đa 2.000 ký tự.
+
+```http
+GET /api/admin/customers/<customer-id>/interactions?page=1&limit=20
+Authorization: Bearer <token>
+```
+
+Phản hồi `200` có dạng `{"items":[...],"page":1,"limit":20,"total":1}`. Mặc
+định `page=1`, `limit=20`; `limit` tối đa 100. Danh sách sắp xếp từ mới nhất.
+Đường dẫn tương thích `/api/customers/<customer-id>/interactions` cũng được
+hỗ trợ.
+
+```http
+POST /api/admin/customers/<customer-id>/interactions
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"type":"call","note":"Đã trao đổi về danh mục sách."}
+```
+
+Tạo mới trả `201`. `PATCH` hoặc `PUT
+/api/admin/customers/<customer-id>/interactions/<interaction-id>` cập nhật
+`type` và/hoặc `note`, trả về bản ghi mới cùng audit người cập nhật. Chỉ admin
+có thể gọi `DELETE` trên đường dẫn tương tác; xoá thành công trả
+`{"success":true}`. ID khách hàng không tồn tại trả `404`, dữ liệu không hợp
+lệ hoặc tham số phân trang sai trả `400`, thiếu quyền trả `401`/`403`.
+
 ### Mã lỗi phổ biến
 
 | Mã | Ý nghĩa |
@@ -185,7 +222,9 @@ tính từ đơn chưa hủy ở lần đặt tiếp theo. Khi chạy PostgreSQL
 nhiều instance, mỗi lần tạo đơn phải qua `POST /api/orders` với cùng
 `Idempotency-Key` cho retry; nội dung khác với yêu cầu đã dùng khóa sẽ nhận
 HTTP 409. Hủy đơn giải phóng lượng đã giữ trong cùng transaction. Các instance
-phải cùng trỏ tới database PostgreSQL đó.
+phải cùng trỏ tới database PostgreSQL đó. Migration 007 bổ sung `updated_by`
+và `updated_at` cho tương tác hiện có; các giá trị cũ được khởi tạo từ
+`created_by` và `created_at`.
 
 Kiểm tra dữ liệu sau khi chạy:
 

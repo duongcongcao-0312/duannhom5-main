@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS customer_interactions (
     note TEXT NOT NULL,
     created_by VARCHAR(100) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by VARCHAR(100) NOT NULL DEFAULT 'system',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT fk_customer_interactions_customer
         FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE RESTRICT
 );

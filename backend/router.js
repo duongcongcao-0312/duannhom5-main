@@ -4,6 +4,7 @@ const routes = [
   { name: "coupon:get", method: "GET", match: (path) => /^\/api\/coupons\/[A-Za-z0-9_-]+$/.test(path) },
   { name: "auth", match: (path) => path.startsWith("/api/auth/") },
   { name: "customers", match: (path) => /^\/api\/(?:admin\/)?customers(?:\/[0-9a-f-]{36})?$/.test(path) },
+  { name: "customer-interactions", match: (path) => /^\/api\/(?:admin\/)?customers\/[0-9a-f-]{36}\/interactions(?:\/[0-9a-f-]{36})?$/i.test(path) },
   { name: "orders", match: (path) => /^\/api\/orders(?:\/[0-9a-f-]+)?$/.test(path) },
   { name: "services", match: (path) => path.startsWith("/api/services") },
   { name: "books", method: "GET", match: (path) => path === "/api/books" },
@@ -23,6 +24,11 @@ const routes = [
   { name: "admin:customers:create", permission: "write:customers", method: "POST", match: (path) => path === "/api/admin/customers" },
   { name: "admin:customer:update", permission: "read:customers", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(path) },
   { name: "admin:customer:delete", permission: "delete:customers", method: "DELETE", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(path) },
+  { name: "admin:customer:interactions", permission: "read:customers", method: "GET", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions$/i.test(path) },
+  { name: "admin:customer:interactions:create", permission: "write:customers", method: "POST", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions$/i.test(path) },
+  { name: "admin:customer:interaction:update", permission: "write:customers", method: "PATCH", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions\/[0-9a-f-]{36}$/i.test(path) },
+  { name: "admin:customer:interaction:update", permission: "write:customers", method: "PUT", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions\/[0-9a-f-]{36}$/i.test(path) },
+  { name: "admin:customer:interaction:delete", permission: "delete:customers", method: "DELETE", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions\/[0-9a-f-]{36}$/i.test(path) },
 ];
 
 function findRoute(pathname, method) {

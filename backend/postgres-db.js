@@ -4,6 +4,8 @@ const { Pool } = require("pg");
 const {
   CustomerError,
   isOrderStatusTransitionAllowed,
+  validateCustomerActor,
+  validateCustomerInteractionData,
   validateCustomerData,
 } = require("./db");
 const { hashPassword } = require("./auth");
@@ -127,6 +129,19 @@ function rowToRecord(collection, row) {
     note: row.note,
     status: row.status,
     createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function customerInteractionRowToRecord(row) {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    type: row.type,
+    note: row.note,
+    created_by: row.created_by,
+    createdAt: new Date(row.created_at).toISOString(),
+    updated_by: row.updated_by,
     updatedAt: new Date(row.updated_at).toISOString(),
   };
 }
@@ -464,6 +479,87 @@ class PostgresDatabase {
     } finally {
       client.release();
     }
+  }
+
+  async getCustomerInteractions(customerId, { page = 1, limit = 20 } = {}) {
+    if (!await this.getCustomerById(customerId)) return null;
+    await this.init();
+    const offset = (page - 1) * limit;
+    const [countResult, interactionResult] = await Promise.all([
+      this.pool.query(
+        `SELECT count(*)::int AS total
+         FROM customer_interactions
+         WHERE customer_id = $1::uuid`,
+        [customerId],
+      ),
+      this.pool.query(
+        `SELECT id, customer_id, type, note, created_by, created_at, updated_by, updated_at
+         FROM customer_interactions
+         WHERE customer_id = $1::uuid
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3`,
+        [customerId, limit, offset],
+      ),
+    ]);
+    return {
+      items: interactionResult.rows.map(customerInteractionRowToRecord),
+      page,
+      limit,
+      total: Number(countResult.rows[0]?.total || 0),
+    };
+  }
+
+  async createCustomerInteraction(customerId, data, actorId) {
+    const interaction = validateCustomerInteractionData(data);
+    const actor = validateCustomerActor(actorId);
+    await this.init();
+    const { rows } = await this.pool.query(
+      `INSERT INTO customer_interactions (customer_id, type, note, created_by, updated_by)
+       SELECT customer_id, $2, $3, $4, $4
+       FROM customers
+       WHERE customer_id = $1::uuid AND is_active = TRUE
+       RETURNING id, customer_id, type, note, created_by, created_at, updated_by, updated_at`,
+      [customerId, interaction.type, interaction.note, actor],
+    );
+    return rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+  }
+
+  async updateCustomerInteraction(customerId, interactionId, data, actorId) {
+    const interaction = validateCustomerInteractionData(data, { partial: true });
+    const actor = validateCustomerActor(actorId);
+    await this.init();
+    const { rows } = await this.pool.query(
+      `UPDATE customer_interactions AS interaction
+       SET type = COALESCE($3, interaction.type),
+           note = COALESCE($4, interaction.note),
+           updated_by = $5,
+           updated_at = NOW()
+       WHERE interaction.id = $1::uuid
+         AND interaction.customer_id = $2::uuid
+         AND EXISTS (
+           SELECT 1 FROM customers
+           WHERE customer_id = interaction.customer_id AND is_active = TRUE
+         )
+       RETURNING interaction.id, interaction.customer_id, interaction.type, interaction.note,
+         interaction.created_by, interaction.created_at, interaction.updated_by, interaction.updated_at`,
+      [interactionId, customerId, interaction.type ?? null, interaction.note ?? null, actor],
+    );
+    return rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+  }
+
+  async deleteCustomerInteraction(customerId, interactionId) {
+    await this.init();
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM customer_interactions AS interaction
+       WHERE interaction.id = $1::uuid
+         AND interaction.customer_id = $2::uuid
+         AND EXISTS (
+           SELECT 1 FROM customers
+           WHERE customer_id = interaction.customer_id AND is_active = TRUE
+         )`,
+      [interactionId, customerId],
+    );
+    return rowCount > 0;
   }
 
   async readCollection(name) {

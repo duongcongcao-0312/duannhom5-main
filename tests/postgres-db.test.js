@@ -255,6 +255,118 @@ test("coupon redemption is committed atomically with a PostgreSQL order", async 
   assert.match(statements[redemptionIndex].sql, /AND rate = \$3/);
 });
 
+test("customer interactions use CRM tables with pagination and actor audit fields", async (t) => {
+  withAdminConfig(t);
+  const customerId = "11111111-1111-4111-8111-111111111111";
+  const interactionId = "22222222-2222-4222-8222-222222222222";
+  const createdAt = new Date("2026-01-02T03:04:05.000Z");
+  const statements = [];
+  const customerRow = {
+    customer_id: customerId,
+    full_name: "Reader",
+    email: "reader@example.com",
+    phone: "+84901234567",
+    status: "customer",
+    created_by: "admin",
+    updated_by: "admin",
+    created_at: createdAt,
+    updated_at: createdAt,
+    is_active: true,
+    deleted_at: null,
+    legacy_record: {},
+  };
+  let interactionRow = {
+    id: interactionId,
+    customer_id: customerId,
+    type: "call",
+    note: "Initial note",
+    created_by: "sales-user",
+    created_at: createdAt,
+    updated_by: "sales-user",
+    updated_at: createdAt,
+  };
+  const pool = createPool({
+    async query(sql, values = []) {
+      statements.push({ sql, values });
+      if (sql.includes("FROM app_users")) return { rows: [] };
+      if (sql.includes("SELECT * FROM customers")) return { rows: [customerRow] };
+      if (sql.includes("count(*)::int AS total")) return { rows: [{ total: 3 }] };
+      if (sql.includes("FROM customer_interactions") && sql.includes("ORDER BY")) {
+        return { rows: [interactionRow] };
+      }
+      if (sql.includes("INSERT INTO customer_interactions")) {
+        return { rows: [{
+          ...interactionRow,
+          id: "33333333-3333-4333-8333-333333333333",
+          type: values[1],
+          note: values[2],
+          created_by: values[3],
+          updated_by: values[3],
+        }], rowCount: 1 };
+      }
+      if (sql.includes("UPDATE customer_interactions")) {
+        interactionRow = {
+          ...interactionRow,
+          type: values[2] || interactionRow.type,
+          note: values[3] || interactionRow.note,
+          updated_by: values[4],
+          updated_at: new Date(),
+        };
+        return { rows: [interactionRow], rowCount: 1 };
+      }
+      if (sql.includes("DELETE FROM customer_interactions")) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  const page = await db.getCustomerInteractions(customerId, { page: 2, limit: 1 });
+  assert.deepEqual(page, {
+    items: [{
+      id: interactionId,
+      customerId,
+      type: "call",
+      note: "Initial note",
+      created_by: "sales-user",
+      createdAt: createdAt.toISOString(),
+      updated_by: "sales-user",
+      updatedAt: createdAt.toISOString(),
+    }],
+    page: 2,
+    limit: 1,
+    total: 3,
+  });
+  assert.match(statements.find(({ sql }) => sql.includes("ORDER BY created_at DESC")).sql, /LIMIT \$2 OFFSET \$3/);
+
+  const created = await db.createCustomerInteraction(
+    customerId,
+    { type: "chat", note: "Contacted customer" },
+    "support-user",
+  );
+  assert.equal(created.created_by, "support-user");
+  assert.equal(created.updated_by, "support-user");
+  const insert = statements.find(({ sql }) => sql.includes("INSERT INTO customer_interactions"));
+  assert.match(insert.sql, /WHERE customer_id = \$1::uuid AND is_active = TRUE/);
+  assert.equal(insert.values[3], "support-user");
+
+  const updated = await db.updateCustomerInteraction(
+    customerId,
+    interactionId,
+    { note: "Follow-up completed" },
+    "admin-user",
+  );
+  assert.equal(updated.note, "Follow-up completed");
+  assert.equal(updated.created_by, "sales-user");
+  assert.equal(updated.updated_by, "admin-user");
+  assert.match(statements.find(({ sql }) => sql.includes("UPDATE customer_interactions")).sql, /interaction\.customer_id = \$2::uuid/);
+
+  assert.equal(await db.deleteCustomerInteraction(customerId, interactionId), true);
+  assert.match(statements.find(({ sql }) => sql.includes("DELETE FROM customer_interactions")).sql, /interaction\.customer_id = \$2::uuid/);
+});
+
 test("collection updates roll back when a mutator fails", async (t) => {
   withAdminConfig(t);
   const statements = [];

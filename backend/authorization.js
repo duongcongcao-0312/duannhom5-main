@@ -35,9 +35,15 @@ const ROLE_PERMISSIONS = Object.freeze({
 });
 
 const CUSTOMER_ROLE_PERMISSIONS = Object.freeze({
-  [ROLES.ADMIN]: Object.freeze(["view", "create", "update", "delete"]),
-  sales: Object.freeze(["view", "create", "update"]),
-  support: Object.freeze(["view"]),
+  [ROLES.ADMIN]: Object.freeze([
+    "view", "create", "update", "delete",
+    "interaction:view", "interaction:create", "interaction:update", "interaction:delete",
+  ]),
+  sales: Object.freeze([
+    "view", "create", "update",
+    "interaction:view", "interaction:create", "interaction:update",
+  ]),
+  support: Object.freeze(["view", "interaction:view", "interaction:create"]),
 });
 
 async function authenticate(request, sessionStore, RequestError) {
@@ -65,6 +71,10 @@ async function requireCustomerPermission(request, permission, sessionStore, Requ
       create: "Bạn không có quyền tạo khách hàng.",
       update: "Bạn không có quyền cập nhật khách hàng.",
       delete: "Bạn không có quyền xoá khách hàng.",
+      "interaction:view": "Bạn không có quyền xem lịch sử chăm sóc khách hàng.",
+      "interaction:create": "Bạn không có quyền ghi nhận tương tác khách hàng.",
+      "interaction:update": "Bạn không có quyền cập nhật tương tác khách hàng.",
+      "interaction:delete": "Bạn không có quyền xoá tương tác khách hàng.",
     };
     throw new RequestError(403, messages[permission]);
   }

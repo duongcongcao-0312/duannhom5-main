@@ -127,10 +127,14 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     const relations = await client.query(
       `SELECT
          (SELECT count(*) FROM customer_interactions WHERE customer_id = $1)::int AS interactions,
+         (SELECT updated_by FROM customer_interactions WHERE customer_id = $1 LIMIT 1) AS interaction_updated_by,
+         (SELECT updated_at FROM customer_interactions WHERE customer_id = $1 LIMIT 1) AS interaction_updated_at,
          (SELECT order_status FROM customer_orders WHERE order_no = 'legacy-order-1') AS order_status`,
       [activeCustomerId],
     );
     assert.equal(relations.rows[0].interactions, 1);
+    assert.equal(relations.rows[0].interaction_updated_by, "migration-test");
+    assert.ok(relations.rows[0].interaction_updated_at);
     assert.equal(relations.rows[0].order_status, "received");
     const consent = await client.query(
       `INSERT INTO consent_records

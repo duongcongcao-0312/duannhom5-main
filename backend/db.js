@@ -5,6 +5,7 @@ const { hashPassword } = require("./auth");
 const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
 const {
   CUSTOMER_STATUSES,
+  customerInteractionTypeValues,
   ORDER_STATUSES,
   PAYMENT_STATUSES,
   ROLES,
@@ -108,6 +109,39 @@ function validateCustomerActor(actorId) {
   return actorId.trim();
 }
 
+function validateCustomerInteractionData(data, { partial = false } = {}) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new CustomerError(400, "Dữ liệu tương tác khách hàng không hợp lệ.");
+  }
+  const allowedFields = new Set(["type", "note"]);
+  if (Object.keys(data).some((field) => !allowedFields.has(field))) {
+    throw new CustomerError(400, "Dữ liệu tương tác khách hàng không hợp lệ.");
+  }
+  if (!partial && (!Object.hasOwn(data, "type") || !Object.hasOwn(data, "note"))) {
+    throw new CustomerError(400, "Vui lòng cung cấp loại và ghi chú tương tác.");
+  }
+  if (partial && !Object.keys(data).length) {
+    throw new CustomerError(400, "Cần có ít nhất một trường để cập nhật tương tác.");
+  }
+  const result = {};
+  if (Object.hasOwn(data, "type")) {
+    if (typeof data.type !== "string" || !customerInteractionTypeValues.includes(data.type)) {
+      throw new CustomerError(400, "Loại tương tác khách hàng không hợp lệ.");
+    }
+    result.type = data.type;
+  }
+  if (Object.hasOwn(data, "note")) {
+    if (typeof data.note !== "string" || data.note.length > 2000) {
+      throw new CustomerError(400, "Ghi chú tương tác khách hàng không hợp lệ.");
+    }
+    result.note = sanitizeTextValue(data.note, {
+      maxLength: 5000,
+      fieldName: "Ghi chú tương tác",
+    });
+  }
+  return result;
+}
+
 const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
 const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
 const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
@@ -122,6 +156,8 @@ class Database {
     this.servicesPath = options.servicesPath || path.join(dataDir, "service-requests.jsonl");
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
     this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
+    this.customerInteractionsPath = options.customerInteractionsPath ||
+      path.join(dataDir, "customer-interactions.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.initialized = false;
     this.initializationPromise = null;
@@ -543,6 +579,105 @@ class Database {
     customer.updatedAt = deletedAt;
     await this.writeCustomers(customers);
     return true;
+  }
+
+  async readCustomerInteractions() {
+    try {
+      const content = await fs.readFile(this.customerInteractionsPath, "utf8");
+      const interactions = JSON.parse(content);
+      if (!Array.isArray(interactions)) {
+        throw new Error("Tệp lịch sử tương tác phải chứa một danh sách.");
+      }
+      return interactions;
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      if (error instanceof SyntaxError) {
+        throw new Error(`Tệp lịch sử tương tác bị hỏng: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  async getCustomerInteractions(customerId, { page = 1, limit = 20 } = {}) {
+    if (!await this.getCustomerById(customerId)) return null;
+    const interactions = (await this.readCustomerInteractions())
+      .filter((interaction) => interaction.customerId === customerId)
+      .sort((left, right) => (
+        Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+        right.id.localeCompare(left.id)
+      ));
+    const offset = (page - 1) * limit;
+    return {
+      items: interactions.slice(offset, offset + limit),
+      page,
+      limit,
+      total: interactions.length,
+    };
+  }
+
+  async createCustomerInteraction(customerId, data, actorId) {
+    const interactionData = validateCustomerInteractionData(data);
+    const actor = validateCustomerActor(actorId);
+    return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
+      if (!await this.getCustomerById(customerId)) return null;
+      const interactions = await this.readCustomerInteractions();
+      const now = new Date().toISOString();
+      const interaction = {
+        id: crypto.randomUUID(),
+        customerId,
+        ...interactionData,
+        created_by: actor,
+        createdAt: now,
+        updated_by: actor,
+        updatedAt: now,
+      };
+      interactions.push(interaction);
+      await fs.mkdir(path.dirname(this.customerInteractionsPath), { recursive: true });
+      await atomicWriteFile(
+        this.customerInteractionsPath,
+        JSON.stringify(interactions, null, 2),
+      );
+      return interaction;
+    });
+  }
+
+  async updateCustomerInteraction(customerId, interactionId, data, actorId) {
+    const interactionData = validateCustomerInteractionData(data, { partial: true });
+    const actor = validateCustomerActor(actorId);
+    return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
+      if (!await this.getCustomerById(customerId)) return null;
+      const interactions = await this.readCustomerInteractions();
+      const interaction = interactions.find((entry) => (
+        entry.id === interactionId && entry.customerId === customerId
+      ));
+      if (!interaction) return null;
+      Object.assign(interaction, interactionData, {
+        updated_by: actor,
+        updatedAt: new Date().toISOString(),
+      });
+      await atomicWriteFile(
+        this.customerInteractionsPath,
+        JSON.stringify(interactions, null, 2),
+      );
+      return interaction;
+    });
+  }
+
+  async deleteCustomerInteraction(customerId, interactionId) {
+    return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
+      if (!await this.getCustomerById(customerId)) return false;
+      const interactions = await this.readCustomerInteractions();
+      const index = interactions.findIndex((entry) => (
+        entry.id === interactionId && entry.customerId === customerId
+      ));
+      if (index < 0) return false;
+      interactions.splice(index, 1);
+      await atomicWriteFile(
+        this.customerInteractionsPath,
+        JSON.stringify(interactions, null, 2),
+      );
+      return true;
+    });
   }
 
   // --- Orders ---
@@ -1000,5 +1135,7 @@ module.exports = {
   CustomerError,
   Database,
   isOrderStatusTransitionAllowed,
+  validateCustomerActor,
+  validateCustomerInteractionData,
   validateCustomerData,
 };

@@ -14,6 +14,7 @@ const {
   CustomerError,
   Database,
   isOrderStatusTransitionAllowed,
+  validateCustomerInteractionData,
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
@@ -60,6 +61,10 @@ const mimeTypes = {
   ".txt": "text/plain; charset=utf-8",
   ".webp": "image/webp",
   ".xml": "application/xml; charset=utf-8",
+};
+const customerInteractionQuerySchema = {
+  page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
+  limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
 };
 const publicRootFiles = new Set([
   "admin.css",
@@ -157,6 +162,18 @@ const payloadSchemas = {
       address: "string",
     },
     minProperties: 1,
+  },
+  customerInteraction: {
+    allowed: ["type", "note"],
+    required: ["type", "note"],
+    types: { type: "string", note: "string" },
+    preserveStrings: ["note"],
+  },
+  customerInteractionUpdate: {
+    allowed: ["type", "note"],
+    types: { type: "string", note: "string" },
+    minProperties: 1,
+    preserveStrings: ["note"],
   },
   customer: {
     allowed: ["name", "email", "phone"],
@@ -1041,6 +1058,7 @@ function createServer({
   servicesPath,
   booksPath,
   couponsPath,
+  customerInteractionsPath,
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
@@ -1080,6 +1098,7 @@ function createServer({
       servicesPath,
       booksPath,
       couponsPath,
+      customerInteractionsPath,
     }));
   const sessionRepositoryMethods = [
     "saveSessionRecord",
@@ -1980,6 +1999,74 @@ function createServer({
       );
       sendJson(response, 201, customer);
       return;
+    }
+
+    const customerInteractionsMatch = requestUrl.pathname.match(
+      /^\/api\/(?:admin\/)?customers\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/interactions(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i,
+    );
+    if (customerInteractionsMatch) {
+      const [, customerId, interactionId] = customerInteractionsMatch;
+      if (!interactionId && request.method === "GET") {
+        await requireCustomerPermission(request, "interaction:view");
+        const query = validateQuery(
+          requestUrl,
+          customerInteractionQuerySchema,
+          "Bộ lọc lịch sử tương tác không hợp lệ.",
+        );
+        const result = await db.getCustomerInteractions(customerId, {
+          page: query.page || 1,
+          limit: query.limit || 20,
+        });
+        if (!result) throw new RequestError(404, "Không tìm thấy khách hàng.");
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (!interactionId && request.method === "POST") {
+        const user = await requireCustomerPermission(request, "interaction:create");
+        const payload = requireJsonObject(
+          await readJson(request),
+          "Dữ liệu tương tác khách hàng không hợp lệ.",
+          payloadSchemas.customerInteraction,
+        );
+        const interaction = await db.createCustomerInteraction(
+          customerId,
+          validateCustomerInteractionData(payload),
+          user.userId,
+        );
+        if (!interaction) throw new RequestError(404, "Không tìm thấy khách hàng.");
+        sendJson(response, 201, interaction);
+        return;
+      }
+
+      if (
+        interactionId &&
+        (request.method === "PATCH" || request.method === "PUT")
+      ) {
+        const user = await requireCustomerPermission(request, "interaction:update");
+        const payload = requireJsonObject(
+          await readJson(request),
+          "Dữ liệu cập nhật tương tác không hợp lệ.",
+          payloadSchemas.customerInteractionUpdate,
+        );
+        const interaction = await db.updateCustomerInteraction(
+          customerId,
+          interactionId,
+          validateCustomerInteractionData(payload, { partial: true }),
+          user.userId,
+        );
+        if (!interaction) throw new RequestError(404, "Không tìm thấy tương tác.");
+        sendJson(response, 200, interaction);
+        return;
+      }
+
+      if (interactionId && request.method === "DELETE") {
+        await requireCustomerPermission(request, "interaction:delete");
+        const deleted = await db.deleteCustomerInteraction(customerId, interactionId);
+        if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
+        sendJson(response, 200, { success: true });
+        return;
+      }
     }
 
     const customerMatch = requestUrl.pathname.match(

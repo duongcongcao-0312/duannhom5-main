@@ -59,6 +59,7 @@ test("shared session repositories preserve sessions across instances and revoke 
   assert.equal((await secondInstance.getSession(session.token)).userId, "shared-user");
   assert.equal(records.size, 1);
   assert.doesNotMatch(JSON.stringify([...records.values()]), new RegExp(session.token));
+  assert.equal([...records.values()].some((storedSession) => Object.hasOwn(storedSession, "refreshToken")), false);
 
   await secondInstance.destroySession(session.token);
   assert.equal(await firstInstance.getSession(session.token), null);

@@ -114,11 +114,13 @@ class SessionStore {
       ? await this.repository.getSessionRecord(hashPasswordResetToken(token))
       : this.sessions.get(token);
     if (!session) return null;
-    if (Date.now() >= session.expiresAt) {
+    const sanitizedSession = { ...session };
+    delete sanitizedSession.refreshToken;
+    if (Date.now() >= sanitizedSession.expiresAt) {
       await this.destroySession(token);
       return null;
     }
-    return { ...session, token };
+    return { ...sanitizedSession, token };
   }
 
   async refreshSession(token, refreshTokenOrSessionTtlMs, maybeRefreshTtlMs) {
@@ -155,6 +157,7 @@ class SessionStore {
     if (this.repository) {
       const storedSession = { ...session };
       delete storedSession.token;
+      delete storedSession.refreshToken;
       await this.repository.saveSessionRecord(
         hashPasswordResetToken(token),
         storedSession,

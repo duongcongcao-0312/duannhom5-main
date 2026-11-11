@@ -995,6 +995,9 @@ function createOrder(payload, userId = null, requester = null, coupon = null) {
     createdAt: new Date().toISOString(),
     status: "received",
     paymentStatus: paymentMethod === "transfer" ? "pending" : "cod_pending",
+    paymentCode: paymentMethod === "transfer"
+      ? `BN${randomBytes(6).toString("hex").toUpperCase()}`
+      : null,
     customerName,
     phone,
     address,
@@ -1072,6 +1075,7 @@ function publicOrder(order) {
     status: order.status,
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
+    ...(order.paymentCode ? { paymentCode: order.paymentCode } : {}),
     couponCode: order.couponCode,
     subtotal: order.subtotal,
     discount: order.discount,
@@ -1156,6 +1160,11 @@ function createServer({
   customerInteractionsPath,
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
+  sepayApiKey = process.env.SEPAY_API_KEY || "",
+  sepayBankCode = process.env.SEPAY_BANK_CODE || "TCB",
+  sepayBankName = process.env.SEPAY_BANK_NAME || "Techcombank",
+  sepayAccountNumber = process.env.SEPAY_ACCOUNT_NUMBER || "88803122007888",
+  sepayAccountName = process.env.SEPAY_ACCOUNT_NAME || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
     : SESSION_TTL_MS,
@@ -1570,6 +1579,21 @@ function createServer({
       return;
     }
 
+    if (requestUrl.pathname === "/api/payments/config" && request.method === "GET") {
+      const accountNumber = String(sepayAccountNumber || "").trim();
+      const bankCode = String(sepayBankCode || "").trim();
+      if (!/^\d{6,20}$/.test(accountNumber) || !/^[A-Za-z0-9_-]{2,32}$/.test(bankCode)) {
+        throw new RequestError(503, "Thông tin tài khoản nhận thanh toán chưa được cấu hình.");
+      }
+      sendJson(response, 200, {
+        bankCode,
+        bankName: String(sepayBankName || bankCode).trim(),
+        accountNumber,
+        accountName: String(sepayAccountName || "").trim(),
+      });
+      return;
+    }
+
     if (
       requestUrl.pathname === "/api/payments/webhook" &&
       request.method === "POST"
@@ -1655,6 +1679,108 @@ function createServer({
         stale: result.stale || false,
         ...(result.order ? { order: publicOrder(result.order) } : {}),
       });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/payments/sepay-webhook" &&
+      request.method === "POST"
+    ) {
+      if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
+        throw new RequestError(415, "SePay webhook cần được gửi ở định dạng JSON.");
+      }
+      if (typeof sepayApiKey !== "string" || sepayApiKey.length < 16) {
+        throw new RequestError(503, "SePay webhook chưa được cấu hình API Key.");
+      }
+      const authorization = request.headers.authorization || "";
+      const expectedAuthorization = Buffer.from(`Apikey ${sepayApiKey}`, "utf8");
+      const suppliedAuthorization = Buffer.from(String(authorization), "utf8");
+      if (expectedAuthorization.length !== suppliedAuthorization.length ||
+          !timingSafeEqual(expectedAuthorization, suppliedAuthorization)) {
+        throw new RequestError(401, "SePay API Key không hợp lệ.");
+      }
+
+      const rawBody = await readRawBody(request);
+      let payload;
+      try {
+        payload = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        throw new RequestError(400, "Payload SePay không phải JSON hợp lệ.");
+      }
+      const eventId = typeof payload?.id === "string" || Number.isSafeInteger(payload?.id)
+        ? String(payload.id)
+        : "";
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+          !/^[A-Za-z0-9._:-]{1,128}$/.test(eventId) ||
+          !Number.isSafeInteger(Number(payload.transferAmount)) ||
+          Number(payload.transferAmount) <= 0 ||
+          typeof payload.transferType !== "string") {
+        throw new RequestError(400, "Payload giao dịch SePay thiếu trường bắt buộc.");
+      }
+
+      if (payload.transferType.toLowerCase() !== "in") {
+        sendJson(response, 200, { success: true, ignored: true, reason: "not_incoming" });
+        return;
+      }
+      if (String(payload.accountNumber || "").trim() !== String(sepayAccountNumber || "").trim()) {
+        sendJson(response, 200, { success: true, ignored: true, reason: "bank_account_mismatch" });
+        return;
+      }
+
+      const paymentCodePattern = /\b(BN[A-F0-9]{12})\b/i;
+      const transactionText = [payload.content, payload.description, payload.code]
+        .filter((value) => typeof value === "string")
+        .join(" ");
+      const paymentCode = transactionText.match(paymentCodePattern)?.[1]?.toUpperCase();
+      if (!paymentCode) {
+        sendJson(response, 200, { success: true, ignored: true, reason: "payment_code_not_found" });
+        return;
+      }
+
+      const rawTransactionDate = typeof payload.transactionDate === "string"
+        ? payload.transactionDate.trim().replace(" ", "T")
+        : "";
+      const occurredAt = rawTransactionDate
+        ? (/Z$|[+-]\d{2}:?\d{2}$/.test(rawTransactionDate)
+          ? rawTransactionDate
+          : `${rawTransactionDate}+07:00`)
+        : new Date().toISOString();
+      if (!Number.isFinite(Date.parse(occurredAt)) ||
+          Date.parse(occurredAt) > Date.now() + 5 * 60 * 1000) {
+        throw new RequestError(400, "Thời gian giao dịch SePay không hợp lệ.");
+      }
+      if (typeof db.applyPaymentWebhookEvent !== "function") {
+        throw new RequestError(503, "SePay webhook yêu cầu kho PostgreSQL dùng chung.");
+      }
+      if (typeof db.getAllOrders !== "function") {
+        throw new RequestError(503, "Kho dữ liệu không hỗ trợ đối chiếu mã thanh toán SePay.");
+      }
+
+      const orders = await db.getAllOrders(ordersPath);
+      const matchingOrder = orders.find((order) =>
+        String(order.paymentCode || "").toUpperCase() === paymentCode);
+      if (!matchingOrder) {
+        sendJson(response, 200, { success: true, ignored: true, reason: "order_not_found" });
+        return;
+      }
+      if (matchingOrder.paymentMethod !== "transfer" ||
+          matchingOrder.total !== Number(payload.transferAmount)) {
+        sendJson(response, 200, { success: true, ignored: true, reason: "payment_details_mismatch" });
+        return;
+      }
+
+      const result = await db.applyPaymentWebhookEvent({
+        eventId: `sepay:${eventId}`,
+        eventHash: createHash("sha256").update(rawBody).digest("hex"),
+        orderId: matchingOrder.orderId,
+        paymentStatus: "paid",
+        amount: Number(payload.transferAmount),
+        occurredAt: new Date(occurredAt).toISOString(),
+      });
+      if (result.conflict) {
+        throw new RequestError(409, "Mã giao dịch SePay đã được sử dụng với dữ liệu khác.");
+      }
+      sendJson(response, 200, { success: true, duplicate: Boolean(result.duplicate) });
       return;
     }
 
@@ -2375,6 +2501,22 @@ function createServer({
         idempotencyKey,
       );
       sendJson(response, replayed ? 200 : 201, publicOrder(order));
+      return;
+    }
+
+    const orderStatusMatch = requestUrl.pathname.match(
+      /^\/api\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/status$/i,
+    );
+    if (orderStatusMatch && request.method === "GET") {
+      const order = await db.findOrderById(orderStatusMatch[1], ordersPath);
+      if (!order) {
+        sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
+        return;
+      }
+      sendJson(response, 200, {
+        paymentStatus: order.paymentStatus,
+        orderStatus: order.status,
+      });
       return;
     }
 

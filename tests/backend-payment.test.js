@@ -208,3 +208,98 @@ test("payment webhook authenticates, applies payment states once, and ignores st
     "cancelled",
   );
 });
+
+test("SePay config, webhook, and order status endpoints work together", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-sepay-webhook-"),
+  );
+  const order = {
+    orderId: "44444444-4444-4444-8444-444444444444",
+    paymentCode: "BN1234567890AB",
+    paymentMethod: "transfer",
+    paymentStatus: "pending",
+    status: "received",
+    total: 10000,
+  };
+  let appliedEvent;
+  const database = {
+    async getCustomBooks() {
+      return [];
+    },
+    async getAllOrders() {
+      return [order];
+    },
+    async findOrderById(orderId) {
+      return orderId === order.orderId ? order : null;
+    },
+    async applyPaymentWebhookEvent(event) {
+      appliedEvent = event;
+      return { duplicate: false };
+    },
+  };
+  const server = createServer({
+    database,
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    sepayApiKey: "test-sepay-api-key-123456",
+    sepayBankCode: "TCB",
+    sepayBankName: "Techcombank",
+    sepayAccountNumber: "88803122007888",
+    sepayAccountName: "BookNest",
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const configResponse = await fetch(`${baseUrl}/api/payments/config`);
+  assert.equal(configResponse.status, 200);
+  assert.deepEqual(await configResponse.json(), {
+    bankCode: "TCB",
+    bankName: "Techcombank",
+    accountNumber: "88803122007888",
+    accountName: "BookNest",
+  });
+
+  const statusResponse = await fetch(`${baseUrl}/api/orders/${order.orderId}/status`);
+  assert.equal(statusResponse.status, 200);
+  assert.deepEqual(await statusResponse.json(), {
+    paymentStatus: "pending",
+    orderStatus: "received",
+  });
+
+  const payload = {
+    id: 12345,
+    transferAmount: 10000,
+    transferType: "in",
+    accountNumber: "88803122007888",
+    content: `Thanh toan ${order.paymentCode}`,
+    transactionDate: "2026-01-01 10:00:00",
+  };
+  const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  assert.equal(webhookResponse.status, 200);
+  assert.deepEqual(await webhookResponse.json(), { success: true, duplicate: false });
+  assert.equal(appliedEvent.eventId, "sepay:12345");
+  assert.equal(appliedEvent.orderId, order.orderId);
+  assert.equal(appliedEvent.paymentStatus, "paid");
+  assert.equal(appliedEvent.amount, 10000);
+
+  const unauthorizedResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  assert.equal(unauthorizedResponse.status, 401);
+});

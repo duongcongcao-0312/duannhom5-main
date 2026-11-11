@@ -142,3 +142,22 @@ test("readiness returns 503 when persistence is unavailable", async (t) => {
   assert.equal(ready.status, 503);
   assert.deepEqual(await ready.json(), { status: "not_ready", service: "booknest" });
 });
+
+test("health and readiness HEAD requests are status-only without a response body", async (t) => {
+  const { directory, server, baseUrl } = await startServer({
+    async init() { return undefined; },
+    async getCustomBooks() { return []; },
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(directory, { recursive: true, force: true });
+  });
+
+  const health = await fetch(`${baseUrl}/health`, { method: "HEAD" });
+  assert.equal(health.status, 200);
+  assert.equal(await health.text(), "");
+
+  const ready = await fetch(`${baseUrl}/ready`, { method: "HEAD" });
+  assert.equal(ready.status, 200);
+  assert.equal(await ready.text(), "");
+});

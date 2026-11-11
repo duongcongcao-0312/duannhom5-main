@@ -480,13 +480,15 @@ function roundMoney(value) {
   return Math.round(numericValue);
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, requestMethod = undefined) {
+  const payload = JSON.stringify(value);
   response.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
     "X-Content-Type-Options": "nosniff",
   });
-  response.end(JSON.stringify(value));
+  response.end(requestMethod === "HEAD" ? undefined : payload);
 }
 
 function publicUser(user) {
@@ -1566,14 +1568,14 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
-      sendJson(response, 200, { status: "ok", service: "booknest" });
+      sendJson(response, 200, { status: "ok", service: "booknest" }, request.method);
       return;
     }
 
     if (requestUrl.pathname === "/ready" && (request.method === "GET" || request.method === "HEAD")) {
       try {
         await db.init();
-        sendJson(response, 200, { status: "ready", service: "booknest" });
+        sendJson(response, 200, { status: "ready", service: "booknest" }, request.method);
       } catch (error) {
         logRequestError(
           request,
@@ -1581,7 +1583,7 @@ function createServer({
           error,
           "Readiness check failed",
         );
-        sendJson(response, 503, { status: "not_ready", service: "booknest" });
+        sendJson(response, 503, { status: "not_ready", service: "booknest" }, request.method);
       }
       return;
     }

@@ -118,6 +118,61 @@ test("backend rejects invalid service and status payloads", async (t) => {
   );
   assert.equal(validTransitionRes.status, 200);
   assert.equal((await validTransitionRes.json()).status, "processing");
+
+  const transferOrderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn B",
+      address: "45 Đường Sách, Quận 3",
+      phone: "0907654321",
+      paymentMethod: "transfer",
+      discountRate: 0,
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(transferOrderRes.status, 201);
+  const transferOrder = await transferOrderRes.json();
+
+  const completedWithoutPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "completed" }),
+    },
+  );
+  assert.equal(completedWithoutPaymentRes.status, 400);
+
+  const processingWithVerifiedPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
+    },
+  );
+  assert.equal(processingWithVerifiedPaymentRes.status, 200);
+
+  const completedWithVerifiedPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "completed" }),
+    },
+  );
+  assert.equal(completedWithVerifiedPaymentRes.status, 200);
+  assert.equal((await completedWithVerifiedPaymentRes.json()).paymentStatus, "paid");
 });
 
 test("JSON-writing endpoints reject non-JSON content types", async (t) => {

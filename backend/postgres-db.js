@@ -1548,6 +1548,17 @@ class PostgresDatabase {
           "Vai trò hiện tại không được phép chuyển trạng thái đơn hàng.",
         );
       }
+      if (status === "completed") {
+        const finalPaymentStatus = paymentStatus !== undefined
+          ? paymentStatus
+          : order.paymentStatus;
+        if (!new Set(["paid", "cod_pending"]).has(finalPaymentStatus)) {
+          throw new CustomerError(
+            400,
+            "Chỉ có đơn hàng đã xác nhận thanh toán mới được đánh dấu hoàn tất.",
+          );
+        }
+      }
       if (payload.items !== undefined) {
         if (order.status === "cancelled" || status === "cancelled") {
           throw new CustomerError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");

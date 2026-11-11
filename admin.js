@@ -343,12 +343,15 @@
                 const orderId = e.target.dataset.id;
                 const newStatus = e.target.value;
                 try {
+                    const payload = {
+                        status: newStatus,
+                    };
+                    if (newStatus === 'completed' && order.paymentStatus === 'paid') {
+                        payload.paymentStatus = 'paid';
+                    }
                     const res = await apiFetch(`/api/admin/orders/${orderId}`, {
                         method: 'PATCH',
-                        body: JSON.stringify({
-                            status: newStatus,
-                            paymentStatus: newStatus === 'completed' ? 'paid' : undefined
-                        })
+                        body: JSON.stringify(payload)
                     });
                     if (res.ok) {
                         showToast(`Đã cập nhật trạng thái đơn sang "${newStatus}"`);

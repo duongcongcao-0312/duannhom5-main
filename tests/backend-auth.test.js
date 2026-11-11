@@ -59,6 +59,7 @@ test("shared session repositories preserve sessions across instances and revoke 
   assert.equal((await secondInstance.getSession(session.token)).userId, "shared-user");
   assert.equal(records.size, 1);
   assert.doesNotMatch(JSON.stringify([...records.values()]), new RegExp(session.token));
+  assert.equal([...records.values()].some((storedSession) => Object.hasOwn(storedSession, "refreshToken")), false);
 
   await secondInstance.destroySession(session.token);
   assert.equal(await firstInstance.getSession(session.token), null);
@@ -119,6 +120,27 @@ test("expired sessions are rejected by every protected endpoint", async (t) => {
   const customersResponse = await fetch(`${baseUrl}/api/customers`, { headers });
   assert.equal(profileResponse.status, 401);
   assert.equal(customersResponse.status, 401);
+});
+
+test("refresh tokens enforce their expiry and reject mismatched values", async () => {
+  const store = new SessionStore({
+    sessionTtlMs: 30_000,
+    refreshTtlMs: 5,
+    cleanupIntervalMs: 0,
+  });
+  const user = { id: "r1", email: "refresh@example.com", name: "Refresh User" };
+  const session = await store.createSession(user);
+
+  assert.equal(store.verifyRefreshToken("not-the-right-token", session), false);
+  assert.equal(store.verifyRefreshToken(session.refreshToken, session), true);
+  const refreshed = await store.refreshSession(session.token, session.refreshToken);
+  assert.ok(refreshed);
+  assert.ok(refreshed.expiresAt > Date.now());
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(await store.refreshSession(session.token, session.refreshToken), null);
+  assert.equal(await store.getSession(session.token), null);
+  store.close();
 });
 
 test("profile endpoint rejects missing and invalid bearer tokens", async (t) => {

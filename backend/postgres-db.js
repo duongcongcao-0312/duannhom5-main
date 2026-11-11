@@ -1,6 +1,8 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 const { Pool } = require("pg");
+const { appendAuditEntry, sanitizeAuditValue } = require("./audit");
 const {
   CustomerError,
   getSocialAccounts,
@@ -232,11 +234,12 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
 }
 
 class PostgresDatabase {
-  constructor({ connectionString = process.env.DATABASE_URL, pool } = {}) {
+  constructor({ connectionString = process.env.DATABASE_URL, pool, auditLogPath } = {}) {
     if (!pool && !connectionString) {
       throw new Error("DATABASE_URL là bắt buộc khi dùng PostgreSQL.");
     }
     this.pool = pool || new Pool(createDatabasePoolConfig(connectionString));
+    this.auditLogPath = auditLogPath || path.join(process.cwd(), "data", "admin-audit.jsonl");
     this.initialization = null;
   }
 
@@ -1544,6 +1547,17 @@ class PostgresDatabase {
           actorRole === ROLES.USER ? 403 : 400,
           "Vai trò hiện tại không được phép chuyển trạng thái đơn hàng.",
         );
+      }
+      if (status === "completed") {
+        const finalPaymentStatus = paymentStatus !== undefined
+          ? paymentStatus
+          : order.paymentStatus;
+        if (!new Set(["paid", "cod_pending"]).has(finalPaymentStatus)) {
+          throw new CustomerError(
+            400,
+            "Chỉ có đơn hàng đã xác nhận thanh toán mới được đánh dấu hoàn tất.",
+          );
+        }
       }
       if (payload.items !== undefined) {
         if (order.status === "cancelled" || status === "cancelled") {

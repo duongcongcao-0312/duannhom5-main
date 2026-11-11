@@ -39,7 +39,7 @@
           { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["title", "price", "category"], "default": "title" } },
           { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } }
         ],
-        "responses": { "200": { "description": "Danh sách sách", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } } } } } }
+        "responses": { "200": { "$ref": "#/components/responses/PaginatedBooks" } }
       }
     },
     "/api/orders/quote": {
@@ -59,8 +59,14 @@
         "tags": ["Store"],
         "summary": "Danh sách đơn hàng thuộc tài khoản hiện tại",
         "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/OrderSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
+        ],
         "responses": {
-          "200": { "description": "Các đơn hàng của người dùng đang đăng nhập", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PublicOrder" } } } } },
+          "200": { "$ref": "#/components/responses/PaginatedOrders" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       },
@@ -232,9 +238,11 @@
           { "name": "search", "in": "query", "schema": { "type": "string" } },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
           { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "$ref": "#/components/parameters/CustomerSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" }, "403": { "$ref": "#/components/responses/Error" } }
       },
       "post": {
         "tags": ["Customers"],
@@ -253,9 +261,11 @@
           { "name": "search", "in": "query", "schema": { "type": "string" } },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
           { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "$ref": "#/components/parameters/CustomerSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" }, "403": { "$ref": "#/components/responses/Error" } }
       },
       "post": {
         "tags": ["Customers"],
@@ -332,23 +342,27 @@
       "delete": { "tags": ["Customers"], "summary": "Xoá mềm hồ sơ khách hàng (Admin alias)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/stats": { "get": { "tags": ["Admin"], "summary": "Thống kê quản trị", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/OrderSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
     "/api/admin/orders/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái đơn/thanh toán", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"], "description": "Chuyển tuần tự received -> processing -> shipping -> completed; có thể huỷ trước khi hoàn tất." }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
     },
-    "/api/admin/books": { "post": { "tags": ["Admin"], "summary": "Thêm sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "403": { "$ref": "#/components/responses/Error" } } } },
+    "/api/admin/books": {
+      "get": { "tags": ["Admin"], "summary": "Danh sách sách quản trị, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/BookSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } },
+      "post": { "tags": ["Admin"], "summary": "Thêm sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
     "/api/admin/books/{id}": {
       "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
       "put": { "tags": ["Admin"], "summary": "Cập nhật sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
       "delete": { "tags": ["Admin"], "summary": "Xoá sách", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
     },
-    "/api/admin/services": { "get": { "tags": ["Admin"], "summary": "Danh sách yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/api/admin/services": { "get": { "tags": ["Admin"], "summary": "Danh sách yêu cầu dịch vụ, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/ServiceSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
     "/api/admin/services/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
     },
-    "/api/admin/users": { "get": { "tags": ["Admin"], "summary": "Danh sách thành viên an toàn", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } }
+    "/api/admin/users": { "get": { "tags": ["Admin"], "summary": "Danh sách thành viên an toàn, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/UserSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
+    "/api/admin/coupons": { "get": { "tags": ["Admin"], "summary": "Danh sách mã giảm giá, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/CouponSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } }
   },
   "components": {
     "securitySchemes": {
@@ -357,10 +371,22 @@
     "parameters": {
       "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } },
-      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\\\w\\\\-:.]+$" } }
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\\\w\\\\-:.]+$" } },
+      "Page": { "name": "page", "in": "query", "description": "Trang từ 1 đến 10000.", "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1 } },
+      "Limit": { "name": "limit", "in": "query", "description": "Số bản ghi, tối đa 100.", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+      "OrderDirection": { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } },
+      "OrderSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["createdAt", "status", "total"], "default": "createdAt" } },
+      "CustomerSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["createdAt", "name", "status"], "default": "createdAt" } },
+      "UserSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["createdAt", "name", "role"], "default": "createdAt" } },
+      "ServiceSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["createdAt", "status", "service"], "default": "createdAt" } },
+      "BookSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["title", "price", "category"], "default": "title" } },
+      "CouponSort": { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["code", "expiresAt", "usedCount"], "default": "code" } }
     },
     "responses": {
       "Ok": { "description": "Yêu cầu thành công", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+      "PaginatedOk": { "description": "Mảng dữ liệu; metadata phân trang trong X-Pagination.", "headers": { "X-Pagination": { "description": "JSON gồm page, limit, total, totalPages, sort và order.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } },
+      "PaginatedBooks": { "description": "Danh sách sách; metadata phân trang trong X-Pagination.", "headers": { "X-Pagination": { "description": "JSON gồm page, limit, total, totalPages, sort và order.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } } } } },
+      "PaginatedOrders": { "description": "Danh sách đơn hàng; metadata phân trang trong X-Pagination.", "headers": { "X-Pagination": { "description": "JSON gồm page, limit, total, totalPages, sort và order.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PublicOrder" } } } } },
       "Created": { "description": "Đã tạo dữ liệu", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
       "Error": { "description": "Yêu cầu thất bại", "headers": { "X-Request-Id": { "description": "ID yêu cầu để đối chiếu log.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
     },

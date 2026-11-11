@@ -118,6 +118,117 @@ test("backend rejects invalid service and status payloads", async (t) => {
   );
   assert.equal(validTransitionRes.status, 200);
   assert.equal((await validTransitionRes.json()).status, "processing");
+
+  const transferOrderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customerName: "Nguyễn Văn B",
+      address: "45 Đường Sách, Quận 3",
+      phone: "0907654321",
+      paymentMethod: "transfer",
+      discountRate: 0,
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(transferOrderRes.status, 201);
+  const transferOrder = await transferOrderRes.json();
+
+  const completedWithoutPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "completed" }),
+    },
+  );
+  assert.equal(completedWithoutPaymentRes.status, 400);
+
+  const processingWithVerifiedPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
+    },
+  );
+  assert.equal(processingWithVerifiedPaymentRes.status, 200);
+
+  const completedWithVerifiedPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "completed" }),
+    },
+  );
+  assert.equal(completedWithVerifiedPaymentRes.status, 200);
+  assert.equal((await completedWithVerifiedPaymentRes.json()).paymentStatus, "paid");
+});
+
+test("JSON-writing endpoints reject non-JSON content types", async (t) => {
+  configureTestAdmin(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-content-type-validation-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const weakContentTypeLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ email: "reader@example.com", password: "password12345" }),
+  });
+  assert.equal(weakContentTypeLogin.status, 415);
+
+  const weakContentTypeOrder = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "customerName=Test&address=Address&phone=0901234567",
+  });
+  assert.equal(weakContentTypeOrder.status, 415);
+
+  const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "admin@example.com",
+      password: "local-test-admin-password-123",
+    }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const { token } = await adminLogin.json();
+
+  const weakContentTypeAdminPatch = await fetch(`${baseUrl}/api/admin/orders/00000000-0000-0000-0000-000000000000`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "text/plain",
+    },
+    body: JSON.stringify({ status: "processing" }),
+  });
+  assert.equal(weakContentTypeAdminPatch.status, 415);
 });
 
 test("shared API validation rejects malformed, oversized, unknown and unsafe inputs", async (t) => {

@@ -18,6 +18,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { readAuditEntries } = require("./backend/audit");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
@@ -25,6 +26,7 @@ const {
   isPasswordValid,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  SESSION_REFRESH_TTL_MS,
   SESSION_TTL_MS,
   SessionStore,
   verifyPassword,
@@ -478,13 +480,15 @@ function roundMoney(value) {
   return Math.round(numericValue);
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, requestMethod = undefined) {
+  const payload = JSON.stringify(value);
   response.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(payload),
     "X-Content-Type-Options": "nosniff",
   });
-  response.end(JSON.stringify(value));
+  response.end(requestMethod === "HEAD" ? undefined : payload);
 }
 
 function publicUser(user) {
@@ -550,12 +554,17 @@ async function sendHtmlError(response, status, pageName) {
 }
 
 async function readJson(request) {
+  const contentType = String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new RequestError(415, "Yêu cầu phải gửi ở định dạng JSON.");
+  }
+
   const rawBody = await readRawBody(request);
   let payload;
   try {
     payload = JSON.parse(rawBody.toString("utf8"));
   } catch {
-    throw new RequestError(400, "Dữ liệu đơn hàng không hợp lệ.");
+    throw new RequestError(400, "Dữ liệu yêu cầu không hợp lệ.");
   }
   return payload;
 }
@@ -1158,6 +1167,7 @@ function createServer({
   booksPath,
   couponsPath,
   customerInteractionsPath,
+  auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sepayApiKey = process.env.SEPAY_API_KEY || "",
@@ -1168,6 +1178,9 @@ function createServer({
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
     : SESSION_TTL_MS,
+  refreshTtlMs = Number.isFinite(Number(process.env.SESSION_REFRESH_TTL_MS))
+    ? Number(process.env.SESSION_REFRESH_TTL_MS)
+    : SESSION_REFRESH_TTL_MS,
   passwordResetMailer = createEmailMailer(),
   socialTokenVerifier = createFirebaseIdTokenVerifier(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
@@ -1203,6 +1216,7 @@ function createServer({
       booksPath,
       couponsPath,
       customerInteractionsPath,
+      auditLogPath,
     }));
   const sessionRepositoryMethods = [
     "saveSessionRecord",
@@ -1219,9 +1233,13 @@ function createServer({
   if (process.env.NODE_ENV === "production" && !sessionRepository) {
     throw new Error("Production requires a shared PostgreSQL session store.");
   }
+  if (db && typeof db === "object") {
+    db.auditLogPath = auditLogPath;
+  }
   const sessionStore = new SessionStore({
     repository: sessionRepository,
     sessionTtlMs,
+    refreshTtlMs,
     cleanupIntervalMs: 60 * 1000,
   });
   const loginAttempts = new Map();
@@ -1559,14 +1577,14 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
-      sendJson(response, 200, { status: "ok", service: "booknest" });
+      sendJson(response, 200, { status: "ok", service: "booknest" }, request.method);
       return;
     }
 
     if (requestUrl.pathname === "/ready" && (request.method === "GET" || request.method === "HEAD")) {
       try {
         await db.init();
-        sendJson(response, 200, { status: "ready", service: "booknest" });
+        sendJson(response, 200, { status: "ready", service: "booknest" }, request.method);
       } catch (error) {
         logRequestError(
           request,
@@ -1574,7 +1592,7 @@ function createServer({
           error,
           "Readiness check failed",
         );
-        sendJson(response, 503, { status: "not_ready", service: "booknest" });
+        sendJson(response, 503, { status: "not_ready", service: "booknest" }, request.method);
       }
       return;
     }
@@ -2342,8 +2360,8 @@ function createServer({
       }
 
       if (interactionId && request.method === "DELETE") {
-        await requireCustomerPermission(request, "interaction:delete");
-        const deleted = await db.deleteCustomerInteraction(customerId, interactionId);
+        const user = await requireCustomerPermission(request, "interaction:delete");
+        const deleted = await db.deleteCustomerInteraction(customerId, interactionId, user.userId);
         if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, { success: true });
         return;
@@ -2575,6 +2593,7 @@ function createServer({
       const safePayload = { ...payload };
       let orderUpdateOptions = {};
       orderUpdateOptions.actorRole = requester.role;
+      orderUpdateOptions.actorId = requester.userId;
       if (
         requester.role === ROLES.USER &&
         (payload.paymentStatus !== undefined || payload.items !== undefined)
@@ -2656,6 +2675,7 @@ function createServer({
         };
         orderUpdateOptions = {
           actorRole: requester.role,
+          actorId: requester.userId,
           inventory,
           totals: { subtotal, discount, total },
           validateOrder,
@@ -3054,6 +3074,34 @@ function createServer({
         ]),
       );
       sendJson(response, 200, { staff, rolePermissions });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/admin/audit" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:users");
+      const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "50", 10);
+      const offset = Number.parseInt(requestUrl.searchParams.get("offset") || "0", 10);
+      const entries = await readAuditEntries(auditLogPath);
+      const safeEntries = entries
+        .slice(Math.max(0, offset), Math.max(0, offset + (Number.isFinite(limit) && limit > 0 ? limit : 50)))
+        .map((entry) => ({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          action: entry.action,
+          actorId: entry.actorId,
+          actorRole: entry.actorRole,
+          entityType: entry.entityType,
+          entityId: entry.entityId,
+          requestId: entry.requestId,
+          before: entry.before,
+          after: entry.after,
+          metadata: entry.metadata,
+          hash: entry.hash,
+        }));
+      sendJson(response, 200, { entries: safeEntries, total: entries.length, limit: safeEntries.length, offset });
       return;
     }
 

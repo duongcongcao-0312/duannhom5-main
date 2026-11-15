@@ -1383,3 +1383,4 @@ if (hasCatalogShell) {
 	renderBooks();
 	if (new URLSearchParams(window.location.search).get('cart') === 'open') toggleCart(true);
 }
+

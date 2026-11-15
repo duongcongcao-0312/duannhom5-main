@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { secureHashPasswordResetToken } = require("./security");
 
 /**
  * Hash a plain password using scrypt
@@ -28,7 +29,7 @@ function verifyPassword(password, stored) {
 }
 
 function hashPasswordResetToken(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
+  return secureHashPasswordResetToken(token);
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;

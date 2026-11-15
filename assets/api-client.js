@@ -6,6 +6,14 @@ window.booknestApiUrl = function (path) {
 const AUTH_TOKEN_KEY = 'booknest-auth-token';
 const ADMIN_AUTH_TOKEN_KEY = 'booknest-admin-token';
 const AUTH_TOKEN_EXPIRY_KEY = 'booknest-auth-token-expires-at';
+const CSRF_TOKEN_KEY = 'booknest-csrf-token';
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
 
 window.booknestAuth = {
     getToken() {
@@ -44,6 +52,22 @@ window.booknestAuth = {
         sessionStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
         localStorage.removeItem(AUTH_TOKEN_KEY);
         localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+    },
+    getCsrfToken() {
+        // Prefer in-memory token from last login response, fallback to cookie
+        const stored = sessionStorage.getItem(CSRF_TOKEN_KEY);
+        if (stored) return stored;
+        return getCookie('booknest_csrf') || null;
+    },
+    setCsrfToken(token) {
+        if (typeof token === 'string' && token) {
+            sessionStorage.setItem(CSRF_TOKEN_KEY, token);
+        } else {
+            sessionStorage.removeItem(CSRF_TOKEN_KEY);
+        }
+    },
+    clearCsrfToken() {
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
     }
 };
 
@@ -87,10 +111,29 @@ window.booknestApiFetch = async function (path, options = {}) {
 
     let response;
     try {
+        const isStateChanging = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
+        const headers = { ...(options.headers || {}) };
+        if (isStateChanging) {
+            const csrfToken = window.booknestAuth.getCsrfToken();
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+            }
+        }
         response = await fetch(window.booknestApiUrl(path), {
             ...options,
+            headers,
             signal: controller.signal
         });
+        // Store CSRF token returned by server (e.g. after login/register/social)
+        if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
+            try {
+                const clone = response.clone();
+                const data = await clone.json();
+                if (data.csrfToken) window.booknestAuth.setCsrfToken(data.csrfToken);
+            } catch {
+                // ignore if body not json or already read
+            }
+        }
     } catch (error) {
         const message = timedOut
             ? 'Máy chủ BookNest không phản hồi sau 15 giây. Hãy kiểm tra kết nối mạng và thử lại thao tác.'

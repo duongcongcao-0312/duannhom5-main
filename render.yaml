@@ -4,13 +4,17 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: npm run migrate && npm start
+    startCommand: npm run predeploy:check && npm run migrate && npm start
     healthCheckPath: /ready
     envVars:
       - key: NODE_VERSION
         value: 20
+      - key: NODE_ENV
+        value: production
       - key: HOST
         value: 0.0.0.0
+      - key: SESSION_TTL_MS
+        value: 28800000
       - key: DATABASE_URL
         sync: false
       - key: ADMIN_EMAIL

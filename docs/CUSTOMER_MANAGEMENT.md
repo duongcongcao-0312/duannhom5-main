@@ -70,7 +70,7 @@ Xem bảng trường, index, retention và consent tại
 
 ## 3. Xác thực và seed
 
-Đặt `ADMIN_EMAIL` và `ADMIN_PASSWORD` (tối thiểu 12 ký tự) trong `.env` trước
+Đặt `ADMIN_EMAIL` và `ADMIN_PASSWORD` (tối thiểu 12 ký tự không phải khoảng trắng) trong `.env` trước
 khi khởi động server:
 
 ```powershell

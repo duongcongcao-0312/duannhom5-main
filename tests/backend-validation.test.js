@@ -160,6 +160,19 @@ test("backend rejects invalid service and status payloads", async (t) => {
   );
   assert.equal(processingWithVerifiedPaymentRes.status, 200);
 
+  const shippingWithVerifiedPaymentRes = await fetch(
+    `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ status: "shipping" }),
+    },
+  );
+  assert.equal(shippingWithVerifiedPaymentRes.status, 200);
+
   const completedWithVerifiedPaymentRes = await fetch(
     `${baseUrl}/api/admin/orders/${transferOrder.orderId}`,
     {

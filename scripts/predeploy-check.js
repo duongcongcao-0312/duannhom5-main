@@ -7,12 +7,15 @@ function assertProductionEnvironment(env = process.env) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(env.ADMIN_EMAIL || "").trim())) {
       failures.push("ADMIN_EMAIL phải là email hợp lệ.");
     }
-    if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 12) {
-      failures.push("ADMIN_PASSWORD phải có ít nhất 12 ký tự.");
+    if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.trim().length < 12) {
+      failures.push("ADMIN_PASSWORD must contain at least 12 non-space characters.");
     }
   }
 
   const origins = String(env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  if (String(env.NODE_ENV || "").toLowerCase() === "production" && origins.length === 0) {
+    failures.push("Production requires explicit HTTPS CORS_ORIGINS.");
+  }
   for (const origin of origins) {
     let parsed;
     try {
@@ -24,6 +27,9 @@ function assertProductionEnvironment(env = process.env) {
     if (!["http:", "https:"].includes(parsed.protocol) || parsed.pathname !== "/" ||
         parsed.search || parsed.hash || parsed.username || parsed.password) {
       failures.push("CORS_ORIGINS chỉ được chứa origin HTTP(S), không path/query/credential.");
+    }
+    if (String(env.NODE_ENV || "").toLowerCase() === "production" && parsed.protocol !== "https:") {
+      failures.push("Production CORS_ORIGINS must use HTTPS.");
     }
   }
 

@@ -190,10 +190,14 @@ function generatePasswordResetToken() {
   return crypto.randomBytes(32).toString("hex"); // 256-bit token
 }
 
-function hashPasswordResetToken(token) {
+function secureHashPasswordResetToken(token) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.createHash("sha256").update(salt + ":" + token).digest("hex");
   return `${salt}:${hash}`;
+}
+
+function hashPasswordResetToken(token) {
+  return secureHashPasswordResetToken(token);
 }
 
 function verifyPasswordResetToken(token, stored) {
@@ -294,6 +298,7 @@ module.exports = {
   validateUuid,
   validateObjectId,
   generatePasswordResetToken,
+  secureHashPasswordResetToken,
   hashPasswordResetToken,
   verifyPasswordResetToken,
   buildSecurityHeaders,

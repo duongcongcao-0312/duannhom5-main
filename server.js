@@ -762,4 +762,38 @@ function getMimeType(filePath) {
   return map[extension] || "application/octet-stream";
 }
 
+if (require.main === module) {
+  const host = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
+  const port = Number(process.env.PORT || 8000);
+  const server = createServer();
+
+  server.on("error", (error) => {
+    console.error(JSON.stringify({
+      event: "server_start_failed",
+      host,
+      port,
+      error: error && error.message ? error.message : String(error),
+    }));
+    process.exitCode = 1;
+  });
+
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  server.listen(port, host, () => {
+    console.log(JSON.stringify({
+      event: "server_started",
+      host,
+      port,
+      pid: process.pid,
+    }));
+  });
+}
+
 module.exports = { createServer };

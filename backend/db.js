@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
+const { verifyPasswordResetToken, secureHashPasswordResetToken } = require("./security");
 const { appendAuditEntry, readAuditEntries, sanitizeAuditValue } = require("./audit");
 const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
 const {
@@ -392,14 +393,13 @@ class Database {
     });
   }
 
-  async resetPassword(tokenHash, password) {
+  async resetPassword(token, password) {
     return this.updateUsers((users) => {
-      const candidateTokenHash = typeof tokenHash === "string" && tokenHash.includes(":")
-        ? tokenHash
-        : hashPasswordResetToken(tokenHash);
       const user = users.find((entry) => (
-        entry.passwordReset?.tokenHash === candidateTokenHash &&
-        Date.parse(entry.passwordReset.expiresAt) > Date.now()
+        Date.parse(entry.passwordReset?.expiresAt) > Date.now() &&
+        (verifyPasswordResetToken(token, entry.passwordReset?.tokenHash) ||
+          (typeof token === "string" &&
+            secureHashPasswordResetToken(token) === entry.passwordReset?.tokenHash))
       ));
       if (!user) return null;
       user.password = hashPassword(password);

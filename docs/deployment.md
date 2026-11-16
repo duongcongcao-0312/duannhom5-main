@@ -17,7 +17,7 @@ HOST=127.0.0.1 PORT=8000 npm start
 không expose cổng ứng dụng trực tiếp ra Internet. Cấu hình TLS và giới hạn truy
 cập tại reverse proxy.
 
-Ở production, cấp `ADMIN_EMAIL` hợp lệ và `ADMIN_PASSWORD` tối thiểu 12 ký tự
+Ở production, cấp `ADMIN_EMAIL` hợp lệ và `ADMIN_PASSWORD` tối thiểu 16 ký tự không phải khoảng trắng
 qua secret manager trước khi tạo server. Có thể đặt thêm `ADMIN_NAME`. Server từ
 chối khởi động production nếu thiếu email/mật khẩu hợp lệ; tài khoản demo chỉ
 được seed trong môi trường không phải production.
@@ -99,7 +99,7 @@ Quy trình backup, restore và ứng phó sự cố chi tiết nằm trong
 `node scripts/backup.js verify` sau mỗi lần tạo backup và trước khi restore.
 
 Không có tài khoản admin hoặc mật khẩu mặc định. Cấu hình `ADMIN_EMAIL` và
-`ADMIN_PASSWORD` (tối thiểu 12 ký tự) trước khi tạo quyền quản trị; production
+`ADMIN_PASSWORD` (tối thiểu 16 ký tự không phải khoảng trắng) trước khi tạo quyền quản trị; production
 bắt buộc có credentials hợp lệ ngay từ lần khởi động đầu. Tài khoản admin mặc
 định cũ được hạ quyền và mật khẩu bị vô hiệu hóa khi khởi tạo dữ liệu.
 Phiên đăng nhập lưu trong bộ nhớ sẽ bị vô hiệu khi tiến trình khởi động lại.

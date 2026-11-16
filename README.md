@@ -76,7 +76,7 @@ copy .env.example .env
 ```
 
 Để dùng tài khoản quản trị của riêng bạn, đặt `ADMIN_EMAIL` và
-`ADMIN_PASSWORD` (ít nhất 12 ký tự) trong `.env`. Backend sẽ tạo hoặc khôi phục
+`ADMIN_PASSWORD` (ít nhất 16 ký tự không phải khoảng trắng) trong `.env`. Backend sẽ tạo hoặc khôi phục
 quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Không có tài khoản quản
 trị hoặc mật khẩu mặc định; nếu chưa cấu hình thông tin này, bạn chỉ có thể dùng
 các tính năng không yêu cầu quyền quản trị.
@@ -85,7 +85,7 @@ các tính năng không yêu cầu quyền quản trị.
 PORT=8000
 HOST=127.0.0.1
 ADMIN_EMAIL=<your-admin-email>
-ADMIN_PASSWORD=<set-a-unique-password-at-least-12-characters>
+ADMIN_PASSWORD=<set-a-unique-password-at-least-16-characters>
 ```
 
 Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:
@@ -122,7 +122,7 @@ Các biến thường dùng:
 | `DATABASE_URL` | Connection string PostgreSQL; chỉ cấu hình trong secret manager hoặc biến môi trường của dịch vụ deploy. |
 | `DATABASE_SSL_CA_PATH` | Tùy chọn: đường dẫn tới CA certificate PostgreSQL tin cậy, ví dụ `/etc/secrets/supabase-ca.crt` trên Render. TLS vẫn xác minh chứng chỉ máy chủ. |
 | `ADMIN_EMAIL` | Email quản trị do maintainer tự đặt trong môi trường deploy. |
-| `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự và không dùng lại mật khẩu dịch vụ database. |
+| `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 16 ký tự không phải khoảng trắng và không dùng lại mật khẩu dịch vụ database. |
 | `CORS_ORIGINS` | Danh sách origin frontend được phép, phân tách bằng dấu phẩy. Không thêm path hoặc dấu `/` cuối origin. |
 | `FIREBASE_API_KEY` | Firebase Web API key để backend xác minh ID Token social qua Firebase Identity Toolkit. |
 | `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
@@ -326,7 +326,7 @@ Hướng dẫn chạy container, lưu trữ dữ liệu bền vững, sao lưu v
 trong [docs/deployment.md](docs/deployment.md). Workflow build và publish
 container lên GitHub Container Registry khi push tag phiên bản `v*`; maintainer
 cần tạo tag và cấu hình quyền package. Production cần `ADMIN_EMAIL` hợp lệ và
-`ADMIN_PASSWORD` tối thiểu 12 ký tự được cấp qua secret manager.
+`ADMIN_PASSWORD` tối thiểu 16 ký tự không phải khoảng trắng được cấp qua secret manager.
 
 ## Bảo mật
 

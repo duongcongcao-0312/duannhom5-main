@@ -7,8 +7,8 @@ function assertProductionEnvironment(env = process.env) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(env.ADMIN_EMAIL || "").trim())) {
       failures.push("ADMIN_EMAIL phải là email hợp lệ.");
     }
-    if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 12) {
-      failures.push("ADMIN_PASSWORD phải có ít nhất 12 ký tự.");
+    if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.trim().length < 16) {
+      failures.push("ADMIN_PASSWORD must contain at least 16 non-space characters.");
     }
   }
 

@@ -32,7 +32,7 @@ function hashPasswordResetToken(token) {
   return secureHashPasswordResetToken(token);
 }
 
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const SESSION_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;

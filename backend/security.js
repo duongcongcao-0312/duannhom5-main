@@ -196,12 +196,22 @@ function hashPasswordResetToken(token) {
   return `${salt}:${hash}`;
 }
 
+// Session and refresh tokens are high-entropy random values. A deterministic
+// digest is required so the database can look them up without storing them raw.
+function secureHashPasswordResetToken(token) {
+  if (typeof token !== "string" || !token) {
+    throw new TypeError("A non-empty token is required.");
+  }
+  return crypto.createHash("sha256").update(token, "utf8").digest("hex");
+}
+
 function verifyPasswordResetToken(token, stored) {
   if (!token || typeof stored !== "string" || !stored.includes(":")) return false;
   const [salt, hash] = stored.split(":");
-  if (!salt || !hash) return false;
-  const computed = crypto.createHash("sha256").update(salt + ":" + token).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(computed, "hex"));
+  if (!/^[a-f0-9]{32}$/i.test(salt) || !/^[a-f0-9]{64}$/i.test(hash)) return false;
+  const computed = crypto.createHash("sha256").update(salt + ":" + token).digest();
+  const supplied = Buffer.from(hash, "hex");
+  return supplied.length === computed.length && crypto.timingSafeEqual(supplied, computed);
 }
 
 /*============================================================================
@@ -295,6 +305,7 @@ module.exports = {
   validateObjectId,
   generatePasswordResetToken,
   hashPasswordResetToken,
+  secureHashPasswordResetToken,
   verifyPasswordResetToken,
   buildSecurityHeaders,
   parseCorsOrigins,

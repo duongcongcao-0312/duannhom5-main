@@ -206,7 +206,12 @@ function secureHashPasswordResetToken(token) {
 }
 
 function verifyPasswordResetToken(token, stored) {
-  if (!token || typeof stored !== "string" || !stored.includes(":")) return false;
+  if (
+    typeof token !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(token) ||
+    typeof stored !== "string" ||
+    !stored.includes(":")
+  ) return false;
   const [salt, hash] = stored.split(":");
   if (!/^[a-f0-9]{32}$/i.test(salt) || !/^[a-f0-9]{64}$/i.test(hash)) return false;
   const computed = crypto.createHash("sha256").update(salt + ":" + token).digest();

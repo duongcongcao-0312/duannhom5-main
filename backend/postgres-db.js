@@ -941,8 +941,11 @@ class PostgresDatabase {
 
   async resetPassword(tokenHash, password) {
     return this.updateCollection("users", (users) => {
+      const candidateTokenHash = typeof tokenHash === "string" && tokenHash.includes(":")
+        ? tokenHash
+        : hashPasswordResetToken(tokenHash);
       const user = users.find((entry) => (
-        entry.passwordReset?.tokenHash === tokenHash &&
+        entry.passwordReset?.tokenHash === candidateTokenHash &&
         Date.parse(entry.passwordReset.expiresAt) > Date.now()
       ));
       if (!user) return null;

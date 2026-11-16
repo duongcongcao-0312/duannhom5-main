@@ -21,8 +21,8 @@ const { PostgresDatabase } = require("./backend/postgres-db");
 const { readAuditEntries } = require("./backend/audit");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
+const { hashPasswordResetToken: hashResetToken } = require("./backend/security");
 const {
-  hashPasswordResetToken,
   isPasswordValid,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -1934,7 +1934,7 @@ function createServer({
       });
 
       const token = randomBytes(32).toString("hex");
-      const tokenHash = hashPasswordResetToken(token);
+      const tokenHash = hashResetToken(token);
       const user = await db.createPasswordResetToken(
         email,
         tokenHash,
@@ -1986,7 +1986,7 @@ function createServer({
           `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
         );
       }
-      const userId = await db.resetPassword(hashPasswordResetToken(token), password);
+      const userId = await db.resetPassword(token, password);
       if (!userId) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }

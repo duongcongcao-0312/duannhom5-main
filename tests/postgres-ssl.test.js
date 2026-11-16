@@ -33,6 +33,19 @@ test("PostgreSQL pool applies bounded connection and query timeouts", () => {
   assert.equal(config.query_timeout, 10_000);
 });
 
+test("PostgreSQL pool disables TLS only for loopback database hosts", () => {
+  for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+    assert.equal(
+      createDatabasePoolConfig(`postgresql://app:secret@${host}:5432/app`, "").ssl,
+      false,
+    );
+  }
+  assert.equal(
+    createDatabasePoolConfig("postgresql://db.example.test:5432/app", "").ssl,
+    true,
+  );
+});
+
 test("PostgreSQL TLS reports an unreadable configured CA", () => {
   assert.throws(
     () => createDatabaseSslConfig(path.join(os.tmpdir(), "missing-supabase-ca.crt")),

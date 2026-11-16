@@ -119,7 +119,7 @@ Các biến thường dùng:
 | `PORT` | Cổng HTTP của backend; local thường dùng `8000`. |
 | `HOST` | Địa chỉ bind của backend; local nên dùng `127.0.0.1`, môi trường cloud thường dùng `0.0.0.0`. |
 | `NODE_ENV` | Môi trường chạy, ví dụ `development` hoặc `production`. |
-| `DATABASE_URL` | Connection string PostgreSQL; chỉ cấu hình trong secret manager hoặc biến môi trường của dịch vụ deploy. |
+| `DATABASE_URL` | Connection string PostgreSQL; local lưu trong `.env` không commit, môi trường deploy lưu trong secret manager. |
 | `DATABASE_SSL_CA_PATH` | Tùy chọn: đường dẫn tới CA certificate PostgreSQL tin cậy, ví dụ `/etc/secrets/supabase-ca.crt` trên Render. TLS vẫn xác minh chứng chỉ máy chủ. |
 | `ADMIN_EMAIL` | Email quản trị do maintainer tự đặt trong môi trường deploy. |
 | `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự không phải khoảng trắng và không dùng lại mật khẩu dịch vụ database. |
@@ -143,6 +143,12 @@ Các biến thường dùng:
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
 
 Nếu PostgreSQL/Supabase báo lỗi TLS `SELF_SIGNED_CERT_IN_CHAIN`, tải CA certificate từ **Supabase → Project Settings → Database → SSL Configuration**. Trên Render, thêm certificate đó dưới **Environment → Secret Files** với tên `supabase-ca.crt`, rồi đặt `DATABASE_SSL_CA_PATH=/etc/secrets/supabase-ca.crt`. Không tắt xác minh chứng chỉ TLS.
+
+Khi phát triển với PostgreSQL cục bộ, đặt `DATABASE_URL` trong `.env`, ví dụ
+`postgresql://booknest:<password>@127.0.0.1:5432/booknest`. Backend chỉ tắt TLS
+cho host loopback (`localhost`, `127.0.0.1`, `::1`); kết nối database từ xa
+vẫn xác minh TLS như bình thường. Nếu database chưa có tài khoản, đặt
+`ADMIN_EMAIL` và `ADMIN_PASSWORD` trong `.env` để khởi tạo quản trị viên local.
 
 ## Các lệnh npm
 

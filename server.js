@@ -3378,6 +3378,15 @@ if (require.main === module) {
   const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
   const server = createServer();
   let shuttingDown = false;
+  server.on("error", (error) => {
+    console.error(JSON.stringify({
+      event: "server_start_failed",
+      host,
+      port,
+      error: error.message,
+    }));
+    process.exitCode = 1;
+  });
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -3392,40 +3401,6 @@ if (require.main === module) {
   process.on("SIGINT", () => shutdown("SIGINT"));
   server.listen(port, host, () => {
     console.log(`BookNest đang chạy tại http://${host}:${port}`);
-  });
-}
-
-if (require.main === module) {
-  const host = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
-  const port = Number(process.env.PORT || 8000);
-  const server = createServer();
-
-  server.on("error", (error) => {
-    console.error(JSON.stringify({
-      event: "server_start_failed",
-      host,
-      port,
-      error: error && error.message ? error.message : String(error),
-    }));
-    process.exitCode = 1;
-  });
-
-  const shutdown = () => {
-    server.close(() => {
-      process.exit(0);
-    });
-  };
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-
-  server.listen(port, host, () => {
-    console.log(JSON.stringify({
-      event: "server_started",
-      host,
-      port,
-      pid: process.pid,
-    }));
   });
 }
 

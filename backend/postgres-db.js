@@ -194,6 +194,9 @@ function createDatabaseSslConfig(caPath = process.env.DATABASE_SSL_CA_PATH) {
 function createDatabasePoolConfig(connectionString, caPath = process.env.DATABASE_SSL_CA_PATH) {
   if (!caPath) {
     const databaseHost = connectionString ? new URL(connectionString).hostname : "";
+    const isLoopbackDatabase = ["localhost", "127.0.0.1", "[::1]"].includes(
+      databaseHost.toLowerCase(),
+    );
     const isRenderInternalDatabase =
       Boolean(process.env.RENDER) && !databaseHost.includes(".");
     return {
@@ -201,9 +204,11 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
       connectionTimeoutMillis: databaseConnectionTimeoutMs,
       statement_timeout: databaseQueryTimeoutMs,
       query_timeout: databaseQueryTimeoutMs,
-      ssl: isRenderInternalDatabase
-        ? { rejectUnauthorized: false }
-        : true,
+      ssl: isLoopbackDatabase
+        ? false
+        : isRenderInternalDatabase
+          ? { rejectUnauthorized: false }
+          : true,
     };
   }
 

@@ -84,7 +84,7 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   );
   assert.equal(
     adminLoginRes.headers.get("access-control-allow-credentials"),
-    "true",
+    null,
   );
   const adminData = await adminLoginRes.json();
   assert.ok(adminData.token);

@@ -6,7 +6,7 @@ test("pre-deploy check accepts explicit CORS origins and ordered migrations", ()
   const result = assertProductionEnvironment({
     NODE_ENV: "production",
     ADMIN_EMAIL: "deploy@example.com",
-    ADMIN_PASSWORD: "safe-production-password",
+    ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example,https://admin.example",
   });
   assert.equal(result.corsOrigins, 2);
@@ -18,9 +18,24 @@ test("pre-deploy check rejects unsafe CORS origins without exposing values", () 
     () => assertProductionEnvironment({
       NODE_ENV: "production",
       ADMIN_EMAIL: "deploy@example.com",
-      ADMIN_PASSWORD: "safe-production-password",
+      ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example/app",
     }),
     /CORS_ORIGINS/,
+  );
+});
+
+test("pre-deploy check requires at least 12 non-space admin password characters", () => {
+  const env = {
+    NODE_ENV: "production",
+    ADMIN_EMAIL: "deploy@example.com",
+    CORS_ORIGINS: "https://shop.example",
+  };
+  assert.throws(
+    () => assertProductionEnvironment({ ...env, ADMIN_PASSWORD: "password123" }),
+    /ADMIN_PASSWORD/,
+  );
+  assert.doesNotThrow(
+    () => assertProductionEnvironment({ ...env, ADMIN_PASSWORD: "password1234" }),
   );
 });

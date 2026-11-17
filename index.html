@@ -379,7 +379,7 @@
             </fieldset>
             <div id="transferDetails">
                 <div class="qr-payment">
-                    <img id="paymentQr" src="" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async">
+                    <img id="paymentQr" src="" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async" hidden>
                     <p>Quét mã bằng ứng dụng ngân hàng để thanh toán nhanh.</p>
                 </div>
                 <dl class="payment-details" id="paymentBankDetails">
@@ -395,6 +395,7 @@
                 <label>Địa chỉ nhận hàng<textarea name="address" rows="3" placeholder="Số nhà, đường, phường/xã, tỉnh/thành phố" autocomplete="street-address" required></textarea></label>
             </div>
             <p class="form-error" id="paymentError" role="alert" hidden></p>
+            <p class="payment-confirmation" id="paymentConfirmation" role="status" hidden></p>
             <button class="primary-button payment-submit" type="submit">Xác nhận đặt hàng</button>
         </form>
     </dialog>
@@ -430,6 +431,7 @@
     <script src="assets/api-config.js"></script>
     <script src="assets/api-client.js"></script>
     <script src="assets/toast.js"></script>
+    <script src="assets/vietqr.js"></script>
     <script src="books-data.js"></script>
     <script src="main.js"></script>
 </body>

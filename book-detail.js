@@ -75,7 +75,8 @@ function addBookToCart(book) {
 		window.location.href = 'index.html?cart=open#books';
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Không thể thêm sách vào giỏ hàng.';
-		window.alert(message);
+		if (typeof window.booknestToast === 'function') window.booknestToast(message, 'error');
+		else console.error('Không thể hiển thị thông báo BookNest:', message);
 	}
 }
 

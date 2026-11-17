@@ -8,6 +8,7 @@
     <title>Chi tiết sách | BookNest</title>
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="main.css">
+    <link rel="stylesheet" href="assets/toast.css">
 </head>
 <body>
     <header class="site-header detail-header">
@@ -17,6 +18,8 @@
     <main class="book-detail-page" id="bookDetail" aria-live="polite">
         <p class="eyebrow">Đang tải thông tin sách</p>
     </main>
+    <div id="toastContainer" class="toast-container" role="region" aria-label="Thông báo" aria-live="off"></div>
+    <script src="assets/toast.js"></script>
     <script src="books-data.js"></script>
     <script src="book-detail.js"></script>
 </body>

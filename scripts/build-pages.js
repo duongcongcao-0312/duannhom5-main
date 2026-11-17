@@ -21,7 +21,7 @@ const publicFiles = [
 	'sitemap.xml',
 	'terms.html'
 ];
-const publicAssets = ['favicon.svg', 'firebase-config.js', 'api-config.js', 'api-client.js', 'toast.css', 'toast.js'];
+const publicAssets = ['favicon.svg', 'firebase-config.js', 'api-config.js', 'api-client.js', 'toast.css', 'toast.js', 'vietqr.js'];
 
 async function copyFiles(files, sourceDirectory, destinationDirectory) {
 	await fs.mkdir(destinationDirectory, { recursive: true });

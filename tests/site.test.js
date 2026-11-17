@@ -43,6 +43,20 @@ test('payment UI contains COD and loads bank details from the backend', () => {
 	assert.doesNotMatch(script, /TCB-88803122007888/);
 	assert.match(script, /api\/payments\/config/);
 	assert.match(script, /bankCode/);
+	assert.match(html, /assets\/vietqr\.js[\s\S]*main\.js/);
+	assert.match(script, /updatePaymentQr\(result\)/);
+	assert.doesNotMatch(script, /updatePaymentQr\(quote\.total\)/);
+	assert.match(script, /paymentCode/);
+});
+
+test('order toast separates COD success from pending and confirmed transfer payments', () => {
+	const script = read('main.js');
+	assert.match(script, /title: method === 'cod' \? 'Đặt hàng thành công!' : 'Đã tạo đơn, đang chờ thanh toán'/);
+	assert.match(script, /\{ label: 'Mã đơn', value: result\.orderId \}/);
+	assert.match(script, /sessionStorage\.setItem\(LAST_ORDER_ID_STORAGE_KEY, result\.orderId\)/);
+	assert.match(script, /sessionStorage\.getItem\(LAST_ORDER_ID_STORAGE_KEY\)/);
+	assert.match(script, /const paymentConfirmed = order\.paymentStatus === 'paid'/);
+	assert.match(script, /paymentConfirmed \? 'Đã xác nhận thanh toán thành công' : 'Đang chờ thanh toán'/);
 });
 
 test('public quick-login profiles use synthetic demo identities', () => {
@@ -266,12 +280,16 @@ test('toast notifications share an accessible frontend renderer on store and adm
 	assert.match(adminHtml, /assets\/toast\.js[\s\S]*admin\.js/);
 	assert.match(script, /aria-live/);
 	assert.match(script, /aria-label/);
-	assert.match(script, /textContent = String\(message/);
+	assert.match(script, /copy\.textContent = messageText/);
+	assert.match(script, /maxVisibleToasts = 3/);
+	assert.match(script, /duration: 5000/);
+	assert.match(script, /duration: 6000/);
 	assert.match(script, /event\.key !== 'Escape'/);
 	assert.match(styles, /prefers-reduced-motion: reduce/);
 	assert.match(styles, /@media \(max-width: 600px\)/);
 	assert.doesNotMatch(read('main.js'), /\balert\s*\(/);
 	assert.match(read('admin.js'), /window\.booknestToast/);
+	assert.doesNotMatch(read('book-detail.js'), /window\.alert\s*\(/);
 	assert.match(read('scripts/build-pages.js'), /'toast\.css'.*'toast\.js'/);
 });
 

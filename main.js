@@ -21,8 +21,11 @@ const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
 const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
+const LAST_ORDER_ID_STORAGE_KEY = 'booknest-last-order-id';
+let lastCreatedOrderId = '';
 let paymentConfig = null;
 let paymentConfigPromise = null;
+let activeTransferOrder = null;
 const firebaseConfig = window.BOOKNEST_FIREBASE_CONFIG;
 const firebaseAuth = (() => {
 	const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
@@ -303,11 +306,14 @@ function createFallbackCover(title, author) {
 	return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-function updatePaymentQr(total) {
+function clearPaymentQr() {
 	const paymentQr = document.querySelector('#paymentQr');
-	if (!paymentQr || !paymentConfig) return;
-	const paymentInfo = encodeURIComponent(`BOOKNEST ${total}`);
-	paymentQr.src = `https://img.vietqr.io/image/${encodeURIComponent(paymentConfig.bankCode)}-${encodeURIComponent(paymentConfig.accountNumber)}-compact2.png?amount=${total}&addInfo=${paymentInfo}&accountName=${encodeURIComponent(paymentConfig.accountName)}`;
+	if (!paymentQr) return;
+	paymentQr.removeAttribute('src');
+	paymentQr.hidden = true;
+}
+
+function updatePaymentBankDetails() {
 	const bankDetails = document.querySelector('#paymentBankDetails');
 	if (bankDetails) {
 		bankDetails.querySelector('[data-payment-bank="name"]').textContent = paymentConfig.bankName;
@@ -316,22 +322,29 @@ function updatePaymentQr(total) {
 	}
 }
 
+function updatePaymentQr(order) {
+	const paymentQr = document.querySelector('#paymentQr');
+	if (!paymentQr || !paymentConfig) throw new Error('Chưa có cấu hình để tạo mã QR thanh toán.');
+	const imageUrl = window.BookNestVietQr.buildPaymentQrUrl(paymentConfig, order);
+	paymentQr.src = imageUrl;
+	paymentQr.hidden = false;
+}
+
 async function loadPaymentConfig() {
 	if (paymentConfig) return paymentConfig;
 	if (!paymentConfigPromise) {
 		paymentConfigPromise = window.booknestApiFetch('/api/payments/config')
 			.then(async (response) => {
 				const result = await response.json().catch(() => ({}));
-				if (!response.ok || !result.bankCode || !result.accountNumber || !result.accountName) {
+				if (!response.ok) {
 					throw new Error(result.error || 'Thông tin tài khoản thanh toán chưa khả dụng.');
 				}
+				const normalizedConfig = window.BookNestVietQr.normalizePaymentConfig(result);
 				paymentConfig = {
-					bankCode: String(result.bankCode).trim(),
-					bankName: String(result.bankName || result.bankCode).trim(),
-					accountNumber: String(result.accountNumber).trim(),
-					accountName: String(result.accountName).trim()
+					...normalizedConfig,
+					bankName: String(result.bankName || result.bankCode).trim()
 				};
-				updatePaymentQr(Number(document.querySelector('#paymentTotal')?.dataset?.amount || 0));
+				updatePaymentBankDetails();
 				return paymentConfig;
 			})
 			.catch((error) => {
@@ -350,6 +363,29 @@ function showPaymentError(message) {
 	const error = document.querySelector('#paymentError');
 	error.textContent = message;
 	error.hidden = !message;
+}
+
+function resetPaymentConfirmation() {
+	activeTransferOrder = null;
+	clearPaymentQr();
+	const confirmation = document.querySelector('#paymentConfirmation');
+	if (confirmation) {
+		confirmation.textContent = '';
+		confirmation.hidden = true;
+	}
+	const form = document.querySelector('#paymentForm');
+	form?.reset();
+	const paymentMethods = form?.querySelector('.payment-methods');
+	const shippingFields = form?.querySelector('.shipping-fields');
+	if (paymentMethods) paymentMethods.hidden = false;
+	if (shippingFields) shippingFields.hidden = false;
+	const submitButton = form?.querySelector('[type="submit"]');
+	if (submitButton) {
+		submitButton.hidden = false;
+		submitButton.disabled = false;
+	}
+	showPaymentError('');
+	fillSavedCustomerInfo();
 }
 
 function renderBooks() {
@@ -521,7 +557,7 @@ function renderCart() {
 		document.querySelector('#cartSubtotal').textContent = formatPrice(0);
 		document.querySelector('#cartDiscount').textContent = `-${formatPrice(0)}`;
 		document.querySelector('#cartTotal').textContent = formatPrice(0);
-		document.querySelector('#paymentTotal').textContent = formatPrice(0);
+		document.querySelector('#paymentTotal').textContent = formatPrice(activeTransferOrder?.total || 0);
 		document.querySelector('#discountLine').hidden = true;
 		if (checkoutButton) checkoutButton.disabled = true;
 		loadPaymentConfig().catch((error) => showPaymentError(error.message));
@@ -564,7 +600,6 @@ async function refreshCartQuote(version, cartGroups) {
 		}
 		await loadPaymentConfig();
 		document.querySelector('#paymentTotal').dataset.amount = String(quote.total);
-		updatePaymentQr(quote.total);
 		const checkoutButton = document.querySelector('#checkoutButton');
 		if (checkoutButton) checkoutButton.disabled = false;
 	} catch (error) {
@@ -645,7 +680,10 @@ if (cartButton) cartButton.addEventListener('click', () => toggleCart(true));
 document.querySelector('#quickCartButton')?.addEventListener('click', () => toggleCart(true));
 document.querySelector('#closeCart')?.addEventListener('click', () => toggleCart(false));
 document.querySelector('#overlay')?.addEventListener('click', () => toggleCart(false));
-document.querySelector('#checkoutButton')?.addEventListener('click', () => document.querySelector('#paymentDialog')?.showModal());
+document.querySelector('#checkoutButton')?.addEventListener('click', () => {
+	resetPaymentConfirmation();
+	document.querySelector('#paymentDialog')?.showModal();
+});
 document.querySelector('#closePayment')?.addEventListener('click', () => document.querySelector('#paymentDialog')?.close());
 document.querySelectorAll('input[name="paymentMethod"]').forEach((input) => input.addEventListener('change', () => {
 	const transferDetails = document.querySelector('#transferDetails');
@@ -704,9 +742,19 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			});
 			result = await response.json();
 			if (!response.ok) throw new Error(result.error || 'Không thể lưu đơn hàng.');
-			if (!result.orderId || !Number.isFinite(result.total)) {
+			if (!result.orderId || !Number.isSafeInteger(result.total) || result.total <= 0) {
 				throw new Error('Máy chủ trả về xác nhận đơn hàng không hợp lệ.');
 			}
+			if (method === 'transfer' &&
+				(result.paymentMethod !== 'transfer' || !/^BN[A-F0-9]{12}$/.test(result.paymentCode || ''))) {
+				throw new Error('Đơn chuyển khoản thiếu mã thanh toán hợp lệ.');
+			}
+		lastCreatedOrderId = result.orderId;
+		try {
+			sessionStorage.setItem(LAST_ORDER_ID_STORAGE_KEY, result.orderId);
+		} catch (storageError) {
+			console.warn('Không thể lưu mã đơn để tra cứu nhanh:', storageError);
+		}
 			try {
 				await saveCustomerInfoToAccount(customerInfo);
 			} catch (profileError) {
@@ -721,18 +769,40 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			submitButton.textContent = originalButtonText;
 		}
 
+		if (method === 'transfer') {
+			updatePaymentQr(result);
+			activeTransferOrder = result;
+			const confirmation = document.querySelector('#paymentConfirmation');
+			confirmation.textContent = `Đơn hàng ${result.orderId} đã được lưu. Mã chuyển khoản: ${result.paymentCode}. Vui lòng quét QR để thanh toán đúng số tiền.`;
+			confirmation.hidden = false;
+			form.querySelector('.payment-methods').hidden = true;
+			form.querySelector('.shipping-fields').hidden = true;
+			form.querySelector('[type="submit"]').hidden = true;
+			document.querySelector('#paymentTotal').textContent = formatPrice(result.total);
+			document.querySelector('#paymentTotal').dataset.amount = String(result.total);
+		}
 		const message = method === 'cod'
 			? `Đơn hàng COD đã được lưu thành công. Mã đơn hàng: ${result.orderId}. Tổng tiền ${formatPrice(result.total)} sẽ được giao đến địa chỉ bạn đã cung cấp.`
 			: `Đơn hàng đã được lưu thành công. Mã đơn hàng: ${result.orderId}. Vui lòng hoàn tất chuyển khoản ${formatPrice(result.total)} để xử lý đơn hàng.`;
-		window.booknestToast?.(message, 'success');
+		window.booknestToast?.(message, method === 'cod' ? 'success' : 'info', {
+			title: method === 'cod' ? 'Đặt hàng thành công!' : 'Đã tạo đơn, đang chờ thanh toán',
+			details: [
+				{ label: 'Mã đơn', value: result.orderId },
+				{ label: 'Tổng tiền', value: formatPrice(result.total) }
+			],
+			duration: method === 'cod' ? 5000 : 6000,
+			action: { label: 'Tra cứu đơn', onClick: () => openOrderTracker(result.orderId) }
+		});
 		state.cart = [];
-		form.reset();
-		fillSavedCustomerInfo();
 		document.querySelector('#transferDetails').hidden = false;
-		document.querySelector('#paymentDialog').close();
 		delete form.dataset.idempotencyKey;
 		toggleCart(false);
 		renderCart();
+		if (method === 'cod') {
+			form.reset();
+			fillSavedCustomerInfo();
+			document.querySelector('#paymentDialog').close();
+		}
 	} catch (error) {
 		showPaymentError(error instanceof Error ? error.message : 'Không thể xử lý đơn hàng. Vui lòng thử lại.');
 	}
@@ -1264,11 +1334,22 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 	renderCart();
 	setAccountView('login');
 });
-document.querySelector('#trackOrderButton')?.addEventListener('click', () => {
+function openOrderTracker(orderId = '') {
+	const form = document.querySelector('#trackOrderForm');
+	const orderIdInput = form?.elements?.orderId;
+	if (orderIdInput) {
+		let savedOrderId = lastCreatedOrderId;
+		try {
+			savedOrderId = sessionStorage.getItem(LAST_ORDER_ID_STORAGE_KEY) || savedOrderId;
+		} catch (storageError) {
+		}
+		orderIdInput.value = orderId || orderIdInput.value || savedOrderId;
+	}
 	document.querySelector('#trackOrderError').hidden = true;
 	document.querySelector('#orderResult').hidden = true;
 	trackOrderDialog.showModal();
-});
+}
+document.querySelector('#trackOrderButton')?.addEventListener('click', () => openOrderTracker());
 document.querySelector('#closeTrackOrder')?.addEventListener('click', () => trackOrderDialog.close());
 document.querySelector('#trackOrderForm')?.addEventListener('submit', async (event) => {
 	event.preventDefault();
@@ -1283,6 +1364,22 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 		const response = await window.booknestApiFetch(`/api/orders/${encodeURIComponent(orderId)}`);
 		const order = await response.json();
 		if (!response.ok) throw new Error(order.error || 'Không tìm thấy đơn hàng.');
+		if (order.paymentMethod === 'transfer') {
+			const paymentConfirmed = order.paymentStatus === 'paid';
+			window.booknestToast?.(
+				paymentConfirmed
+					? `Thanh toán đơn ${order.orderId} đã được xác nhận.`
+					: `Đơn ${order.orderId} đang chờ thanh toán chuyển khoản.`,
+				paymentConfirmed ? 'success' : 'info',
+				{
+					title: paymentConfirmed ? 'Đã xác nhận thanh toán thành công' : 'Đang chờ thanh toán',
+					details: [
+						{ label: 'Mã đơn', value: order.orderId },
+						{ label: 'Tổng tiền', value: formatPrice(order.total) }
+					]
+				}
+			);
+		}
 		result.innerHTML = `<h3>Đơn hàng ${escapeHtml(order.orderId)}</h3><p>Trạng thái: <strong>${escapeHtml(order.status)}</strong></p><p>Tổng tiền: <strong>${formatPrice(order.total)}</strong></p><ul>${order.items.map((item) => `<li>${escapeHtml(item.title)} × ${item.quantity}</li>`).join('')}</ul>`;
 		result.hidden = false;
 	} catch (trackError) {

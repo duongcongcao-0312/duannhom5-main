@@ -1174,9 +1174,9 @@ function createServer({
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sepayApiKey = process.env.SEPAY_API_KEY || "",
-  sepayBankCode = process.env.SEPAY_BANK_CODE || "TCB",
-  sepayBankName = process.env.SEPAY_BANK_NAME || "Techcombank",
-  sepayAccountNumber = process.env.SEPAY_ACCOUNT_NUMBER || "88803122007888",
+  sepayBankCode = process.env.SEPAY_BANK_CODE || "",
+  sepayBankName = process.env.SEPAY_BANK_NAME || "",
+  sepayAccountNumber = process.env.SEPAY_ACCOUNT_NUMBER || "",
   sepayAccountName = process.env.SEPAY_ACCOUNT_NAME || "",
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
@@ -1641,14 +1641,18 @@ function createServer({
     if (requestUrl.pathname === "/api/payments/config" && request.method === "GET") {
       const accountNumber = String(sepayAccountNumber || "").trim();
       const bankCode = String(sepayBankCode || "").trim();
-      if (!/^\d{6,20}$/.test(accountNumber) || !/^[A-Za-z0-9_-]{2,32}$/.test(bankCode)) {
+      const bankName = String(sepayBankName || "").trim();
+      const accountName = String(sepayAccountName || "").trim();
+      // VietQR Quick Link uses a bank BIN; do not guess a BIN from a bank alias.
+      if (!/^\d{6}$/.test(bankCode) || !/^\d{6,19}$/.test(accountNumber) ||
+          !bankName || !accountName) {
         throw new RequestError(503, "Thông tin tài khoản nhận thanh toán chưa được cấu hình.");
       }
       sendJson(response, 200, {
         bankCode,
-        bankName: String(sepayBankName || bankCode).trim(),
+        bankName,
         accountNumber,
-        accountName: String(sepayAccountName || "").trim(),
+        accountName,
       });
       return;
     }

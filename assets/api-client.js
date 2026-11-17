@@ -57,6 +57,13 @@ const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const API_RETRY_DELAYS_MS = [500, 1000];
 
 function showApiConnectionNotice(message) {
+    if (typeof window.booknestToast === 'function') {
+        window.booknestToast(message, 'error', {
+            title: 'Kết nối máy chủ',
+            duration: 0,
+        });
+        return;
+    }
     if (!document.body) return;
 
     let notice = document.getElementById('apiConnectionNotice');

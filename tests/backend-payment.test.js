@@ -6,6 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 const { CustomerError } = require("../backend/db");
+const { buildPaymentQrUrl } = require("../assets/vietqr");
 
 const webhookSecret = "test-payment-webhook-secret-with-32-bytes-min";
 
@@ -242,8 +243,8 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
     usersPath: path.join(temporaryDirectory, "users.json"),
     sepayApiKey: "test-sepay-api-key-123456",
-    sepayBankCode: "TCB",
-    sepayBankName: "Techcombank",
+    sepayBankCode: "970415",
+    sepayBankName: "VietinBank",
     sepayAccountNumber: "88803122007888",
     sepayAccountName: "BookNest",
   });
@@ -260,8 +261,8 @@ test("SePay config, webhook, and order status endpoints work together", async (t
   const configResponse = await fetch(`${baseUrl}/api/payments/config`);
   assert.equal(configResponse.status, 200);
   assert.deepEqual(await configResponse.json(), {
-    bankCode: "TCB",
-    bankName: "Techcombank",
+    bankCode: "970415",
+    bankName: "VietinBank",
     accountNumber: "88803122007888",
     accountName: "BookNest",
   });
@@ -302,4 +303,141 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     body: JSON.stringify(payload),
   });
   assert.equal(unauthorizedResponse.status, 401);
+});
+
+test("VietQR builder encodes only the payment code and rejects invalid payment data", () => {
+  const config = {
+    bankCode: "970415",
+    accountNumber: "123456789",
+    accountName: "BookNest Test",
+  };
+  const order = {
+    orderId: "order-test",
+    paymentMethod: "transfer",
+    paymentCode: "BN1234567890AB",
+    total: 245000,
+  };
+
+  const qrUrl = new URL(buildPaymentQrUrl(config, order));
+  assert.equal(qrUrl.hostname, "img.vietqr.io");
+  assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
+  assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
+  assert.doesNotMatch(qrUrl.searchParams.get("addInfo"), /BOOKNEST/i);
+  assert.ok(qrUrl.pathname.endsWith("-compact2.png"));
+
+  assert.throws(() => buildPaymentQrUrl(config, null), /Đơn hàng chuyển khoản/);
+  assert.throws(() => buildPaymentQrUrl(config, { ...order, paymentMethod: "cod" }), /Đơn hàng chuyển khoản/);
+  assert.throws(() => buildPaymentQrUrl({ ...config, bankCode: "TCB" }, order), /BIN gồm 6 chữ số/);
+  assert.throws(() => buildPaymentQrUrl({ ...config, accountNumber: "bad-account" }, order), /Số tài khoản/);
+});
+
+test("a created transfer order produces a QR whose payment code matches the SePay webhook", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-vietqr-order-flow-"),
+  );
+  const orders = [];
+  let appliedEvent;
+  const database = {
+    async getCustomBooks() { return []; },
+    async getCatalogBookOverrides() { return []; },
+    async getAllOrders() { return orders; },
+    async addOrderIdempotently(order, _hash, _inventory, validateStock) {
+      validateStock(orders);
+      orders.push(order);
+      return { order, replayed: false };
+    },
+    async applyPaymentWebhookEvent(event) {
+      appliedEvent = event;
+      return { duplicate: false };
+    },
+  };
+  const config = {
+    bankCode: "970415",
+    bankName: "VietinBank",
+    accountNumber: "123456789",
+    accountName: "BookNest Test",
+  };
+  const server = createServer({
+    database,
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    sepayApiKey: "test-sepay-api-key-123456",
+    sepayBankCode: config.bankCode,
+    sepayBankName: config.bankName,
+    sepayAccountNumber: config.accountNumber,
+    sepayAccountName: config.accountName,
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const orderResponse = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": "vietqr-order-flow-001",
+    },
+    body: JSON.stringify({
+      customerName: "Local Test Customer",
+      address: "12 Local Test Street, District 1",
+      phone: "0901234567",
+      paymentMethod: "transfer",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(orderResponse.status, 201);
+  const order = await orderResponse.json();
+  assert.equal(order.paymentMethod, "transfer");
+  assert.match(order.paymentCode, /^BN[A-F0-9]{12}$/);
+
+  const qrUrl = new URL(buildPaymentQrUrl(config, order));
+  assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
+  assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
+  assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.png`);
+
+  const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: "local-vietqr-payment-1",
+      transferAmount: order.total,
+      transferType: "in",
+      accountNumber: config.accountNumber,
+      content: qrUrl.searchParams.get("addInfo"),
+    }),
+  });
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(appliedEvent.orderId, order.orderId);
+  assert.equal(appliedEvent.amount, order.total);
+});
+
+test("payment config rejects a non-BIN VietQR bank code without using fallback bank data", async (t) => {
+  const database = {
+    async getCustomBooks() { return []; },
+    async getCatalogBookOverrides() { return []; },
+  };
+  const server = createServer({
+    database,
+    sepayBankCode: "TCB",
+    sepayBankName: "Test Bank",
+    sepayAccountNumber: "123456789",
+    sepayAccountName: "BookNest Test",
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payments/config`);
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /chưa được cấu hình/i);
 });

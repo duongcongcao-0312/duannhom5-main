@@ -724,7 +724,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		const message = method === 'cod'
 			? `Đơn hàng COD đã được lưu thành công. Mã đơn hàng: ${result.orderId}. Tổng tiền ${formatPrice(result.total)} sẽ được giao đến địa chỉ bạn đã cung cấp.`
 			: `Đơn hàng đã được lưu thành công. Mã đơn hàng: ${result.orderId}. Vui lòng hoàn tất chuyển khoản ${formatPrice(result.total)} để xử lý đơn hàng.`;
-		alert(message);
+		window.booknestToast?.(message, 'success');
 		state.cart = [];
 		form.reset();
 		fillSavedCustomerInfo();
@@ -798,7 +798,7 @@ serviceForm.addEventListener('submit', async (event) => {
 		} catch (profileError) {
 			console.error('Không thể đồng bộ thông tin khách hàng:', profileError);
 		}
-		alert(`Đã nhận yêu cầu ${serviceDetails[request.service].title.toLowerCase()} của ${request.name}. BookNest sẽ sớm liên hệ!`);
+		window.booknestToast?.(`Đã nhận yêu cầu ${serviceDetails[request.service].title.toLowerCase()} của ${request.name}. BookNest sẽ sớm liên hệ!`);
 		serviceForm.reset();
 		fillSavedCustomerInfo();
 		serviceDialog.close();

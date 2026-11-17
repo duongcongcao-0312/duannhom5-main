@@ -6,6 +6,7 @@
     <title>BookNest Admin | Hệ thống quản trị nhà sách</title>
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="assets/toast.css">
 </head>
 <body>
     <div id="adminApp">
@@ -510,10 +511,11 @@
     </div>
 
     <!-- TOAST CONTAINER -->
-    <div id="toastContainer" class="toast-container"></div>
+    <div id="toastContainer" class="toast-container toast-container--admin" role="region" aria-label="Thông báo" aria-live="off"></div>
 
     <script src="assets/api-config.js"></script>
     <script src="assets/api-client.js"></script>
+    <script src="assets/toast.js"></script>
     <script src="admin.js"></script>
 </body>
 </html>

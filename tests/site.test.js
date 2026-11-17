@@ -255,6 +255,26 @@ test('SEO, legal and deployment assets exist', () => {
 	assert.match(read('index.html'), /class="skip-link"/);
 });
 
+test('toast notifications share an accessible frontend renderer on store and admin pages', () => {
+	const html = read('index.html');
+	const adminHtml = read('admin.html');
+	const script = read('assets/toast.js');
+	const styles = read('assets/toast.css');
+	assert.match(html, /assets\/toast\.css/);
+	assert.match(html, /assets\/toast\.js[\s\S]*main\.js/);
+	assert.match(adminHtml, /assets\/toast\.css/);
+	assert.match(adminHtml, /assets\/toast\.js[\s\S]*admin\.js/);
+	assert.match(script, /aria-live/);
+	assert.match(script, /aria-label/);
+	assert.match(script, /textContent = String\(message/);
+	assert.match(script, /event\.key !== 'Escape'/);
+	assert.match(styles, /prefers-reduced-motion: reduce/);
+	assert.match(styles, /@media \(max-width: 600px\)/);
+	assert.doesNotMatch(read('main.js'), /\balert\s*\(/);
+	assert.match(read('admin.js'), /window\.booknestToast/);
+	assert.match(read('scripts/build-pages.js'), /'toast\.css'.*'toast\.js'/);
+});
+
 test('frontend API client targets the configured backend origin', () => {
 	const context = { window: { BOOKNEST_API_BASE_URL: 'https://api.example.com/' } };
 	vm.runInNewContext(read('assets/api-client.js'), context);

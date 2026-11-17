@@ -22,6 +22,7 @@
     <link rel="apple-touch-icon" href="assets/favicon.svg">
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="main.css">
+    <link rel="stylesheet" href="assets/toast.css">
 </head>
 <body>
     <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
@@ -422,11 +423,13 @@
         </form>
     </dialog>
     <footer><p>BookNest</p><span>Những trang sách mở ra những thế giới mới.</span><nav aria-label="Liên kết pháp lý"><a href="privacy.html">Chính sách bảo mật</a><a href="terms.html">Điều khoản dịch vụ</a></nav></footer>
+    <div id="toastContainer" class="toast-container" role="region" aria-label="Thông báo" aria-live="off"></div>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
     <script src="assets/firebase-config.js"></script>
     <script src="assets/api-config.js"></script>
     <script src="assets/api-client.js"></script>
+    <script src="assets/toast.js"></script>
     <script src="books-data.js"></script>
     <script src="main.js"></script>
 </body>

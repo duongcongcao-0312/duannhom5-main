@@ -12,7 +12,9 @@ bước sau:
 2. Kiểm tra cú pháp JavaScript bằng `npm run check`.
 3. Chạy `npm run predeploy:check` để kiểm tra credential production, origin CORS
    và version migration mà không in giá trị bí mật.
-4. Chạy unit test, integration test và kiểm tra coverage bằng
+4. Chạy `npm run migrate` trên PostgreSQL service container để tạo schema cho
+   integration test trước khi kiểm tra ứng dụng.
+5. Chạy unit test, integration test và kiểm tra coverage bằng
    `npm run test:coverage`. Gate yêu cầu ít nhất **70% line coverage, 65%
    branch coverage và 60% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
    lệnh thất bại và chặn job CI. Báo cáo coverage dạng bảng được in trong log
@@ -28,8 +30,8 @@ bước sau:
    schema, CRUD, rollback transaction và cleanup thật. Khi chạy local không có
    `DATABASE_URL`, test tích hợp này được skip; có thể chạy riêng bằng
    `DATABASE_URL=... npm run test:postgres-integration`.
-5. Build frontend tĩnh bằng `npm run build:pages`.
-6. Kiểm tra toàn bộ dependency, bao gồm cả công cụ test, bằng `npm audit`.
+6. Build frontend tĩnh bằng `npm run build:pages`.
+7. Kiểm tra toàn bộ dependency, bao gồm cả công cụ test, bằng `npm audit`.
 
 ## Quy tắc deploy
 

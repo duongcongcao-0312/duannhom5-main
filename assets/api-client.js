@@ -54,6 +54,8 @@ window.booknestAuth = {
 };
 
 const API_REQUEST_TIMEOUT_MS = 15000;
+const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const API_RETRY_DELAYS_MS = [500, 1000];
 
 function showApiConnectionNotice(message) {
     if (!document.body) return;
@@ -84,14 +86,10 @@ function showApiConnectionNotice(message) {
 }
 
 window.booknestApiFetch = async function (path, options = {}) {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, API_REQUEST_TIMEOUT_MS);
-
+    const method = String(options.method || 'GET').toUpperCase();
+    const maxAttempts = SAFE_RETRY_METHODS.has(method) ? API_RETRY_DELAYS_MS.length + 1 : 1;
     let response;
+<<<<<<< HEAD
     try {
         const headers = { ...(options.headers || {}) };
         response = await fetch(window.booknestApiUrl(path), {
@@ -112,6 +110,47 @@ window.booknestApiFetch = async function (path, options = {}) {
     }
 
     if (response.status >= 500 && !isLocalDemoEnvironment()) {
+=======
+    let lastError;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const controller = new AbortController();
+        let timedOut = false;
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, API_REQUEST_TIMEOUT_MS);
+
+        try {
+            const headers = { ...(options.headers || {}) };
+            response = await fetch(window.booknestApiUrl(path), {
+                ...options,
+                headers,
+                signal: controller.signal
+            });
+        } catch (error) {
+            lastError = error;
+            if (attempt + 1 >= maxAttempts) {
+                const message = timedOut
+                    ? 'Máy chủ BookNest không phản hồi sau 15 giây. Hãy kiểm tra kết nối mạng và thử lại thao tác.'
+                    : 'Không thể kết nối tới máy chủ BookNest. Hãy kiểm tra kết nối mạng hoặc thử lại sau.';
+                showApiConnectionNotice(message);
+                throw new Error(message, { cause: error });
+            }
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        if (response && response.status < 500) break;
+        if (attempt + 1 < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, API_RETRY_DELAYS_MS[attempt]));
+        }
+    }
+
+    if (!response) throw lastError;
+
+    if (response.status >= 500) {
+>>>>>>> 83d95dea6b92bd2525142a3ac8e7a0d6b292b354
         showApiConnectionNotice(
             `Máy chủ BookNest đang tạm thời không khả dụng (HTTP ${response.status}). Hãy thử lại sau ít phút.`
         );

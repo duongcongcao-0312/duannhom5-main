@@ -10,6 +10,40 @@ const { createEmailMailer } = require("../backend/email");
 const { PostgresDatabase } = require("../backend/postgres-db");
 const { createServer } = require("../server");
 
+test("catalog loading retries after a temporary database failure", async (t) => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  let catalogReads = 0;
+  const server = createServer({
+    database: {
+      async getCustomBooks() {
+        catalogReads += 1;
+        if (catalogReads === 1) throw new Error("temporary database failure");
+        return [];
+      },
+      async getCatalogBookOverrides() {
+        return [];
+      },
+    },
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/books`);
+  assert.equal(response.status, 200);
+  assert.ok(catalogReads >= 3, "initial load should retry, then the API should read the recovered catalog");
+  assert.ok(Array.isArray(await response.json()));
+});
+
 
 test("email delivery uses the HTTPS provider and exposes provider errors", async () => {
   const requests = [];

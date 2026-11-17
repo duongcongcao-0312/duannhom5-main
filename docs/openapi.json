@@ -362,7 +362,46 @@
       "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
     },
     "/api/admin/users": { "get": { "tags": ["Admin"], "summary": "Danh sách thành viên an toàn, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/UserSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
-    "/api/admin/coupons": { "get": { "tags": ["Admin"], "summary": "Danh sách mã giảm giá, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/CouponSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } }
+    "/api/admin/coupons": { "get": { "tags": ["Admin"], "summary": "Danh sách mã giảm giá, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/CouponSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
+    "/api/privacy/consents": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Xem lịch sử consent của tài khoản",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Ghi nhận consent cho chính sách dữ liệu",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["purpose", "policyVersion", "granted"],
+                "properties": {
+                  "purpose": { "type": "string", "minLength": 1 },
+                  "policyVersion": { "type": "string", "minLength": 1 },
+                  "granted": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/privacy/consents/{purpose}": {
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Rút lại consent cho một mục đích",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "purpose", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "policyVersion", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    }
   },
   "components": {
     "securitySchemes": {

@@ -58,30 +58,30 @@ log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
 
 ## Chạy bằng Docker
 
-```sh
-docker build -t booknest:0.1.0 .
-docker volume create booknest-data
-docker run -d --name booknest \
-  --restart unless-stopped \
-  -p 127.0.0.1:8000:8000 \
-  --env ADMIN_EMAIL \
-  --env ADMIN_PASSWORD \
-  --env ADMIN_NAME \
-  --env PUBLIC_APP_URL \
-  --env SMTP_HOST \
-  --env SMTP_PORT \
-  --env SMTP_FROM \
-  --env SMTP_USER \
-  --env SMTP_PASSWORD \
-  --env RESEND_API_KEY \
-  --env RESEND_FROM \
-  -v booknest-data:/app/data \
-  booknest:0.1.0
+Để chạy backend local bằng Docker Compose:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-Các biến `ADMIN_*`, `SMTP_PASSWORD` và `RESEND_API_KEY` trong lệnh trên phải
-được cấp sẵn từ secret manager của host; không ghi giá trị bí mật trực tiếp
-vào shell history hoặc file trong repository.
+Mở `.env`, đặt `ADMIN_EMAIL` và `ADMIN_PASSWORD` (ít nhất 12 ký tự), sau đó chạy:
+
+```sh
+docker compose up --build -d
+docker compose ps
+```
+
+Truy cập `http://localhost:8000`; xem log bằng `docker compose logs -f backend`
+và dừng bằng `docker compose down`. Cổng host mặc định là `8000`; có thể đổi
+bằng biến `HOST_PORT` trong `.env`. Compose local chạy chế độ development, dùng
+kho dữ liệu dạng file được lưu trong volume `backend-data`, và chỉ bind cổng
+trên loopback của máy.
+
+Không commit `.env` hoặc đưa mật khẩu/API key vào repository. Cấu hình Compose
+này dành cho local development; production cần PostgreSQL, `DATABASE_URL`,
+migration trước khi khởi động, và các biến bí mật được cấp qua secret manager.
+Không expose cổng backend trực tiếp ra Internet; dùng HTTPS và reverse proxy
+khi triển khai công khai.
 
 Image xuất bản từ GitHub Actions có tên
 `ghcr.io/duongcongcao-0312/duannhom5-main:<tag>`. Workflow chạy khi push tag

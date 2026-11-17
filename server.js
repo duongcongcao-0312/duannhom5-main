@@ -1,4 +1,4 @@
-const fs = require("node:fs/promises");
+﻿const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -21,8 +21,8 @@ const { PostgresDatabase } = require("./backend/postgres-db");
 const { readAuditEntries } = require("./backend/audit");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
-const { hashPasswordResetToken: hashResetToken } = require("./backend/security");
 const {
+  hashPasswordResetToken,
   isPasswordValid,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -49,7 +49,6 @@ const {
   SERVICE_STATUSES,
   SERVICE_TYPES,
   STUDENT_VERIFICATION_STATUSES,
-  normalizeRole,
 } = require("./backend/business-constants");
 
 const root = __dirname;
@@ -108,6 +107,8 @@ const allowedDiscountRates = new Set([0, 0.05, 0.1]);
 const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
 const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
 const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
+const allowedConsentPurposes = new Set(["order", "service", "marketing"]);
+const allowedConsentSources = new Set(["web", "admin", "api"]);
 const payloadSchemas = {
   passwordReset: {
     allowed: ["email"],
@@ -414,12 +415,7 @@ const securityHeaders = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
-  "X-Permitted-Cross-Domain-Policies": "none",
-  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 };
-if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
-  securityHeaders["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
-}
 const customerQuerySchema = {
   search: { type: "string", maxLength: 100 },
   status: {
@@ -1144,18 +1140,6 @@ async function serveStatic(request, response, pathname, staticRoot) {
 
   let contents;
   try {
-    const realRoot = await fs.realpath(staticRoot);
-    const realFile = await fs.realpath(filePath);
-    const relativeRealPath = path.relative(realRoot, realFile);
-    if (
-      relativeRealPath === ".." ||
-      relativeRealPath.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relativeRealPath)
-    ) {
-      await sendHtmlError(response, 404, "404");
-      return;
-    }
-    filePath = realFile;
     contents = await fs.readFile(filePath);
   } catch (error) {
     if (error.code === "ENOENT" || error.code === "EISDIR") {
@@ -1185,6 +1169,7 @@ function createServer({
   booksPath,
   couponsPath,
   customerInteractionsPath,
+  consentRecordsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
@@ -1208,39 +1193,12 @@ function createServer({
       : "http://127.0.0.1:8000,http://localhost:8000"
   ),
 } = {}) {
-  const allowedOrigins = new Set(
-    String(corsOrigins)
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean),
-  );
-  if (
-    String(process.env.NODE_ENV || "").toLowerCase() === "production" &&
-    !database &&
-    process.env.DATABASE_URL
-  ) {
-    if (allowedOrigins.size === 0 || allowedOrigins.has("*")) {
-      throw new Error("Production requires explicit CORS_ORIGINS without a wildcard.");
-    }
-    for (const origin of allowedOrigins) {
-      let parsedOrigin;
-      try {
-        parsedOrigin = new URL(origin);
-      } catch {
-        throw new Error("Production CORS_ORIGINS must contain valid HTTPS origins.");
-      }
-      if (parsedOrigin.protocol !== "https:" || parsedOrigin.origin !== origin) {
-        throw new Error("Production CORS_ORIGINS must contain valid HTTPS origins.");
-      }
-    }
-  }
-
   if (process.env.NODE_ENV === "production") {
     const adminEmail = String(process.env.ADMIN_EMAIL || "").trim();
     const adminPassword = String(process.env.ADMIN_PASSWORD || "");
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) || adminPassword.trim().length < 12) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail) || adminPassword.length < 12) {
       throw new Error(
-        "Production requires a valid ADMIN_EMAIL and an ADMIN_PASSWORD of at least 12 non-space characters.",
+        "Production requires a valid ADMIN_EMAIL and an ADMIN_PASSWORD of at least 12 characters.",
       );
     }
   }
@@ -1261,6 +1219,7 @@ function createServer({
       booksPath,
       couponsPath,
       customerInteractionsPath,
+      consentRecordsPath,
       auditLogPath,
     }));
   const sessionRepositoryMethods = [
@@ -1296,21 +1255,6 @@ function createServer({
   const registrationAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
-  const maxAttemptBuckets = 10_000;
-  function setBoundedAttempt(map, key, value) {
-    if (!map.has(key) && map.size >= maxAttemptBuckets) {
-      const now = Date.now();
-      for (const [oldKey, oldValue] of map) {
-        if (oldValue.expiresAt <= now) map.delete(oldKey);
-      }
-      while (!map.has(key) && map.size >= maxAttemptBuckets) {
-        const oldestKey = map.keys().next().value;
-        if (oldestKey === undefined) break;
-        map.delete(oldestKey);
-      }
-    }
-    map.set(key, value);
-  }
   function verifyPasswordReauthentication(request, user, password) {
     const now = Date.now();
     for (const [address, attempt] of reauthenticationAttempts) {
@@ -1328,7 +1272,7 @@ function createServer({
       user.passwordAuthEnabled === false ||
       !verifyPassword(password, user.password)
     ) {
-      setBoundedAttempt(reauthenticationAttempts, address, {
+      reauthenticationAttempts.set(address, {
         count: (attempt?.count || 0) + 1,
         expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
       });
@@ -1337,41 +1281,86 @@ function createServer({
     reauthenticationAttempts.delete(address);
   }
   let orderWriteQueue = Promise.resolve();
+  const allowedOrigins = new Set(
+    corsOrigins
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+
   let catalogLoadError;
-  const catalogReady = Promise.all([
-    db.getCustomBooks(),
-    typeof db.getCatalogBookOverrides === "function"
-      ? db.getCatalogBookOverrides()
-      : Promise.resolve([]),
-  ])
-    .then(([custom, overrides]) => {
-      for (const override of overrides) {
-        const baseBook = catalogBookById.get(override.id);
-        if (!baseBook) continue;
-        if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
-        catalogBookOverrides.set(override.id, override);
-        bookCatalog.set(override.title, {
-          ...baseBook,
-          ...override,
-          isCustom: false,
-        });
-      }
-      for (const book of custom) {
-        if (book && book.title) {
-          bookCatalog.set(book.title, { ...book, isCustom: true });
+  let catalogLoadPromise = null;
+  let catalogLoaded = false;
+  let nextCatalogRetryAt = 0;
+  const catalogRetryDelaysMs = [200, 600];
+  const catalogRetryCooldownMs = 2_000;
+
+  async function loadCatalogWithRetries() {
+    let lastError;
+    for (let attempt = 0; attempt <= catalogRetryDelaysMs.length; attempt += 1) {
+      try {
+        const [custom, overrides] = await Promise.all([
+          db.getCustomBooks(),
+          typeof db.getCatalogBookOverrides === "function"
+            ? db.getCatalogBookOverrides()
+            : Promise.resolve([]),
+        ]);
+        for (const override of overrides) {
+          const baseBook = catalogBookById.get(override.id);
+          if (!baseBook) continue;
+          if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
+          catalogBookOverrides.set(override.id, override);
+          bookCatalog.set(override.title, {
+            ...baseBook,
+            ...override,
+            isCustom: false,
+          });
+        }
+        for (const book of custom) {
+          if (book && book.title) {
+            bookCatalog.set(book.title, { ...book, isCustom: true });
+          }
+        }
+        catalogLoaded = true;
+        catalogLoadError = null;
+        nextCatalogRetryAt = 0;
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < catalogRetryDelaysMs.length) {
+          await new Promise((resolve) => setTimeout(resolve, catalogRetryDelaysMs[attempt]));
         }
       }
-    })
-    .catch((error) => {
-      catalogLoadError = error;
-      console.error("Không thể tải sách quản trị:", error);
-    });
-
-  async function waitForCatalogReady() {
-    await catalogReady;
-    if (catalogLoadError) throw catalogLoadError;
+    }
+    throw lastError;
   }
 
+  function startCatalogLoad() {
+    if (catalogLoaded) return Promise.resolve();
+    if (catalogLoadPromise) return catalogLoadPromise;
+    catalogLoadPromise = (async () => {
+      try {
+        await loadCatalogWithRetries();
+      } catch (error) {
+        catalogLoadError = error;
+        nextCatalogRetryAt = Date.now() + catalogRetryCooldownMs;
+        console.error("Catalog load failed:", error);
+      } finally {
+        catalogLoadPromise = null;
+      }
+    })();
+    return catalogLoadPromise;
+  }
+
+  void startCatalogLoad();
+
+  async function waitForCatalogReady() {
+    if (!catalogLoadPromise && catalogLoadError && Date.now() < nextCatalogRetryAt) {
+      throw catalogLoadError;
+    }
+    await startCatalogLoad();
+    if (catalogLoadError) throw catalogLoadError;
+  }
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     await waitForCatalogReady();
     const operation = orderWriteQueue.then(async () => {
@@ -1616,6 +1605,7 @@ function createServer({
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Vary", "Origin");
+      response.setHeader("Access-Control-Allow-Credentials", "true");
       response.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
     }
 
@@ -1925,25 +1915,24 @@ function createServer({
       }
       const address = request.socket.remoteAddress || "unknown";
       const attempt = passwordResetAttempts.get(address);
-      if (attempt && attempt.count >= 5) {
+      if (attempt && attempt.count >= 30) {
         throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
       }
-      setBoundedAttempt(passwordResetAttempts, address, {
+      passwordResetAttempts.set(address, {
         count: (attempt?.count || 0) + 1,
         expiresAt: attempt?.expiresAt || now + 15 * 60 * 1000,
       });
       const emailAttempt = passwordResetEmailAttempts.get(email);
       if (emailAttempt && emailAttempt.count >= 5) {
-        sendJson(response, 200, { message: "If the address is registered, password reset instructions will be sent." });
-        return;
+        throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
       }
-      setBoundedAttempt(passwordResetEmailAttempts, email, {
+      passwordResetEmailAttempts.set(email, {
         count: (emailAttempt?.count || 0) + 1,
         expiresAt: emailAttempt?.expiresAt || now + 15 * 60 * 1000,
       });
 
       const token = randomBytes(32).toString("hex");
-      const tokenHash = hashResetToken(token);
+      const tokenHash = hashPasswordResetToken(token);
       const user = await db.createPasswordResetToken(
         email,
         tokenHash,
@@ -1995,7 +1984,7 @@ function createServer({
           `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
         );
       }
-      const userId = await db.resetPassword(token, password);
+      const userId = await db.resetPassword(hashPasswordResetToken(token), password);
       if (!userId) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }
@@ -2020,7 +2009,13 @@ function createServer({
           "Bạn đã đăng ký quá nhiều lần. Vui lòng thử lại sau 15 phút.",
         );
       }
-      setBoundedAttempt(registrationAttempts, address, {
+      if (!attempt && registrationAttempts.size >= 10_000) {
+        throw new RequestError(
+          503,
+          "Tạm thời không thể xử lý đăng ký. Vui lòng thử lại sau.",
+        );
+      }
+      registrationAttempts.set(address, {
         count: (attempt?.count || 0) + 1,
         expiresAt: attempt?.expiresAt || now + registrationAttemptWindowMs,
       });
@@ -2107,7 +2102,7 @@ function createServer({
           "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.",
         );
       }
-      setBoundedAttempt(loginAttempts, address, {
+      loginAttempts.set(address, {
         count: (attempt?.count || 0) + 1,
         expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
       });
@@ -2161,7 +2156,7 @@ function createServer({
         providerId,
         emailVerified: true,
       });
-      if (normalizeRole(user.role) === ROLES.ADMIN) {
+      if (user.role === ROLES.ADMIN) {
         throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
       }
 
@@ -2186,7 +2181,7 @@ function createServer({
       const session = await getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
         throw new RequestError(403, "Không thể liên kết tài khoản social.");
       }
       verifyPasswordReauthentication(request, user, payload.password);
@@ -2212,7 +2207,7 @@ function createServer({
       const session = await getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
+      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
         throw new RequestError(403, "Không thể tách tài khoản social.");
       }
       verifyPasswordReauthentication(request, user, payload.password);
@@ -2266,6 +2261,89 @@ function createServer({
         throw new RequestError(404, "Không tìm thấy tài khoản.");
       session.customerInfo = updatedUser.customerInfo;
       sendJson(response, 200, { customerInfo: updatedUser.customerInfo });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/privacy/consents" &&
+      request.method === "GET"
+    ) {
+      const session = await getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      if (typeof db.getConsentRecords !== "function") {
+        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
+      }
+      const records = await db.getConsentRecords(session.userId);
+      const current = {};
+      for (const record of records) {
+        if (!Object.hasOwn(current, record.purpose)) current[record.purpose] = record;
+      }
+      sendJson(response, 200, { records, current });
+      return;
+    }
+
+    if (
+      requestUrl.pathname === "/api/privacy/consents" &&
+      request.method === "POST"
+    ) {
+      const session = await getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      if (typeof db.recordConsent !== "function") {
+        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
+      }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Dữ liệu consent không hợp lệ.",
+      );
+      const purpose = sanitizePlainText(payload.purpose, 40);
+      const policyVersion = sanitizePlainText(payload.policyVersion, 20);
+      const dataSource = sanitizePlainText(payload.dataSource || "web", 20);
+      const retentionDays = Number(payload.retentionDays);
+      if (
+        !allowedConsentPurposes.has(purpose) ||
+        !/^[A-Za-z0-9._-]{1,20}$/.test(policyVersion) ||
+        !allowedConsentSources.has(dataSource) ||
+        typeof payload.consent !== "boolean" ||
+        !Number.isInteger(retentionDays) ||
+        retentionDays < 0 ||
+        retentionDays > 3650
+      ) {
+        throw new RequestError(400, "Dữ liệu consent không hợp lệ.");
+      }
+      const record = await db.recordConsent(session.userId, {
+        purpose,
+        consent: payload.consent,
+        policyVersion,
+        dataSource,
+        retentionDays,
+      });
+      sendJson(response, 201, { record });
+      return;
+    }
+
+    const revokeConsentMatch = requestUrl.pathname.match(
+      /^\/api\/privacy\/consents\/(order|service|marketing)$/,
+    );
+    if (revokeConsentMatch && request.method === "DELETE") {
+      const session = await getAuthUser(request);
+      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+      if (typeof db.revokeConsent !== "function") {
+        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
+      }
+      const policyVersion = sanitizePlainText(
+        requestUrl.searchParams.get("policyVersion") || "",
+        20,
+      );
+      if (!/^[A-Za-z0-9._-]{1,20}$/.test(policyVersion)) {
+        throw new RequestError(400, "Phiên bản chính sách không hợp lệ.");
+      }
+      const record = await db.revokeConsent(
+        session.userId,
+        revokeConsentMatch[1],
+        policyVersion,
+        "web",
+      );
+      sendJson(response, 200, { record });
       return;
     }
 
@@ -2595,7 +2673,7 @@ function createServer({
         return;
       }
       const requester = await getAuthUser(request);
-      if (requester && normalizeRole(requester.role) !== ROLES.ADMIN) {
+      if (requester && requester.role !== ROLES.ADMIN) {
         if (order.userId && order.userId !== requester.userId) {
           throw new RequestError(
             403,
@@ -2626,7 +2704,7 @@ function createServer({
       if (!order) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
       }
-      if (normalizeRole(requester.role) !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
+      if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
         throw new RequestError(
           403,
           "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
@@ -2642,7 +2720,7 @@ function createServer({
       orderUpdateOptions.actorRole = requester.role;
       orderUpdateOptions.actorId = requester.userId;
       if (
-        normalizeRole(requester.role) === ROLES.USER &&
+        requester.role === ROLES.USER &&
         (payload.paymentStatus !== undefined || payload.items !== undefined)
       ) {
         throw new RequestError(
@@ -2728,7 +2806,7 @@ function createServer({
           validateOrder,
         };
       }
-      if (normalizeRole(requester.role) !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
+      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
         throw new RequestError(
           403,
           "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
@@ -3194,11 +3272,9 @@ function createServer({
         "Dữ liệu cập nhật nhân viên không hợp lệ.",
         payloadSchemas.staffUpdate,
       );
-      const normalizedRole = payload.role === undefined ? undefined : normalizeRole(payload.role);
-      if (normalizedRole !== undefined && !["sales", "support"].includes(normalizedRole)) {
+      if (payload.role !== undefined && !["sales", "support"].includes(payload.role)) {
         throw new RequestError(400, "Vai trò nhân viên chỉ có thể là sales hoặc support.");
       }
-      if (normalizedRole !== undefined) payload.role = normalizedRole;
       if (payload.name !== undefined) {
         payload.name = sanitizePlainText(payload.name, 120);
         if (!payload.name) throw new RequestError(400, "Họ tên nhân viên không hợp lệ.");
@@ -3299,7 +3375,7 @@ function createServer({
     await serveStatic(request, response, requestUrl.pathname, staticRoot);
   }
 
-  const server = http.createServer({ maxHeaderSize: 16 * 1024 }, (request, response) => {
+  const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
     response.setHeader("X-Request-Id", requestId);
     for (const [name, value] of Object.entries(securityHeaders)) {
@@ -3348,10 +3424,6 @@ function createServer({
       void sendHtmlError(response, status, status === 404 ? "404" : "500");
     });
   });
-  server.headersTimeout = 15_000;
-  server.requestTimeout = 30_000;
-  server.keepAliveTimeout = 5_000;
-  server.maxRequestsPerSocket = 1_000;
   server.once("close", () => {
     sessionStore.close();
     if (typeof db.close !== "function") return;
@@ -3381,15 +3453,6 @@ if (require.main === module) {
   const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
   const server = createServer();
   let shuttingDown = false;
-  server.on("error", (error) => {
-    console.error(JSON.stringify({
-      event: "server_start_failed",
-      host,
-      port,
-      error: error.message,
-    }));
-    process.exitCode = 1;
-  });
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;

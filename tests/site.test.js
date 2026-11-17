@@ -11,6 +11,11 @@ const { Database } = require('../backend/db');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
+test('server entrypoint exports the HTTP server factory', () => {
+	assert.match(read('server.js'), /function createServer/);
+	assert.match(read('server.js'), /module\.exports/);
+});
+
 function configureTestAdmin(t) {
 	const previous = {
 		ADMIN_EMAIL: process.env.ADMIN_EMAIL,
@@ -26,14 +31,25 @@ function configureTestAdmin(t) {
 	});
 }
 
-test('payment UI contains COD and delivery fields', () => {
+test('payment UI contains COD and loads bank details from the backend', () => {
 	const html = read('index.html');
+	const script = read('main.js');
 	assert.match(html, /value="cod"/);
 	assert.match(html, /name="customerName"/);
 	assert.match(html, /name="phone"/);
 	assert.match(html, /name="address"/);
 	assert.match(html, /id="paymentQr"/);
-	assert.match(html, /TCB-88803122007888/);
+	assert.doesNotMatch(html, /TCB-88803122007888/);
+	assert.doesNotMatch(script, /TCB-88803122007888/);
+	assert.match(script, /api\/payments\/config/);
+	assert.match(script, /bankCode/);
+});
+
+test('public quick-login profiles use synthetic demo identities', () => {
+	const html = read('index.html');
+	assert.doesNotMatch(html, /bit250048@|nguyenvanan|tranminhduc|lethao|Dương Công Cao|Nguyễn Văn An|Trần Minh Đức|Lê Phương Thảo/i);
+	assert.match(html, /demo-user-01@example\.com/);
+	assert.match(html, /dữ liệu giả lập/i);
 });
 
 test('images use lazy loading and async decoding', () => {
@@ -58,7 +74,7 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
-test('customer contact information persists for purchases and book services after logout', () => {
+test('customer contact information is session-scoped and cleared on logout', () => {
 	const script = read('main.js');
 	assert.match(script, /const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info'/);
 	assert.match(script, /function loadCustomerInfo/);
@@ -67,7 +83,9 @@ test('customer contact information persists for purchases and book services afte
 	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), name: request\.name, phone: request\.phone \}/);
 	assert.match(script, /function fillSavedCustomerInfo/);
 	assert.match(script, /fillSavedCustomerInfo\(\);/);
-	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
+	assert.match(script, /sessionStorage\.getItem\(CUSTOMER_INFO_STORAGE_KEY/);
+	assert.match(script, /sessionStorage\.setItem\(CUSTOMER_INFO_STORAGE_KEY/);
+	assert.match(script, /sessionStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
 	assert.match(script, /saveCustomerInfoToAccount/);
 	assert.match(script, /api\/auth\/customer-info/);
 	assert.match(script, /hydrateAuthenticatedUser/);
@@ -303,6 +321,31 @@ test('API client reports timeouts and unavailable server responses with actionab
 			return this.children.find((child) => child.className === selector.slice(1));
 		},
 		remove() {}
+	});
+
+	test('API client retries safe cold-start requests without replaying writes', async () => {
+		let attempts = 0;
+		const context = {
+			window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
+			document: { body: null },
+			AbortController,
+			fetch: async (_url, options) => {
+				attempts += 1;
+				assert.ok(options.signal);
+				if (attempts < 3) return { status: 503 };
+				return { status: 200 };
+			},
+			setTimeout(callback) { callback(); return 1; },
+			clearTimeout() {}
+		};
+		vm.runInNewContext(read('assets/api-client.js'), context);
+
+		await context.window.booknestApiFetch('/health');
+		assert.equal(attempts, 3);
+
+		attempts = 0;
+		await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
+		assert.equal(attempts, 1);
 	});
 	const document = {
 		body: { appendChild(element) { notice = element; } },

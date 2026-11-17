@@ -1605,7 +1605,6 @@ function createServer({
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Vary", "Origin");
-      response.setHeader("Access-Control-Allow-Credentials", "true");
       response.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
     }
 
@@ -1984,7 +1983,7 @@ function createServer({
           `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
         );
       }
-      const userId = await db.resetPassword(hashPasswordResetToken(token), password);
+      const userId = await db.resetPassword(token, password);
       if (!userId) {
         throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
       }

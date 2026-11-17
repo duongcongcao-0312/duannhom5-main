@@ -309,6 +309,31 @@ test('API client stays quiet when the storefront runs without a configured backe
 	assert.equal(notice, undefined);
 });
 
+test('API client retries safe cold-start requests without replaying writes', async () => {
+	let attempts = 0;
+	const context = {
+		window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
+		document: { body: null },
+		AbortController,
+		fetch: async (_url, options) => {
+			attempts += 1;
+			assert.ok(options.signal);
+			if (attempts < 3) return { status: 503 };
+			return { status: 200 };
+		},
+		setTimeout(callback) { callback(); return 1; },
+		clearTimeout() {}
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+
+	await context.window.booknestApiFetch('/health');
+	assert.equal(attempts, 3);
+
+	attempts = 0;
+	await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
+	assert.equal(attempts, 1);
+});
+
 test('API client reports timeouts and unavailable server responses with actionable notices', async () => {
 	let notice;
 	const createElement = () => ({
@@ -321,31 +346,6 @@ test('API client reports timeouts and unavailable server responses with actionab
 			return this.children.find((child) => child.className === selector.slice(1));
 		},
 		remove() {}
-	});
-
-	test('API client retries safe cold-start requests without replaying writes', async () => {
-		let attempts = 0;
-		const context = {
-			window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
-			document: { body: null },
-			AbortController,
-			fetch: async (_url, options) => {
-				attempts += 1;
-				assert.ok(options.signal);
-				if (attempts < 3) return { status: 503 };
-				return { status: 200 };
-			},
-			setTimeout(callback) { callback(); return 1; },
-			clearTimeout() {}
-		};
-		vm.runInNewContext(read('assets/api-client.js'), context);
-
-		await context.window.booknestApiFetch('/health');
-		assert.equal(attempts, 3);
-
-		attempts = 0;
-		await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
-		assert.equal(attempts, 1);
 	});
 	const document = {
 		body: { appendChild(element) { notice = element; } },

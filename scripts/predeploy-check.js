@@ -4,6 +4,15 @@ const path = require("node:path");
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
   if (String(env.NODE_ENV || "").toLowerCase() === "production") {
+    let databaseUrl;
+    try {
+      databaseUrl = new URL(String(env.DATABASE_URL || ""));
+    } catch {
+      databaseUrl = null;
+    }
+    if (!databaseUrl || !["postgres:", "postgresql:"].includes(databaseUrl.protocol) || !databaseUrl.hostname) {
+      failures.push("Production requires a valid PostgreSQL DATABASE_URL.");
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(env.ADMIN_EMAIL || "").trim())) {
       failures.push("ADMIN_EMAIL phải là email hợp lệ.");
     }
@@ -54,6 +63,8 @@ function assertProductionEnvironment(env = process.env) {
   return {
     productionCredentials: String(env.NODE_ENV || "").toLowerCase() !== "production" ||
       Boolean(env.ADMIN_EMAIL && env.ADMIN_PASSWORD),
+    databaseConfigured: String(env.NODE_ENV || "").toLowerCase() !== "production" ||
+      Boolean(env.DATABASE_URL),
     corsOrigins: origins.length,
     migrationCount: filenames.length,
   };

@@ -306,45 +306,45 @@
                 </div>
             </div>
             <div class="social-quick-section">
-                <p class="social-quick-heading">Tài khoản đề xuất:</p>
+                <p class="social-quick-heading">Tài khoản demo (dữ liệu giả lập):</p>
                 <div class="social-quick-profiles" id="socialQuickProfiles">
-                    <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="bit250048@st.cmcu.edu.vn" data-quick-name="Dương Công Cao">
-                        <span class="social-avatar google-avatar" aria-hidden="true">C</span>
+                <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="demo-user-01@example.com" data-quick-name="Demo User 01">
+                    <span class="social-avatar google-avatar" aria-hidden="true">D</span>
                         <div class="social-profile-info">
-                            <strong>Dương Công Cao (Sinh viên)</strong>
-                            <span>bit250048@st.cmcu.edu.vn</span>
+                        <strong>Demo User 01</strong>
+                        <span>demo-user-01@example.com</span>
                         </div>
                         <span class="social-badge google-badge">Google</span>
                     </button>
-                    <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="nguyenvanan.booknest@gmail.com" data-quick-name="Nguyễn Văn An">
-                        <span class="social-avatar google-avatar" aria-hidden="true">A</span>
+                <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="demo-user-02@example.com" data-quick-name="Demo User 02">
+                    <span class="social-avatar google-avatar" aria-hidden="true">D</span>
                         <div class="social-profile-info">
-                            <strong>Nguyễn Văn An</strong>
-                            <span>nguyenvanan.booknest@gmail.com</span>
+                        <strong>Demo User 02</strong>
+                        <span>demo-user-02@example.com</span>
                         </div>
                         <span class="social-badge google-badge">Google</span>
                     </button>
-                    <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="tranminhduc.booknest@gmail.com" data-quick-name="Trần Minh Đức">
-                        <span class="social-avatar google-avatar" aria-hidden="true">Đ</span>
+                <button type="button" class="social-quick-card" data-provider="google.com" data-quick-email="demo-user-03@example.com" data-quick-name="Demo User 03">
+                    <span class="social-avatar google-avatar" aria-hidden="true">D</span>
                         <div class="social-profile-info">
-                            <strong>Trần Minh Đức</strong>
-                            <span>tranminhduc.booknest@gmail.com</span>
+                        <strong>Demo User 03</strong>
+                        <span>demo-user-03@example.com</span>
                         </div>
                         <span class="social-badge google-badge">Google</span>
                     </button>
-                    <button type="button" class="social-quick-card" data-provider="facebook.com" data-quick-email="lethao.facebook@booknest.vn" data-quick-name="Lê Phương Thảo">
+                <button type="button" class="social-quick-card" data-provider="facebook.com" data-quick-email="demo-user-04@example.com" data-quick-name="Demo User 04">
                         <span class="social-avatar fb-avatar" aria-hidden="true">f</span>
                         <div class="social-profile-info">
-                            <strong>Lê Phương Thảo</strong>
-                            <span>lethao.facebook@booknest.vn</span>
+                        <strong>Demo User 04</strong>
+                        <span>demo-user-04@example.com</span>
                         </div>
                         <span class="social-badge fb-badge">Facebook</span>
                     </button>
-                    <button type="button" class="social-quick-card" data-provider="facebook.com" data-quick-email="duongcongcao.fb@gmail.com" data-quick-name="Dương Công Cao">
+                <button type="button" class="social-quick-card" data-provider="facebook.com" data-quick-email="demo-user-05@example.com" data-quick-name="Demo User 05">
                         <span class="social-avatar fb-avatar" aria-hidden="true">f</span>
                         <div class="social-profile-info">
-                            <strong>Dương Công Cao</strong>
-                            <span>duongcongcao.fb@gmail.com</span>
+                        <strong>Demo User 05</strong>
+                        <span>demo-user-05@example.com</span>
                         </div>
                         <span class="social-badge fb-badge">Facebook</span>
                     </button>
@@ -378,12 +378,13 @@
             </fieldset>
             <div id="transferDetails">
                 <div class="qr-payment">
-                    <img id="paymentQr" src="https://img.vietqr.io/image/TCB-88803122007888-compact2.png?amount=0&addInfo=BOOKNEST" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async">
+                    <img id="paymentQr" src="" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async">
                     <p>Quét mã bằng ứng dụng ngân hàng để thanh toán nhanh.</p>
                 </div>
-                <dl class="payment-details">
-                    <div><dt>Ngân hàng</dt><dd>Techcombank</dd></div>
-                    <div><dt>Số tài khoản</dt><dd>88803122007888</dd></div>
+                <dl class="payment-details" id="paymentBankDetails">
+                    <div><dt>Ngân hàng</dt><dd data-payment-bank="name">Đang tải...</dd></div>
+                    <div><dt>Số tài khoản</dt><dd data-payment-bank="number">Đang tải...</dd></div>
+                    <div><dt>Chủ tài khoản</dt><dd data-payment-bank="holder">Đang tải...</dd></div>
                 </dl>
                 <p class="payment-note">Vui lòng chuyển khoản đúng số tiền hiển thị.</p>
             </div>

@@ -1861,6 +1861,68 @@ class PostgresDatabase {
     });
   }
 
+  async getConsentRecords(subjectId) {
+    const { rows } = await this.pool.query(
+      `SELECT id, subject_id, purpose, consent, policy_version, data_source,
+              retention_days, created_at, revoked_at
+       FROM privacy_consents
+       WHERE subject_id = $1::uuid
+       ORDER BY created_at DESC`,
+      [subjectId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      subjectId: row.subject_id,
+      purpose: row.purpose,
+      consent: row.consent,
+      policyVersion: row.policy_version,
+      dataSource: row.data_source,
+      retentionDays: row.retention_days,
+      createdAt: new Date(row.created_at).toISOString(),
+      revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
+    }));
+  }
+
+  async recordConsent(subjectId, data) {
+    const { rows } = await this.pool.query(
+      `INSERT INTO privacy_consents
+        (subject_id, purpose, consent, policy_version, data_source, retention_days, revoked_at)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, CASE WHEN $3 THEN NULL ELSE NOW() END)
+       RETURNING id, subject_id, purpose, consent, policy_version, data_source,
+                 retention_days, created_at, revoked_at`,
+      [
+        subjectId,
+        data.purpose,
+        data.consent,
+        data.policyVersion,
+        data.dataSource,
+        data.retentionDays,
+      ],
+    );
+    const [record] = rows;
+    return {
+      id: record.id,
+      subjectId: record.subject_id,
+      purpose: record.purpose,
+      consent: record.consent,
+      policyVersion: record.policy_version,
+      dataSource: record.data_source,
+      retentionDays: record.retention_days,
+      createdAt: new Date(record.created_at).toISOString(),
+      revokedAt: record.revoked_at ? new Date(record.revoked_at).toISOString() : null,
+    };
+  }
+
+  async revokeConsent(subjectId, purpose, policyVersion, dataSource) {
+    return this.recordConsent(subjectId, {
+      purpose,
+      consent: false,
+      policyVersion,
+      dataSource,
+      retentionDays: 0,
+    });
+  }
+
   async getStats(_ordersPathOverride, totalBaseBooks = 80) {
     const [orders, users, books, services] = await Promise.all([
       this.getAllOrders(),

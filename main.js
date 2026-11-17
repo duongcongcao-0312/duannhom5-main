@@ -21,6 +21,8 @@ const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
 const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
+let paymentConfig = null;
+let paymentConfigPromise = null;
 const firebaseConfig = window.BOOKNEST_FIREBASE_CONFIG;
 const firebaseAuth = (() => {
 	const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
@@ -63,7 +65,7 @@ function getBookStock(book) {
 
 function loadCurrentUser() {
 	try {
-		return JSON.parse(localStorage.getItem(CURRENT_USER_STORAGE_KEY) || 'null');
+		return JSON.parse(sessionStorage.getItem(CURRENT_USER_STORAGE_KEY) || 'null');
 	} catch (error) {
 		return null;
 	}
@@ -71,7 +73,7 @@ function loadCurrentUser() {
 
 function loadCustomerInfo() {
 	try {
-		const saved = JSON.parse(localStorage.getItem(CUSTOMER_INFO_STORAGE_KEY) || '{}');
+		const saved = JSON.parse(sessionStorage.getItem(CUSTOMER_INFO_STORAGE_KEY) || '{}');
 		return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
 	} catch (error) {
 		return {};
@@ -80,7 +82,7 @@ function loadCustomerInfo() {
 
 function saveCustomerInfo(info) {
 	try {
-		localStorage.setItem(CUSTOMER_INFO_STORAGE_KEY, JSON.stringify(info));
+		sessionStorage.setItem(CUSTOMER_INFO_STORAGE_KEY, JSON.stringify(info));
 	} catch (error) {
 		throw new Error('Không thể lưu thông tin khách hàng trên thiết bị này.');
 	}
@@ -115,7 +117,7 @@ async function hydrateAuthenticatedUser() {
 		});
 		if (response.status === 401) {
 			window.booknestAuth.clearToken();
-			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+			sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			state.user = null;
 			renderAccount();
 			return;
@@ -125,7 +127,7 @@ async function hydrateAuthenticatedUser() {
 		if (!data.user) throw new Error('Máy chủ trả về hồ sơ tài khoản không hợp lệ.');
 		state.user = data.user;
 		applyAccountCustomerInfo(data.user);
-		localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
+		sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
 		renderAccount();
 		fillSavedCustomerInfo();
 	} catch (error) {
@@ -134,7 +136,7 @@ async function hydrateAuthenticatedUser() {
 }
 
 window.addEventListener('booknest:auth-expired', () => {
-	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+	sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
 	renderAccount();
 	renderCart();
@@ -303,8 +305,41 @@ function createFallbackCover(title, author) {
 
 function updatePaymentQr(total) {
 	const paymentQr = document.querySelector('#paymentQr');
+	if (!paymentQr || !paymentConfig) return;
 	const paymentInfo = encodeURIComponent(`BOOKNEST ${total}`);
-	paymentQr.src = `https://img.vietqr.io/image/TCB-88803122007888-compact2.png?amount=${total}&addInfo=${paymentInfo}&accountName=BOOKNEST`;
+	paymentQr.src = `https://img.vietqr.io/image/${encodeURIComponent(paymentConfig.bankCode)}-${encodeURIComponent(paymentConfig.accountNumber)}-compact2.png?amount=${total}&addInfo=${paymentInfo}&accountName=${encodeURIComponent(paymentConfig.accountName)}`;
+	const bankDetails = document.querySelector('#paymentBankDetails');
+	if (bankDetails) {
+		bankDetails.querySelector('[data-payment-bank="name"]').textContent = paymentConfig.bankName;
+		bankDetails.querySelector('[data-payment-bank="number"]').textContent = paymentConfig.accountNumber;
+		bankDetails.querySelector('[data-payment-bank="holder"]').textContent = paymentConfig.accountName;
+	}
+}
+
+async function loadPaymentConfig() {
+	if (paymentConfig) return paymentConfig;
+	if (!paymentConfigPromise) {
+		paymentConfigPromise = window.booknestApiFetch('/api/payments/config')
+			.then(async (response) => {
+				const result = await response.json().catch(() => ({}));
+				if (!response.ok || !result.bankCode || !result.accountNumber || !result.accountName) {
+					throw new Error(result.error || 'Thông tin tài khoản thanh toán chưa khả dụng.');
+				}
+				paymentConfig = {
+					bankCode: String(result.bankCode).trim(),
+					bankName: String(result.bankName || result.bankCode).trim(),
+					accountNumber: String(result.accountNumber).trim(),
+					accountName: String(result.accountName).trim()
+				};
+				updatePaymentQr(Number(document.querySelector('#paymentTotal')?.dataset?.amount || 0));
+				return paymentConfig;
+			})
+			.catch((error) => {
+				paymentConfigPromise = null;
+				throw error;
+			});
+	}
+	return paymentConfigPromise;
 }
 
 function escapeHtml(value) {
@@ -480,7 +515,7 @@ function renderCart() {
 			price.textContent = 'Đang tính...';
 		});
 		if (checkoutButton) checkoutButton.disabled = true;
-		updatePaymentQr(0);
+		loadPaymentConfig().catch((error) => showPaymentError(error.message));
 		refreshCartQuote(quoteVersion, cartGroups);
 	} else {
 		document.querySelector('#cartSubtotal').textContent = formatPrice(0);
@@ -489,7 +524,7 @@ function renderCart() {
 		document.querySelector('#paymentTotal').textContent = formatPrice(0);
 		document.querySelector('#discountLine').hidden = true;
 		if (checkoutButton) checkoutButton.disabled = true;
-		updatePaymentQr(0);
+		loadPaymentConfig().catch((error) => showPaymentError(error.message));
 	}
 	const couponInput = document.querySelector('#couponInput');
 	if (couponInput && state.coupon) couponInput.value = state.coupon;
@@ -527,6 +562,8 @@ async function refreshCartQuote(version, cartGroups) {
 				.find((element) => element.dataset.cartPrice === item.title);
 			if (price) price.textContent = formatPrice(item.lineTotal);
 		}
+		await loadPaymentConfig();
+		document.querySelector('#paymentTotal').dataset.amount = String(quote.total);
 		updatePaymentQr(quote.total);
 		const checkoutButton = document.querySelector('#checkoutButton');
 		if (checkoutButton) checkoutButton.disabled = false;
@@ -874,7 +911,7 @@ async function saveFederatedAccount(socialUser) {
 
 	state.user = user;
 	applyAccountCustomerInfo(user);
-	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+	sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
 	setAccountView('login');
@@ -1085,7 +1122,7 @@ if (firebaseAuth) {
 			saveFederatedAccount(firebaseUser);
 		} else if (state.user?.isFirebaseSession) {
 			state.user = null;
-			localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+			sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			renderAccount();
 			renderCart();
 		}
@@ -1111,7 +1148,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 			if (data.token) window.booknestAuth.setToken(data.token, data.expiresAt);
 			state.user = data.user;
 			applyAccountCustomerInfo(data.user);
-			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
+			sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
 			renderAccount();
 			renderCart();
 			setAccountView('login');
@@ -1134,7 +1171,7 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 	}
 	state.user = user;
 	applyAccountCustomerInfo(user);
-	localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+	sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 	renderAccount();
 	renderCart();
 	setAccountView('login');
@@ -1169,7 +1206,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			if (resData.token) window.booknestAuth.setToken(resData.token, resData.expiresAt);
 			state.user = resData.user || user;
 			applyAccountCustomerInfo(state.user);
-			localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
+			sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
 			renderAccount();
 			renderCart();
 			setAccountView('login');
@@ -1220,7 +1257,8 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 		console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
 	}
 	window.booknestAuth.clearToken();
-	localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+	sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+	sessionStorage.removeItem(CUSTOMER_INFO_STORAGE_KEY);
 	state.user = null;
 	renderAccount();
 	renderCart();

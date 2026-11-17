@@ -246,6 +246,13 @@ class PostgresDatabase {
       throw new Error("DATABASE_URL là bắt buộc khi dùng PostgreSQL.");
     }
     this.pool = pool || new Pool(createDatabasePoolConfig(connectionString));
+    this.pool.on?.("error", (error) => {
+      console.error(JSON.stringify({
+        level: "error",
+        event: "postgres_pool_idle_client_error",
+        code: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      }));
+    });
     this.auditLogPath = auditLogPath || path.join(process.cwd(), "data", "admin-audit.jsonl");
     this.initialization = null;
   }

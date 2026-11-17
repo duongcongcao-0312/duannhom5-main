@@ -290,6 +290,70 @@ test('frontend API client targets the configured backend origin', () => {
 	assert.match(read('admin.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*admin\.js/);
 });
 
+test('API client stays quiet when the storefront runs without a configured backend', async () => {
+	let notice;
+	const document = {
+		body: { appendChild(element) { notice = element; } },
+		getElementById(id) { return id === 'apiConnectionNotice' ? notice : null; },
+		createElement() {
+			return {
+				children: [],
+				setAttribute() {},
+				addEventListener() {},
+				append(...children) { this.children.push(...children); },
+				appendChild(child) { this.children.push(child); },
+				querySelector(selector) {
+					return this.children.find((child) => child.className === selector.slice(1));
+				},
+				remove() {}
+			};
+		}
+	};
+	const context = {
+		window: {
+			BOOKNEST_API_BASE_URL: '',
+			location: { protocol: 'file:', hostname: 'localhost' }
+		},
+		document,
+		fetch: () => { throw new Error('fetch should not be announced in local demo mode'); },
+		setTimeout,
+		clearTimeout,
+		AbortController,
+		Headers
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+	await assert.rejects(
+		context.window.booknestApiFetch('/api/books'),
+		/Không thể kết nối tới máy chủ BookNest/i,
+	);
+	assert.equal(notice, undefined);
+});
+
+test('API client retries safe cold-start requests without replaying writes', async () => {
+	let attempts = 0;
+	const context = {
+		window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
+		document: { body: null },
+		AbortController,
+		fetch: async (_url, options) => {
+			attempts += 1;
+			assert.ok(options.signal);
+			if (attempts < 3) return { status: 503 };
+			return { status: 200 };
+		},
+		setTimeout(callback) { callback(); return 1; },
+		clearTimeout() {}
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+
+	await context.window.booknestApiFetch('/health');
+	assert.equal(attempts, 3);
+
+	attempts = 0;
+	await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
+	assert.equal(attempts, 1);
+});
+
 test('API client reports timeouts and unavailable server responses with actionable notices', async () => {
 	let notice;
 	const createElement = () => ({
@@ -302,31 +366,6 @@ test('API client reports timeouts and unavailable server responses with actionab
 			return this.children.find((child) => child.className === selector.slice(1));
 		},
 		remove() {}
-	});
-
-	test('API client retries safe cold-start requests without replaying writes', async () => {
-		let attempts = 0;
-		const context = {
-			window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
-			document: { body: null },
-			AbortController,
-			fetch: async (_url, options) => {
-				attempts += 1;
-				assert.ok(options.signal);
-				if (attempts < 3) return { status: 503 };
-				return { status: 200 };
-			},
-			setTimeout(callback) { callback(); return 1; },
-			clearTimeout() {}
-		};
-		vm.runInNewContext(read('assets/api-client.js'), context);
-
-		await context.window.booknestApiFetch('/health');
-		assert.equal(attempts, 3);
-
-		attempts = 0;
-		await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
-		assert.equal(attempts, 1);
 	});
 	const document = {
 		body: { appendChild(element) { notice = element; } },

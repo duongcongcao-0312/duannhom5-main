@@ -3,6 +3,12 @@ window.booknestApiUrl = function (path) {
     return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 };
 
+function isLocalDemoEnvironment() {
+    if (typeof window === 'undefined' || !window.location) return false;
+    const protocol = String(window.location.protocol || '').toLowerCase();
+    return protocol === 'file:';
+}
+
 const AUTH_TOKEN_KEY = 'booknest-auth-token';
 const ADMIN_AUTH_TOKEN_KEY = 'booknest-admin-token';
 const AUTH_TOKEN_EXPIRY_KEY = 'booknest-auth-token-expires-at';
@@ -80,7 +86,9 @@ function showApiConnectionNotice(message) {
 
 window.booknestApiFetch = async function (path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
-    const maxAttempts = SAFE_RETRY_METHODS.has(method) ? API_RETRY_DELAYS_MS.length + 1 : 1;
+    const maxAttempts = SAFE_RETRY_METHODS.has(method) && !isLocalDemoEnvironment()
+        ? API_RETRY_DELAYS_MS.length + 1
+        : 1;
     let response;
     let lastError;
 
@@ -105,7 +113,9 @@ window.booknestApiFetch = async function (path, options = {}) {
                 const message = timedOut
                     ? 'Máy chủ BookNest không phản hồi sau 15 giây. Hãy kiểm tra kết nối mạng và thử lại thao tác.'
                     : 'Không thể kết nối tới máy chủ BookNest. Hãy kiểm tra kết nối mạng hoặc thử lại sau.';
-                showApiConnectionNotice(message);
+                if (!isLocalDemoEnvironment()) {
+                    showApiConnectionNotice(message);
+                }
                 throw new Error(message, { cause: error });
             }
         } finally {
@@ -120,7 +130,7 @@ window.booknestApiFetch = async function (path, options = {}) {
 
     if (!response) throw lastError;
 
-    if (response.status >= 500) {
+    if (response.status >= 500 && !isLocalDemoEnvironment()) {
         showApiConnectionNotice(
             `Máy chủ BookNest đang tạm thời không khả dụng (HTTP ${response.status}). Hãy thử lại sau ít phút.`
         );

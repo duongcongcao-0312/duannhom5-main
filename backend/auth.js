@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { normalizeRole } = require("./business-constants");
 const { secureHashPasswordResetToken } = require("./security");
 
 /**
@@ -86,7 +87,7 @@ class SessionStore {
       userId: user.id,
       email: user.email,
       name: user.name,
-      role: user.role || "user",
+      role: normalizeRole(user.role),
       studentType: user.studentType || "other",
       studentId: user.studentId || "",
       studentVerification: user.studentVerification || { status: "pending" },

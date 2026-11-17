@@ -43,8 +43,10 @@ test("role policy matrix grants only the intended admin permissions", () => {
   ];
   for (const permission of permissions) {
     assert.equal(hasPermission({ role: "admin" }, permission), true);
+    assert.equal(hasPermission({ role: "ADMIN" }, permission), true);
   }
   assert.equal(hasPermission({ role: "sales" }, "read:users"), false);
+  assert.equal(hasPermission({ role: "Sales" }, "read:users"), false);
   assert.equal(hasPermission({ role: "sales" }, "read:staff"), false);
   assert.equal(hasPermission({ role: "support" }, "write:staff"), false);
   assert.equal(hasPermission({ role: "support" }, "write:orders"), false);
@@ -75,9 +77,14 @@ test("customer policy matrix separates sales, support and destructive access", a
   const sales = { role: "sales" };
   const support = { role: "support" };
   const user = { role: "user" };
+  const admin = { role: "ADMIN" };
   assert.equal(
     await requireCustomerPermission(requestFor(sales), "update", sessionStore(sales), TestRequestError),
     sales,
+  );
+  assert.equal(
+    await requireCustomerPermission(requestFor(admin), "delete", sessionStore(admin), TestRequestError),
+    admin,
   );
   assert.equal(
     await requireCustomerPermission(requestFor(support), "view", sessionStore(support), TestRequestError),

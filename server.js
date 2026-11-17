@@ -49,6 +49,7 @@ const {
   SERVICE_STATUSES,
   SERVICE_TYPES,
   STUDENT_VERIFICATION_STATUSES,
+  normalizeRole,
 } = require("./backend/business-constants");
 
 const root = __dirname;
@@ -2160,7 +2161,7 @@ function createServer({
         providerId,
         emailVerified: true,
       });
-      if (user.role === ROLES.ADMIN) {
+      if (normalizeRole(user.role) === ROLES.ADMIN) {
         throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
       }
 
@@ -2185,7 +2186,7 @@ function createServer({
       const session = await getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
         throw new RequestError(403, "Không thể liên kết tài khoản social.");
       }
       verifyPasswordReauthentication(request, user, payload.password);
@@ -2211,7 +2212,7 @@ function createServer({
       const session = await getAuthUser(request);
       if (!session) throw new RequestError(401, "Chưa đăng nhập.");
       const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
         throw new RequestError(403, "Không thể tách tài khoản social.");
       }
       verifyPasswordReauthentication(request, user, payload.password);
@@ -2594,7 +2595,7 @@ function createServer({
         return;
       }
       const requester = await getAuthUser(request);
-      if (requester && requester.role !== ROLES.ADMIN) {
+      if (requester && normalizeRole(requester.role) !== ROLES.ADMIN) {
         if (order.userId && order.userId !== requester.userId) {
           throw new RequestError(
             403,
@@ -2625,7 +2626,7 @@ function createServer({
       if (!order) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
       }
-      if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
+      if (normalizeRole(requester.role) !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
         throw new RequestError(
           403,
           "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
@@ -2641,7 +2642,7 @@ function createServer({
       orderUpdateOptions.actorRole = requester.role;
       orderUpdateOptions.actorId = requester.userId;
       if (
-        requester.role === ROLES.USER &&
+        normalizeRole(requester.role) === ROLES.USER &&
         (payload.paymentStatus !== undefined || payload.items !== undefined)
       ) {
         throw new RequestError(
@@ -2727,7 +2728,7 @@ function createServer({
           validateOrder,
         };
       }
-      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
+      if (normalizeRole(requester.role) !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
         throw new RequestError(
           403,
           "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
@@ -3193,9 +3194,11 @@ function createServer({
         "Dữ liệu cập nhật nhân viên không hợp lệ.",
         payloadSchemas.staffUpdate,
       );
-      if (payload.role !== undefined && !["sales", "support"].includes(payload.role)) {
+      const normalizedRole = payload.role === undefined ? undefined : normalizeRole(payload.role);
+      if (normalizedRole !== undefined && !["sales", "support"].includes(normalizedRole)) {
         throw new RequestError(400, "Vai trò nhân viên chỉ có thể là sales hoặc support.");
       }
+      if (normalizedRole !== undefined) payload.role = normalizedRole;
       if (payload.name !== undefined) {
         payload.name = sanitizePlainText(payload.name, 120);
         if (!payload.name) throw new RequestError(400, "Họ tên nhân viên không hợp lệ.");

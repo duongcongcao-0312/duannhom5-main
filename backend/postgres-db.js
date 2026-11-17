@@ -25,6 +25,7 @@ const {
   SERVICE_STATUSES,
   SERVICE_TYPES,
   STUDENT_VERIFICATION_STATUSES,
+  normalizeRole,
 } = require("./business-constants");
 
 const databaseConnectionTimeoutMs = 5_000;
@@ -335,7 +336,7 @@ class PostgresDatabase {
             (user) =>
               user !== admin &&
               String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
-              user.role === ROLES.ADMIN,
+              normalizeRole(user.role) === ROLES.ADMIN,
           );
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
@@ -348,7 +349,7 @@ class PostgresDatabase {
           const legacyDefaultAdmin = users.find(
             (user) =>
               String(user.email || "").trim().toLowerCase() === "admin@booknest.vn" &&
-              user.role === ROLES.ADMIN,
+              normalizeRole(user.role) === ROLES.ADMIN,
           );
           if (legacyDefaultAdmin) {
             legacyDefaultAdmin.role = "user";
@@ -968,7 +969,7 @@ class PostgresDatabase {
       if (users.some((user) => user.email.toLowerCase() === email)) {
         throw new Error("Email này đã được đăng ký trên hệ thống.");
       }
-      const role = String(data.role || "user").trim().toLowerCase();
+      const role = normalizeRole(data.role || "user");
       if (!new Set(["user", "admin", "sales", "support"]).has(role)) {
         throw new Error("Vai trò người dùng không hợp lệ.");
       }
@@ -1001,7 +1002,7 @@ class PostgresDatabase {
 
   async getStaffUsers() {
     return (await this.getUsers())
-      .filter((user) => ["sales", "support"].includes(user.role))
+      .filter((user) => ["sales", "support"].includes(normalizeRole(user.role)))
       .map(({ password, passwordAuthEnabled, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
   }
@@ -1013,7 +1014,7 @@ class PostgresDatabase {
     }
     return this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === id);
-      if (!user || user.role !== ROLES.USER) return null;
+      if (!user || normalizeRole(user.role) !== ROLES.USER) return null;
       const now = new Date().toISOString();
       user.studentVerification = {
         status,
@@ -1031,12 +1032,14 @@ class PostgresDatabase {
 
   async createStaffUser(data, actorId) {
     const actor = validateActor(actorId);
-    if (!["sales", "support"].includes(data.role)) {
+    const normalizedRole = normalizeRole(data.role);
+    if (!["sales", "support"].includes(normalizedRole)) {
       throw new CustomerError(400, "Nhân viên chỉ có thể được gán vai trò sales hoặc support.");
     }
     try {
       return await this.createUser({
         ...data,
+        role: normalizedRole,
         createdBy: actor,
         updatedBy: actor,
       });
@@ -1053,11 +1056,12 @@ class PostgresDatabase {
 
   async updateStaffUser(id, { name, email, role, isActive }, actorId) {
     const actor = validateActor(actorId);
+    const normalizedRole = role === undefined ? undefined : normalizeRole(role);
     const updatedName = name === undefined ? undefined : String(name).trim();
     const updatedEmail = email === undefined ? undefined : String(email).trim().toLowerCase();
-    if ((role !== undefined && !["sales", "support"].includes(role)) ||
+    if ((normalizedRole !== undefined && !["sales", "support"].includes(normalizedRole)) ||
         (isActive !== undefined && typeof isActive !== "boolean") ||
-        (name === undefined && email === undefined && role === undefined && isActive === undefined) ||
+        (name === undefined && email === undefined && normalizedRole === undefined && isActive === undefined) ||
         (updatedName !== undefined && (!updatedName || updatedName.length > 120)) ||
         (updatedEmail !== undefined && (!updatedEmail || updatedEmail.length > 254))) {
       throw new CustomerError(400, "Cập nhật nhân viên không hợp lệ.");
@@ -1065,13 +1069,13 @@ class PostgresDatabase {
     try {
       return await this.updateCollection("users", (users) => {
         const user = users.find((entry) => entry.id === id);
-        if (!user || !["sales", "support"].includes(user.role)) return null;
+        if (!user || !["sales", "support"].includes(normalizeRole(user.role))) return null;
         if (updatedEmail && users.some((entry) => entry.id !== id && entry.email.toLowerCase() === updatedEmail)) {
           throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
         }
         if (updatedName !== undefined) user.name = updatedName;
         if (updatedEmail !== undefined) user.email = updatedEmail;
-        if (role !== undefined) user.role = role;
+        if (normalizedRole !== undefined) user.role = normalizedRole;
         if (isActive !== undefined) user.isActive = isActive;
         user.updatedBy = actor;
         user.updatedAt = new Date().toISOString();
@@ -1169,7 +1173,7 @@ class PostgresDatabase {
         account.providerId === socialAccount.providerId
       )));
       const user = users.find((entry) => entry.id === userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
         throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
       }
       const accounts = getSocialAccounts(user);
@@ -1202,7 +1206,7 @@ class PostgresDatabase {
     }
     return this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
         throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
       }
       const accounts = getSocialAccounts(user);

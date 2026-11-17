@@ -3,6 +3,10 @@ const ROLES = Object.freeze({
   USER: "user",
 });
 
+function normalizeRole(role) {
+  return String(role ?? ROLES.USER).trim().toLowerCase();
+}
+
 const SERVICE_TYPES = Object.freeze({
   RENT: "rent",
   SELL: "sell",
@@ -107,9 +111,10 @@ function isOrderStatusTransitionAllowed(currentStatus, nextStatus) {
 }
 
 function isOrderStatusTransitionAllowedForRole(currentStatus, nextStatus, role) {
+  const normalizedRole = normalizeRole(role);
   return (
-    (role !== ROLES.USER && currentStatus === nextStatus) ||
-    ORDER_STATUS_ROLE_TRANSITIONS[role]?.[currentStatus]?.includes(nextStatus) === true
+    (normalizedRole !== ROLES.USER && currentStatus === nextStatus) ||
+    ORDER_STATUS_ROLE_TRANSITIONS[normalizedRole]?.[currentStatus]?.includes(nextStatus) === true
   );
 }
 
@@ -123,6 +128,7 @@ module.exports = {
   PAYMENT_STATUSES,
   ROLES,
   SERVICE_STATUSES,
+  normalizeRole,
   SERVICE_TYPES,
   STUDENT_VERIFICATION_STATUSES,
   customerStatusValues,

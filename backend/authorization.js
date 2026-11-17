@@ -1,4 +1,4 @@
-const { ROLES } = require("./business-constants");
+const { ROLES, normalizeRole } = require("./business-constants");
 
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMIN]: Object.freeze([
@@ -59,7 +59,7 @@ async function authenticate(request, sessionStore, RequestError) {
 
 async function requireRole(request, permission, sessionStore, RequestError) {
   const user = await authenticate(request, sessionStore, RequestError);
-  const role = String(user.role || ROLES.USER).trim().toLowerCase();
+  const role = normalizeRole(user.role);
   if (!ROLE_PERMISSIONS[role]?.includes(permission)) {
     throw new RequestError(403, "Bạn không có quyền thực hiện hành động này.");
   }
@@ -68,7 +68,8 @@ async function requireRole(request, permission, sessionStore, RequestError) {
 
 async function requireCustomerPermission(request, permission, sessionStore, RequestError) {
   const user = await authenticate(request, sessionStore, RequestError);
-  if (!CUSTOMER_ROLE_PERMISSIONS[user.role]?.includes(permission)) {
+  const role = normalizeRole(user.role);
+  if (!CUSTOMER_ROLE_PERMISSIONS[role]?.includes(permission)) {
     const messages = {
       view: "Bạn không có quyền xem dữ liệu khách hàng.",
       create: "Bạn không có quyền tạo khách hàng.",
@@ -85,7 +86,7 @@ async function requireCustomerPermission(request, permission, sessionStore, Requ
 }
 
 function hasPermission(user, permission) {
-  const role = String(user?.role || ROLES.USER).trim().toLowerCase();
+  const role = normalizeRole(user?.role);
   return ROLE_PERMISSIONS[role]?.includes(permission) === true;
 }
 

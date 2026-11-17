@@ -17,6 +17,7 @@ const {
   customerStatusValues,
   isOrderStatusTransitionAllowed,
   isOrderStatusTransitionAllowedForRole,
+  normalizeRole,
 } = require("./business-constants");
 
 async function atomicWriteFile(filePath, contents) {
@@ -296,7 +297,7 @@ class Database {
         (user) =>
           user !== admin &&
           String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
-          user.role === ROLES.ADMIN,
+          normalizeRole(user.role) === ROLES.ADMIN,
       );
       if (legacyDefaultAdmin) {
         legacyDefaultAdmin.role = "user";
@@ -307,7 +308,7 @@ class Database {
       const defaultAdmin = users.find(
         (user) =>
           String(user.email || "").trim().toLowerCase() === defaultAdminEmail &&
-          user.role === ROLES.ADMIN,
+          normalizeRole(user.role) === ROLES.ADMIN,
       );
       if (defaultAdmin) {
         defaultAdmin.role = "user";
@@ -435,7 +436,7 @@ class Database {
         throw new Error("Email này đã được đăng ký trên hệ thống.");
       }
 
-      const normalizedRole = String(data.role || "user").trim().toLowerCase();
+      const normalizedRole = normalizeRole(data.role || "user");
       const allowedRoles = new Set(["user", "admin", "sales", "support"]);
       if (!allowedRoles.has(normalizedRole)) {
         throw new Error("Vai trò người dùng không hợp lệ.");
@@ -541,7 +542,7 @@ class Database {
         account.providerId === socialAccount.providerId
       )));
       const user = users.find((entry) => entry.id === userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN || matches.some((entry) => entry.id !== userId)) {
         throw new CustomerError(409, "Không thể hoàn tất liên kết tài khoản social.");
       }
       const accounts = getSocialAccounts(user);
@@ -574,7 +575,7 @@ class Database {
     }
     return this.updateUsers((users) => {
       const user = users.find((entry) => entry.id === userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
+      if (!user || user.isActive === false || normalizeRole(user.role) === ROLES.ADMIN) {
         throw new CustomerError(409, "Không thể hoàn tất thao tác với tài khoản social.");
       }
       const remainingAccounts = getSocialAccounts(user).filter(
@@ -601,7 +602,7 @@ class Database {
 
   async getStaffUsers() {
     return (await this.getUsers())
-      .filter((user) => ["sales", "support"].includes(user.role))
+      .filter((user) => ["sales", "support"].includes(normalizeRole(user.role)))
       .map(({ password, passwordAuthEnabled, passwordReset, ...user }) => user)
       .sort((left, right) => left.name.localeCompare(right.name));
   }
@@ -613,7 +614,7 @@ class Database {
     }
     return this.updateUsers((users) => {
       const user = users.find((entry) => entry.id === id);
-      if (!user || user.role !== ROLES.USER) return null;
+      if (!user || normalizeRole(user.role) !== ROLES.USER) return null;
       const now = new Date().toISOString();
       user.studentVerification = {
         status,
@@ -631,12 +632,14 @@ class Database {
 
   async createStaffUser(data, actorId) {
     const actor = validateCustomerActor(actorId);
-    if (!["sales", "support"].includes(data.role)) {
+    const normalizedRole = normalizeRole(data.role);
+    if (!["sales", "support"].includes(normalizedRole)) {
       throw new CustomerError(400, "Nhân viên chỉ có thể được gán vai trò sales hoặc support.");
     }
     try {
       const created = await this.createUser({
         ...data,
+        role: normalizedRole,
         createdBy: actor,
         updatedBy: actor,
       });
@@ -668,20 +671,21 @@ class Database {
 
   async updateStaffUser(id, { name, email, role, isActive }, actorId) {
     const actor = validateCustomerActor(actorId);
+    const normalizedRole = role === undefined ? undefined : normalizeRole(role);
     const updatedName = name === undefined
       ? undefined
       : sanitizeTextValue(name, { maxLength: 120, fieldName: "Họ tên" });
     const updatedEmail = email === undefined
       ? undefined
       : sanitizeTextValue(email, { maxLength: 254, fieldName: "Email" }).toLowerCase();
-    if ((role !== undefined && !["sales", "support"].includes(role)) ||
+    if ((normalizedRole !== undefined && !["sales", "support"].includes(normalizedRole)) ||
         (isActive !== undefined && typeof isActive !== "boolean") ||
-        (name === undefined && email === undefined && role === undefined && isActive === undefined)) {
+        (name === undefined && email === undefined && normalizedRole === undefined && isActive === undefined)) {
       throw new CustomerError(400, "Cập nhật nhân viên không hợp lệ.");
     }
     return this.updateUsers(async (users) => {
       const user = users.find((entry) => entry.id === id);
-      if (!user || !["sales", "support"].includes(user.role)) return null;
+      if (!user || !["sales", "support"].includes(normalizeRole(user.role))) return null;
       if (updatedEmail && users.some((entry) => entry.id !== id && entry.email.toLowerCase() === updatedEmail)) {
         throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
       }
@@ -693,7 +697,7 @@ class Database {
       });
       if (updatedName !== undefined) user.name = updatedName;
       if (updatedEmail !== undefined) user.email = updatedEmail;
-      if (role !== undefined) user.role = role;
+      if (normalizedRole !== undefined) user.role = normalizedRole;
       if (isActive !== undefined) user.isActive = isActive;
       user.updatedBy = actor;
       user.updatedAt = new Date().toISOString();

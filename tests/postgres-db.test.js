@@ -393,6 +393,72 @@ test("collection updates roll back when a mutator fails", async (t) => {
   assert.equal(statements.at(-1), "RELEASE");
 });
 
+test("PostgresDatabase updates an order status while preserving payment status", async (t) => {
+  withAdminConfig(t);
+  const orderId = "11111111-1111-4111-8111-111111111111";
+  const orderRow = {
+    order_id: orderId,
+    user_id: null,
+    customer_name: "Reader",
+    phone: "0901234567",
+    address: "Address",
+    payment_method: "transfer",
+    status: "received",
+    payment_status: "pending",
+    coupon_code: null,
+    discount_rate: 0,
+    subtotal: 25000,
+    discount: 0,
+    total: 25000,
+    idempotency_key: null,
+    idempotency_hash: null,
+    created_at: new Date("2025-01-01T00:00:00.000Z"),
+    updated_at: new Date("2025-01-01T00:00:00.000Z"),
+    legacy_record: {},
+    items: [],
+  };
+  const statements = [];
+  const pool = createPool({
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          statements.push(sql);
+          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+            return { rows: [], rowCount: 0 };
+          }
+          if (sql.includes("FROM store_orders orders")) {
+            return { rows: [{ ...orderRow }] };
+          }
+          if (sql.includes("INSERT INTO store_orders")) {
+            orderRow.status = values[6];
+            orderRow.payment_status = values[7];
+            orderRow.legacy_record = JSON.parse(values[17]);
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() {},
+      };
+    },
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  const updated = await db.updateOrderStatus(
+    orderId,
+    { status: "processing" },
+    undefined,
+    { actorRole: "admin" },
+  );
+
+  assert.equal(updated.orderId, orderId);
+  assert.equal(updated.status, "processing");
+  assert.equal(updated.paymentStatus, "pending");
+  assert.ok(statements.includes("BEGIN"));
+  assert.ok(statements.includes("COMMIT"));
+  assert.ok(!statements.includes("ROLLBACK"));
+});
+
 test("payment webhook events are idempotent and update relational orders", async (t) => {
   withAdminConfig(t);
   const orderId = "11111111-1111-4111-8111-111111111111";

@@ -8,7 +8,6 @@ const {
   getSocialAccounts,
   normalizeSocialAccount,
   SOCIAL_PROVIDERS,
-  isOrderStatusTransitionAllowedForRole,
   validateCustomerActor,
   validateCustomerInteractionData,
   validateCustomerData,
@@ -25,6 +24,7 @@ const {
   SERVICE_STATUSES,
   SERVICE_TYPES,
   STUDENT_VERIFICATION_STATUSES,
+  isOrderStatusTransitionAllowedForRole,
   normalizeRole,
 } = require("./business-constants");
 

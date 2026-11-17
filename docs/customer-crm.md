@@ -9,7 +9,8 @@ JSONB cũ sang schema quan hệ; các file JSON trên đĩa là một kho riêng
 ## Quyền truy cập
 
 API CRM yêu cầu `Authorization: Bearer <token>` lấy từ `POST /api/auth/login`.
-Token chứa vai trò từ tài khoản đã xác thực; không truyền vai trò trong payload.
+Token là bearer session; server lấy tài khoản/vai trò từ phiên đã xác thực,
+không truyền vai trò trong payload.
 
 | Vai trò | Xem | Tạo | Cập nhật | Xoá mềm |
 | --- | --- | --- | --- | --- |
@@ -48,8 +49,9 @@ Ví dụ phản hồi `200` (chỉ trích các trường cần dùng):
 
 ### Liệt kê, tìm kiếm và phân trang
 
-`GET /api/customers` hỗ trợ `search`, `status`, `page` và `limit`; mặc định
-`page=1`, `limit=20`. Kết quả là mảng đã phân trang, chưa có tổng số bản ghi.
+`GET /api/customers` và alias `GET /api/admin/customers` hỗ trợ `search`,
+`status`, `page` và `limit`; mặc định `page=1`, `limit=20`. Kết quả là mảng
+đã phân trang; metadata gồm tổng số bản ghi nằm trong header `X-Pagination`.
 `search` tìm chuỗi con không phân biệt hoa thường trong tên, email và điện
 thoại. Trạng thái hỗ trợ `new`, `lead`, `customer`.
 
@@ -72,9 +74,6 @@ Authorization: Bearer <token>
   }
 ]
 ```
-
-`GET /api/admin/customers` là route tương thích cũ: trả tất cả hồ sơ đang hoạt
-động, không có filter/phân trang.
 
 ### Tạo hồ sơ
 
@@ -233,17 +232,18 @@ psql "$env:DATABASE_URL" -c "SELECT count(*) FROM customers WHERE email LIKE 'cr
 ```
 
 Kết quả development sau seed là 12. Dữ liệu mẫu chỉ nằm trong PostgreSQL;
-API Node.js hiện tại không đọc database này.
+backend sử dụng adapter PostgreSQL khi chạy với cùng `DATABASE_URL`.
 
 ## Bảo mật và quyền riêng tư
 
 - Không lưu mật khẩu gốc, token phiên hoặc dữ liệu thẻ thanh toán trong CRM.
 - Bảo vệ PostgreSQL bằng TLS khi đi qua mạng, giới hạn quyền DB theo least
   privilege và giữ credentials/khóa mã hóa trong secret manager.
-- File SQL chỉ tạo schema consent; API hiện tại chưa ghi nhận consent và
-  chưa thực thi thời hạn lưu giữ, export hoặc ẩn danh. Trước khi dùng dữ liệu
-  thật, cần triển khai luồng consent và quy trình xử lý yêu cầu quyền riêng
-  tư theo chính sách đã phê duyệt.
+- API hiện có cho phép tài khoản đã đăng nhập đọc, ghi và rút lại bản ghi
+  consent qua `/api/privacy/consents`. Storefront chưa tự động yêu cầu consent
+  trong các form đặt hàng/dịch vụ; `retentionDays` chỉ được lưu làm metadata,
+  không kích hoạt việc xóa tự động. Export, ẩn danh và quy trình xử lý yêu cầu
+  quyền riêng tư chưa được triển khai đầy đủ.
 - Migration chưa mã hóa trường ở tầng ứng dụng. Khi triển khai PostgreSQL
   với dữ liệu thật, cần cấu hình encryption-at-rest ở hạ tầng, cân nhắc mã
   hóa trường nhạy cảm bằng khóa được quản lý bên ngoài database, và mask

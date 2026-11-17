@@ -46,6 +46,13 @@ Các biến cấu hình:
 | `DATABASE_BACKUP_TIMEOUT_MS` | `1800000` | Timeout cho `pg_dump`/`pg_restore`; từ 1 đến 86400000 ms. |
 | `PG_DUMP_PATH` / `PG_RESTORE_PATH` | Tên executable trong `PATH` | Đường dẫn client PostgreSQL nếu không nằm trong `PATH`. |
 
+`DATA_DIR` được đọc bởi script backup, không đổi đường dẫn lưu trữ của backend.
+Runtime file adapter dùng `data/` trong repository/container (Docker image dùng
+`/app/data`). Khi chạy backup ngoài container, đặt `DATA_DIR` trỏ đúng thư mục
+runtime; khi chạy trong Docker, chạy script trong container hoặc bind-mount đúng
+đường dẫn. Đừng coi backup thành công là bằng chứng đã sao lưu dữ liệu đang
+được ứng dụng sử dụng nếu chưa đối chiếu hai đường dẫn.
+
 `DATA_DIR` và `BACKUP_DIR` không được trùng hoặc lồng nhau. Để backup đúng
 JSON/JSONL đang hoạt động, chuyển backend sang maintenance hoặc dừng ghi trong
 thời gian sao lưu. Script kiểm tra dữ liệu không đổi trong lúc copy và từ chối
@@ -108,8 +115,9 @@ node scripts/backup.js create ./backups/2026-11-02
 node scripts/backup.js verify ./backups/2026-11-02
 ```
 
-Trên Docker, đặt `DATA_DIR=/app/data` hoặc chạy lệnh trong container. Backup
-phải được sao chép sang storage ngoài máy chủ sau khi verify.
+Trên Docker, đặt `DATA_DIR=/app/data` cho tiến trình backup hoặc chạy lệnh
+trong container. Backup phải được sao chép sang storage ngoài máy chủ sau khi
+verify.
 
 Quy trình restore:
 

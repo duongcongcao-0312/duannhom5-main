@@ -800,10 +800,25 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
 	assert.ok(spec.paths['/api/orders/{id}'].patch.security);
+	assert.ok(spec.paths['/api/orders/{id}/status'].get);
+	assert.ok(spec.paths['/api/payments/config'].get);
+	assert.ok(spec.paths['/api/payments/sepay-webhook'].post);
+	assert.ok(spec.paths['/api/admin/staff'].get);
+	assert.ok(spec.paths['/api/admin/staff'].post);
+	assert.ok(spec.paths['/api/admin/staff/{id}'].patch);
+	assert.ok(spec.paths['/api/admin/audit'].get);
+	assert.ok(spec.paths['/api/admin/users/{id}'].patch);
+	assert.ok(spec.paths['/api/admin/coupons/{code}'].put);
+	assert.ok(spec.paths['/api/admin/coupons/{code}'].patch);
 	assert.equal(
 		spec.paths['/api/orders/{id}'].patch.requestBody.content['application/json'].schema.$ref,
 		'#/components/schemas/OrderUpdateRequest'
 	);
+	assert.deepEqual(
+		spec.paths['/api/privacy/consents'].post.requestBody.content['application/json'].schema.required,
+		['purpose', 'policyVersion', 'consent', 'retentionDays']
+	);
+	assert.equal(spec.components.schemas.Register.properties.password.minLength, 12);
 	assert.equal(
 		spec.components.schemas.OrderUpdateRequest.properties.items.items.additionalProperties,
 		false

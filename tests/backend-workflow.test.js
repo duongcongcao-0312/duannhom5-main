@@ -258,6 +258,18 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
   assert.equal(aliceRegister.status, 201);
   const aliceToken = (await aliceRegister.json()).token;
 
+  const forgedRoleRegister = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: "Forged Admin",
+      email: "bob@example.com",
+      password: "password12345",
+      role: "admin",
+    }),
+  });
+  assert.equal(forgedRoleRegister.status, 400);
+
   const bobRegister = await fetch(`${baseUrl}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -269,6 +281,11 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
   });
   assert.equal(bobRegister.status, 201);
   const bobToken = (await bobRegister.json()).token;
+
+  const bobAdminAccess = await fetch(`${baseUrl}/api/admin/orders`, {
+    headers: { Authorization: `Bearer ${bobToken}` },
+  });
+  assert.equal(bobAdminAccess.status, 403);
 
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: "POST",

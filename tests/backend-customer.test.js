@@ -39,6 +39,12 @@ test("staff management enforces admin access, role limits, and session revocatio
       password: "consent-test-password",
       role: "user",
     });
+    const otherUser = await database.createUser({
+      name: "Other Consent Demo",
+      email: "other-consent-demo@example.com",
+      password: "consent-test-password",
+      role: "user",
+    });
     const server = createServer({ ...paths, database });
     t.after(async () => {
       await new Promise((resolve) => server.close(resolve));
@@ -59,6 +65,22 @@ test("staff management enforces admin access, role limits, and session revocatio
       Authorization: `Bearer ${login.token}`,
       "Content-Type": "application/json",
     };
+
+    const unauthenticatedResponse = await fetch(`${baseUrl}/api/privacy/consents`);
+    assert.equal(unauthenticatedResponse.status, 401);
+
+    const forgedOwnerResponse = await fetch(`${baseUrl}/api/privacy/consents`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        purpose: "marketing",
+        consent: true,
+        policyVersion: "2026-01",
+        retentionDays: 180,
+        subjectId: otherUser.id,
+      }),
+    });
+    assert.equal(forgedOwnerResponse.status, 400);
 
     const recordResponse = await fetch(`${baseUrl}/api/privacy/consents`, {
       method: "POST",
@@ -88,6 +110,151 @@ test("staff management enforces admin access, role limits, and session revocatio
     assert.equal(listResponse.status, 200);
     assert.equal(listed.current.marketing.consent, false);
     assert.equal(listed.records.length, 2);
+
+    const otherLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: otherUser.email, password: "consent-test-password" }),
+    });
+    const otherLogin = await otherLoginResponse.json();
+    const otherConsentResponse = await fetch(`${baseUrl}/api/privacy/consents`, {
+      headers: { Authorization: `Bearer ${otherLogin.token}` },
+    });
+    assert.equal(otherConsentResponse.status, 200);
+    assert.deepEqual((await otherConsentResponse.json()).records, []);
+  });
+
+  test("data-subject requests are private, validated, and transition with admin audit metadata", async (t) => {
+    const temporaryDirectory = await fsPromises.mkdtemp(
+      path.join(os.tmpdir(), "booknest-data-request-test-"),
+    );
+    const paths = {
+      ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+      usersPath: path.join(temporaryDirectory, "users.json"),
+      privacyDataRequestsPath: path.join(temporaryDirectory, "privacy-data-requests.json"),
+    };
+    const database = new Database(paths);
+    const user = await database.createUser({
+      name: "Request Owner",
+      email: "request-owner@example.com",
+      password: "request-test-password",
+      role: "user",
+    });
+    const otherUser = await database.createUser({
+      name: "Other Request Owner",
+      email: "other-request-owner@example.com",
+      password: "request-test-password",
+      role: "user",
+    });
+    const admin = await database.createUser({
+      name: "Privacy Admin",
+      email: "privacy-admin@example.com",
+      password: "request-test-password",
+      role: "admin",
+    });
+    const server = createServer({ ...paths, database });
+    t.after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+      await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    async function login(email) {
+      const response = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: "request-test-password" }),
+      });
+      return response.json();
+    }
+    const userLogin = await login(user.email);
+    const otherLogin = await login(otherUser.email);
+    const adminLogin = await login(admin.email);
+    const userHeaders = {
+      Authorization: `Bearer ${userLogin.token}`,
+      "Content-Type": "application/json",
+    };
+    const adminHeaders = {
+      Authorization: `Bearer ${adminLogin.token}`,
+      "Content-Type": "application/json",
+    };
+
+    assert.equal((await fetch(`${baseUrl}/api/privacy/data-requests`)).status, 401);
+    const invalidType = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({ type: "export-all" }),
+    });
+    assert.equal(invalidType.status, 400);
+    const forgedOwner = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({ type: "delete", subjectId: otherUser.id }),
+    });
+    assert.equal(forgedOwner.status, 400);
+
+    const createdResponse = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({ type: "access" }),
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()).request;
+    assert.equal(created.subjectId, user.id);
+    assert.equal(created.status, "pending");
+    assert.equal(created.createdBy, user.id);
+    assert.equal("details" in created, false);
+
+    const listedResponse = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      headers: userHeaders,
+    });
+    assert.equal((await listedResponse.json()).requests.length, 1);
+    const otherListedResponse = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      headers: { Authorization: `Bearer ${otherLogin.token}` },
+    });
+    assert.deepEqual((await otherListedResponse.json()).requests, []);
+    assert.equal((await fetch(`${baseUrl}/api/admin/privacy/data-requests`, {
+      headers: userHeaders,
+    })).status, 403);
+
+    const processingResponse = await fetch(
+      `${baseUrl}/api/admin/privacy/data-requests/${created.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "processing" }),
+      },
+    );
+    assert.equal(processingResponse.status, 200);
+    const processing = (await processingResponse.json()).request;
+    assert.equal(processing.updatedBy, admin.id);
+    assert.equal(processing.status, "processing");
+
+    const completedResponse = await fetch(
+      `${baseUrl}/api/admin/privacy/data-requests/${created.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "completed" }),
+      },
+    );
+    assert.equal(completedResponse.status, 200);
+    const completed = (await completedResponse.json()).request;
+    assert.equal(completed.status, "completed");
+    assert.ok(completed.resolvedAt);
+
+    const invalidTransition = await fetch(
+      `${baseUrl}/api/admin/privacy/data-requests/${created.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "pending" }),
+      },
+    );
+    assert.equal(invalidTransition.status, 409);
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);

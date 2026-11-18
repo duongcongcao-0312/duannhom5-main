@@ -190,9 +190,16 @@ test("payment webhook authenticates, applies payment states once, and ignores st
   assert.equal(wrongAmountResponse.status, 400);
   assert.equal(database.events.has("wrong-amount"), false);
 
+  const unknownOrderResponse = await send({
+    ...event("unknown-order", "succeeded", 7),
+    orderId: "99999999-9999-4999-8999-999999999999",
+  });
+  assert.equal(unknownOrderResponse.status, 404);
+  assert.equal(database.events.has("unknown-order"), false);
+
   const codOrderId = "22222222-2222-4222-8222-222222222222";
   const codResponse = await send({
-    ...event("cod-event", "succeeded", 7),
+    ...event("cod-event", "succeeded", 8),
     orderId: codOrderId,
   });
   assert.equal(codResponse.status, 400);
@@ -200,7 +207,7 @@ test("payment webhook authenticates, applies payment states once, and ignores st
 
   const cancelledOrderId = "33333333-3333-4333-8333-333333333333";
   const cancelledResponse = await send({
-    ...event("cancelled-event", "cancelled", 8),
+    ...event("cancelled-event", "cancelled", 9),
     orderId: cancelledOrderId,
   });
   assert.equal(cancelledResponse.status, 200);

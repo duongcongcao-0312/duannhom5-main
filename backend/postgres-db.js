@@ -285,6 +285,12 @@ class PostgresDatabase {
           CREATE TABLE IF NOT EXISTS payment_webhook_events (
             event_id TEXT PRIMARY KEY,
             event_hash TEXT NOT NULL,
+            order_id UUID,
+            amount BIGINT CHECK (amount IS NULL OR amount >= 0),
+            payment_status VARCHAR(16) CHECK (
+              payment_status IS NULL OR payment_status IN ('pending', 'paid', 'failed', 'cancelled', 'refunded')
+            ),
+            occurred_at TIMESTAMPTZ,
             received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
         `);
@@ -488,6 +494,15 @@ class PostgresDatabase {
       }
 
       const eventTime = new Date(occurredAt).getTime();
+      const reconciliation = await client.query(
+        `UPDATE payment_webhook_events
+         SET order_id = $2, amount = $3, payment_status = $4, occurred_at = $5
+         WHERE event_id = $1`,
+        [eventId, orderId, amount, paymentStatus, new Date(eventTime).toISOString()],
+      );
+      if (reconciliation.rowCount !== 1) {
+        throw new Error("Payment event could not be recorded for reconciliation.");
+      }
       const previousEventTime = Date.parse(order.paymentEventAt || "");
       const terminalStatuses = new Set(["paid", "failed", "cancelled", "refunded"]);
       const isStale = Number.isFinite(previousEventTime) &&

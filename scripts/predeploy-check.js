@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { normalizeSePayConfig } = require("../backend/sepay-config");
 
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
@@ -42,6 +43,19 @@ function assertProductionEnvironment(env = process.env) {
     }
   }
 
+  if (String(env.NODE_ENV || "").toLowerCase() === "production") {
+    const sepayConfig = normalizeSePayConfig({
+      apiKey: env.SEPAY_API_KEY,
+      bankCode: env.SEPAY_BANK_CODE,
+      bankName: env.SEPAY_BANK_NAME,
+      accountNumber: env.SEPAY_ACCOUNT_NUMBER,
+      accountName: env.SEPAY_ACCOUNT_NAME,
+    });
+    if (!sepayConfig.valid) {
+      failures.push(`Production requires valid SePay settings: ${sepayConfig.invalid.join(", ")}.`);
+    }
+  }
+
   const migrationsDirectory = path.join(__dirname, "..", "data", "migrations");
   const filenames = fs.readdirSync(migrationsDirectory)
     .filter((filename) => /^\d+_[a-z0-9_-]+\.sql$/i.test(filename))
@@ -65,6 +79,14 @@ function assertProductionEnvironment(env = process.env) {
       Boolean(env.ADMIN_EMAIL && env.ADMIN_PASSWORD),
     databaseConfigured: String(env.NODE_ENV || "").toLowerCase() !== "production" ||
       Boolean(env.DATABASE_URL),
+    sepayPaymentConfigured: String(env.NODE_ENV || "").toLowerCase() !== "production" ||
+      normalizeSePayConfig({
+        apiKey: env.SEPAY_API_KEY,
+        bankCode: env.SEPAY_BANK_CODE,
+        bankName: env.SEPAY_BANK_NAME,
+        accountNumber: env.SEPAY_ACCOUNT_NUMBER,
+        accountName: env.SEPAY_ACCOUNT_NAME,
+      }).valid,
     corsOrigins: origins.length,
     migrationCount: filenames.length,
   };

@@ -463,6 +463,7 @@ test("payment webhook events are idempotent and update relational orders", async
   withAdminConfig(t);
   const orderId = "11111111-1111-4111-8111-111111111111";
   const events = new Map();
+  const reconciliationRows = [];
   const order = {
     order_id: orderId,
     user_id: null,
@@ -499,6 +500,10 @@ test("payment webhook events are idempotent and update relational orders", async
           if (sql.includes("SELECT event_hash")) {
             return { rows: [{ event_hash: events.get(values[0]) }], rowCount: 1 };
           }
+          if (sql.includes("UPDATE payment_webhook_events")) {
+            reconciliationRows.push(values);
+            return { rows: [], rowCount: 1 };
+          }
           if (sql.includes("FROM store_orders orders")) return { rows: [{ ...order }] };
           if (sql.includes("INSERT INTO store_orders")) {
             order.payment_status = values[7];
@@ -525,5 +530,12 @@ test("payment webhook events are idempotent and update relational orders", async
   const applied = await db.applyPaymentWebhookEvent(event);
   assert.equal(applied.order.paymentStatus, "paid");
   assert.equal(applied.duplicate, false);
+  assert.deepEqual(reconciliationRows, [[
+    event.eventId,
+    event.orderId,
+    event.amount,
+    event.paymentStatus,
+    event.occurredAt,
+  ]]);
   assert.equal((await db.applyPaymentWebhookEvent(event)).duplicate, true);
 });

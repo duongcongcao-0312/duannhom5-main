@@ -1,4 +1,4 @@
-﻿const fs = require("node:fs/promises");
+const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -1289,78 +1289,53 @@ function createServer({
   );
 
   let catalogLoadError;
-  let catalogLoadPromise = null;
-  let catalogLoaded = false;
-  let nextCatalogRetryAt = 0;
-  const catalogRetryDelaysMs = [200, 600];
-  const catalogRetryCooldownMs = 2_000;
-
-  async function loadCatalogWithRetries() {
-    let lastError;
-    for (let attempt = 0; attempt <= catalogRetryDelaysMs.length; attempt += 1) {
-      try {
-        const [custom, overrides] = await Promise.all([
-          db.getCustomBooks(),
-          typeof db.getCatalogBookOverrides === "function"
-            ? db.getCatalogBookOverrides()
-            : Promise.resolve([]),
-        ]);
-        for (const override of overrides) {
-          const baseBook = catalogBookById.get(override.id);
-          if (!baseBook) continue;
-          if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
-          catalogBookOverrides.set(override.id, override);
-          bookCatalog.set(override.title, {
-            ...baseBook,
-            ...override,
-            isCustom: false,
-          });
-        }
-        for (const book of custom) {
-          if (book && book.title) {
-            bookCatalog.set(book.title, { ...book, isCustom: true });
-          }
-        }
-        catalogLoaded = true;
-        catalogLoadError = null;
-        nextCatalogRetryAt = 0;
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt < catalogRetryDelaysMs.length) {
-          await new Promise((resolve) => setTimeout(resolve, catalogRetryDelaysMs[attempt]));
+  async function loadCatalog() {
+    try {
+      const [custom, overrides] = await Promise.all([
+        db.getCustomBooks(),
+        typeof db.getCatalogBookOverrides === "function"
+          ? db.getCatalogBookOverrides()
+          : Promise.resolve([]),
+      ]);
+      for (const override of overrides) {
+        const baseBook = catalogBookById.get(override.id);
+        if (!baseBook) continue;
+        if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
+        catalogBookOverrides.set(override.id, override);
+        bookCatalog.set(override.title, {
+          ...baseBook,
+          ...override,
+          isCustom: false,
+        });
+      }
+      for (const book of custom) {
+        if (book && book.title) {
+          bookCatalog.set(book.title, { ...book, isCustom: true });
         }
       }
+      catalogLoadError = null;
+    } catch (error) {
+      catalogLoadError = error;
+      console.error("Không thể tải sách quản trị:", error);
     }
-    throw lastError;
   }
 
-  function startCatalogLoad() {
-    if (catalogLoaded) return Promise.resolve();
-    if (catalogLoadPromise) return catalogLoadPromise;
-    catalogLoadPromise = (async () => {
-      try {
-        await loadCatalogWithRetries();
-      } catch (error) {
-        catalogLoadError = error;
-        nextCatalogRetryAt = Date.now() + catalogRetryCooldownMs;
-        console.error("Catalog load failed:", error);
-      } finally {
-        catalogLoadPromise = null;
-      }
-    })();
-    return catalogLoadPromise;
-  }
-
-  void startCatalogLoad();
+  let catalogReady = loadCatalog();
+  let catalogRetry;
 
   async function waitForCatalogReady() {
-    if (!catalogLoadPromise && catalogLoadError && Date.now() < nextCatalogRetryAt) {
-      throw catalogLoadError;
+    await catalogReady;
+    if (!catalogLoadError) return;
+    if (!catalogRetry) {
+      catalogRetry = loadCatalog().finally(() => {
+        catalogReady = catalogRetry;
+        catalogRetry = null;
+      });
     }
-    await startCatalogLoad();
+    await catalogRetry;
     if (catalogLoadError) throw catalogLoadError;
   }
+
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     await waitForCatalogReady();
     const operation = orderWriteQueue.then(async () => {

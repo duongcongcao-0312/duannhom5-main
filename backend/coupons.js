@@ -28,14 +28,35 @@ const DEFAULT_COUPONS = Object.freeze([
 ]);
 
 function getCouponUnavailableReason(coupon, { subtotal, now = Date.now() } = {}) {
-  if (!coupon || !coupon.enabled) return "Mã ưu đãi không hợp lệ hoặc đã hết hạn.";
-  if (coupon.startsAt && Date.parse(coupon.startsAt) > now) {
-    return "Mã ưu đãi chưa đến thời gian áp dụng.";
-  }
-  if (coupon.expiresAt && Date.parse(coupon.expiresAt) <= now) {
+  if (
+    !coupon ||
+    !coupon.enabled ||
+    !Number.isFinite(coupon.rate) ||
+    coupon.rate <= 0 ||
+    coupon.rate > 0.3
+  ) {
     return "Mã ưu đãi không hợp lệ hoặc đã hết hạn.";
   }
-  if (coupon.maxUses !== null && coupon.usedCount >= coupon.maxUses) {
+  if (coupon.startsAt) {
+    const startsAtMs = Date.parse(coupon.startsAt);
+    if (!Number.isFinite(startsAtMs)) {
+      return "Mã ưu đãi không hợp lệ hoặc đã hết hạn.";
+    }
+    if (startsAtMs > now) {
+      return "Mã ưu đãi chưa đến thời gian áp dụng.";
+    }
+  }
+  if (coupon.expiresAt) {
+    const expiresAtMs = Date.parse(coupon.expiresAt);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+      return "Mã ưu đãi không hợp lệ hoặc đã hết hạn.";
+    }
+  }
+  if (
+    coupon.maxUses !== null &&
+    coupon.maxUses !== undefined &&
+    Number(coupon.usedCount || 0) >= coupon.maxUses
+  ) {
     return "Mã ưu đãi đã hết lượt sử dụng.";
   }
   if (subtotal !== undefined && subtotal < coupon.minSubtotal) {

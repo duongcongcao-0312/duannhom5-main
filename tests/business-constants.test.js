@@ -72,4 +72,44 @@ test("order state machine applies role-specific transition permissions", () => {
     ),
     true,
   );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.PROCESSING,
+      ORDER_STATUSES.CANCELLED,
+      "user",
+    ),
+    false,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.SHIPPING,
+      ORDER_STATUSES.CANCELLED,
+      "user",
+    ),
+    false,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.PROCESSING,
+      ORDER_STATUSES.CANCELLED,
+      "sales",
+    ),
+    true,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.SHIPPING,
+      ORDER_STATUSES.CANCELLED,
+      "admin",
+    ),
+    true,
+  );
+  assert.equal(
+    isOrderStatusTransitionAllowedForRole(
+      ORDER_STATUSES.RECEIVED,
+      ORDER_STATUSES.PROCESSING,
+      "support",
+    ),
+    false,
+  );
 });

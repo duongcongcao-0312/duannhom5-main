@@ -1245,6 +1245,12 @@ class Database {
     if (actorRole === ROLES.USER && (paymentStatus !== undefined || payload.items !== undefined)) {
       throw new CustomerError(403, "Người mua chỉ được phép hủy đơn hàng ở trạng thái phù hợp.");
     }
+    if (actorRole !== ROLES.ADMIN && paymentStatus !== undefined) {
+      throw new CustomerError(
+        403,
+        "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
+      );
+    }
     if (payload.items !== undefined) {
       if (!Array.isArray(payload.items) || payload.items.length === 0 || payload.items.length > 50) {
         throw new CustomerError(400, "Danh sách sản phẩm cập nhật không hợp lệ.");
@@ -1325,7 +1331,14 @@ class Database {
               "Vai trò hiện tại không được phép chuyển trạng thái đơn hàng.",
             );
           }
-              if (status === "completed") {
+              const nextOrderStatus = status !== undefined ? status : order.status;
+              if (nextOrderStatus === "cancelled" && paymentStatus === "paid") {
+                throw new CustomerError(
+                  400,
+                  "Không thể xác nhận thanh toán cho đơn hàng đã hủy.",
+                );
+              }
+              if (nextOrderStatus === "completed") {
                 const finalPaymentStatus = paymentStatus !== undefined
                   ? paymentStatus
                   : order.paymentStatus;
@@ -1531,6 +1544,9 @@ class Database {
         stock: Number.isInteger(book.stock) ? book.stock : 12,
         cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
         description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
+        ...(book.isActive !== undefined ? { isActive: Boolean(book.isActive) } : {}),
+        ...(book.discontinued !== undefined ? { discontinued: Boolean(book.discontinued) } : {}),
+        ...(typeof book.status === "string" && book.status ? { status: book.status } : {}),
         createdAt: new Date().toISOString()
       };
       books.push(newBook);

@@ -600,3 +600,321 @@ test("social auth registers and authenticates Google and Facebook accounts", asy
   });
   assert.equal(invalidRes.status, 401);
 });
+
+test("issue #112 - catalog pricing, coupon quota, discontinued/out-of-stock books, concurrent reservations, cancellation restock, and order state machine", async (t) => {
+  configureTestAdmin(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-issue-112-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    booksPath: path.join(temporaryDirectory, "books.json"),
+    couponsPath: path.join(temporaryDirectory, "coupons.json"),
+    auditLogPath: path.join(temporaryDirectory, "admin-audit.jsonl"),
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const jsonHeaders = { "Content-Type": "application/json" };
+
+  const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      email: "admin@example.com",
+      password: "local-test-admin-password-123",
+    }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const { token: adminToken } = await adminLogin.json();
+  const adminHeaders = {
+    ...jsonHeaders,
+    Authorization: `Bearer ${adminToken}`,
+  };
+
+  const userRegister = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      name: "Khách hàng 112",
+      email: "customer112@example.com",
+      password: "customer-password-123",
+    }),
+  });
+  assert.equal(userRegister.status, 201);
+  const { token: userToken } = await userRegister.json();
+  const userHeaders = {
+    ...jsonHeaders,
+    Authorization: `Bearer ${userToken}`,
+  };
+
+  // 1. Out-of-stock, discontinued, and deleted books cannot be ordered
+  const outOfStockBookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "Sách hết hàng 112",
+      author: "Tác giả A",
+      category: "van-hoc",
+      price: 100000,
+      stock: 0,
+    }),
+  });
+  assert.equal(outOfStockBookRes.status, 201);
+
+  const discontinuedBookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "Sách ngừng bán 112",
+      author: "Tác giả B",
+      category: "van-hoc",
+      price: 100000,
+      stock: 5,
+      discontinued: true,
+      isActive: false,
+      status: "discontinued",
+    }),
+  });
+  assert.equal(discontinuedBookRes.status, 201);
+
+  const deletedBookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "Sách đã xóa 112",
+      author: "Tác giả C",
+      category: "van-hoc",
+      price: 100000,
+      stock: 5,
+    }),
+  });
+  assert.equal(deletedBookRes.status, 201);
+  const deletedBook = await deletedBookRes.json();
+  const deleteRes = await fetch(`${baseUrl}/api/admin/books/${deletedBook.id}`, {
+    method: "DELETE",
+    headers: adminHeaders,
+  });
+  assert.equal(deleteRes.status, 200);
+
+  for (const unavailableTitle of [
+    "Sách hết hàng 112",
+    "Sách ngừng bán 112",
+    "Sách đã xóa 112",
+  ]) {
+    const orderAttempt = await fetch(`${baseUrl}/api/orders`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({
+        customerName: "Khách hàng 112",
+        address: "123 Đường Sách, Quận 1",
+        phone: "0901234567",
+        paymentMethod: "cod",
+        items: [{ title: unavailableTitle, quantity: 1 }],
+      }),
+    });
+    assert.equal(orderAttempt.status, 400, `Expected 400 for ${unavailableTitle}`);
+  }
+
+  // 2. Future, disabled, expired, and quota-limited coupons are enforced on the server
+  const createCoupon = (coupon) =>
+    fetch(`${baseUrl}/api/admin/coupons`, {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        code: coupon.code,
+        label: coupon.label || coupon.code,
+        rate: coupon.rate ?? 0.1,
+        minSubtotal: coupon.minSubtotal ?? 0,
+        maxUses: coupon.maxUses ?? 0,
+        startsAt: coupon.startsAt || "",
+        expiresAt: coupon.expiresAt || "",
+        enabled: coupon.enabled ?? true,
+      }),
+    });
+
+  assert.equal(
+    (
+      await createCoupon({
+        code: "FUTURE10",
+        startsAt: new Date(Date.now() + 3600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 7200_000).toISOString(),
+      })
+    ).status,
+    201,
+  );
+  assert.equal(
+    (
+      await createCoupon({
+        code: "DISABLED10",
+        enabled: false,
+      })
+    ).status,
+    201,
+  );
+
+  for (const invalidCoupon of ["FUTURE10", "DISABLED10"]) {
+    const res = await fetch(`${baseUrl}/api/orders`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({
+        customerName: "Khách hàng 112",
+        address: "123 Đường Sách, Quận 1",
+        phone: "0901234567",
+        paymentMethod: "cod",
+        couponCode: invalidCoupon,
+        items: [{ title: "Nhà giả kim", quantity: 1 }],
+      }),
+    });
+    assert.equal(res.status, 400);
+  }
+
+  // 3. Concurrent purchases cannot oversell limited stock, and cancellation restores stock
+  const limitedBookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      title: "Sách giới hạn 112",
+      author: "Tác giả D",
+      category: "kinh-te",
+      price: 120000,
+      stock: 4,
+    }),
+  });
+  assert.equal(limitedBookRes.status, 201);
+
+  const buyLimited = (quantity) =>
+    fetch(`${baseUrl}/api/orders`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({
+        customerName: "Khách hàng 112",
+        address: "123 Đường Sách, Quận 1",
+        phone: "0901234567",
+        paymentMethod: "transfer",
+        subtotal: 1,
+        discount: 999999,
+        total: 1,
+        items: [{ title: "Sách giới hạn 112", quantity, price: 1, unitPrice: 1, lineTotal: 1 }],
+      }),
+    });
+
+  const concurrentResults = await Promise.all([
+    buyLimited(2),
+    buyLimited(2),
+    buyLimited(2),
+    buyLimited(2),
+  ]);
+  const statuses = concurrentResults.map((r) => r.status).sort();
+  assert.deepEqual(statuses, [201, 201, 400, 400]);
+
+  const createdOrders = await Promise.all(
+    concurrentResults.filter((r) => r.status === 201).map((r) => r.json()),
+  );
+  for (const created of createdOrders) {
+    assert.equal(created.subtotal, 240000);
+    assert.equal(created.discount, 12000);
+    assert.equal(created.total, 228000);
+    assert.equal(created.paymentStatus, "pending");
+    assert.equal(created.status, "received");
+  }
+
+  // Stock is now 0 remaining; another purchase of 2 must fail
+  assert.equal((await buyLimited(2)).status, 400);
+
+  // Customer cannot mark order as paid
+  const targetOrderId = createdOrders[0].orderId;
+  const customerPaidAttempt = await fetch(`${baseUrl}/api/orders/${targetOrderId}`, {
+    method: "PATCH",
+    headers: userHeaders,
+    body: JSON.stringify({ paymentStatus: "paid" }),
+  });
+  assert.equal(customerPaidAttempt.status, 403);
+
+  // Customer cancels the first order while in "received" status -> restores 2 units of stock
+  const cancelRes = await fetch(`${baseUrl}/api/orders/${targetOrderId}`, {
+    method: "PATCH",
+    headers: userHeaders,
+    body: JSON.stringify({ status: "cancelled" }),
+  });
+  assert.equal(cancelRes.status, 200);
+  assert.equal((await cancelRes.json()).status, "cancelled");
+
+  // Now purchasing 2 units succeeds because stock was restored on cancellation
+  const restockedPurchase = await buyLimited(2);
+  assert.equal(restockedPurchase.status, 201);
+  const activeOrder = await restockedPurchase.json();
+
+  // 4. Order lifecycle state machine enforcement
+  // Admin cannot skip from received -> shipping or received -> completed
+  const skipToShipping = await fetch(`${baseUrl}/api/admin/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "shipping" }),
+  });
+  assert.equal(skipToShipping.status, 400);
+
+  // Admin transitions received -> processing
+  const toProcessing = await fetch(`${baseUrl}/api/admin/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "processing", paymentStatus: "paid" }),
+  });
+  assert.equal(toProcessing.status, 200);
+
+  // Customer can no longer cancel once order is in "processing" status
+  const lateCustomerCancel = await fetch(`${baseUrl}/api/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: userHeaders,
+    body: JSON.stringify({ status: "cancelled" }),
+  });
+  assert.equal(lateCustomerCancel.status, 403);
+
+  // Admin transitions processing -> shipping -> completed
+  const toShipping = await fetch(`${baseUrl}/api/admin/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "shipping" }),
+  });
+  assert.equal(toShipping.status, 200);
+
+  const toCompleted = await fetch(`${baseUrl}/api/admin/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "completed" }),
+  });
+  assert.equal(toCompleted.status, 200);
+
+  // Terminal states cannot transition backward or to cancelled/processing
+  const completedToCancelled = await fetch(`${baseUrl}/api/admin/orders/${activeOrder.orderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "cancelled" }),
+  });
+  assert.equal(completedToCancelled.status, 400);
+
+  const cancelledToProcessing = await fetch(`${baseUrl}/api/admin/orders/${targetOrderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ status: "processing" }),
+  });
+  assert.equal(cancelledToProcessing.status, 400);
+
+  const cancelledToPaid = await fetch(`${baseUrl}/api/admin/orders/${targetOrderId}`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({ paymentStatus: "paid" }),
+  });
+  assert.equal(cancelledToPaid.status, 400);
+});

@@ -649,3 +649,142 @@ test("PostgreSQL rolls back a payment event when its amount does not match the o
   assert.ok(!statements.some((sql) => sql.includes("INSERT INTO store_orders")));
   assert.equal(order.payment_status, "pending");
 });
+
+test("PostgresDatabase atomically reserves and releases inventory on order creation and cancellation", async (t) => {
+  withAdminConfig(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-postgres-inventory-test-"),
+  );
+  const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
+  t.after(() => fsPromises.rm(temporaryDirectory, { recursive: true, force: true }));
+
+  const inventoryState = new Map([["Nhà giả kim", { stock: 2, reserved: 0 }]]);
+  const storedOrders = [];
+  const statements = [];
+  const pool = createPool({
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          statements.push({ sql, values });
+          if (sql.includes("INSERT INTO order_idempotency")) {
+            return { rows: [{ order_record: {} }], rowCount: 1 };
+          }
+          if (sql.includes("FROM store_orders orders")) {
+            return {
+              rows: storedOrders.map((o) => ({
+                order_id: o.orderId,
+                user_id: o.userId || null,
+                customer_name: o.customerName,
+                phone: o.phone,
+                address: o.address,
+                payment_method: o.paymentMethod,
+                status: o.status,
+                payment_status: o.paymentStatus,
+                coupon_code: o.couponCode || null,
+                discount_rate: o.discountRate || 0,
+                subtotal: o.subtotal,
+                discount: o.discount,
+                total: o.total,
+                idempotency_key: o.idempotencyKey || null,
+                idempotency_hash: o.idempotencyHash || null,
+                created_at: new Date("2026-01-01T00:00:00.000Z"),
+                updated_at: new Date("2026-01-01T00:00:00.000Z"),
+                legacy_record: o,
+                items: o.items,
+              })),
+            };
+          }
+          if (sql.includes("SET reserved = reserved + $2") && sql.includes("reserved + $2 <= stock")) {
+            const [title, qty] = values;
+            const current = inventoryState.get(title) || { stock: 2, reserved: 0 };
+            if (current.reserved + qty > current.stock) {
+              return { rows: [], rowCount: 0 };
+            }
+            current.reserved += qty;
+            inventoryState.set(title, current);
+            return { rows: [{ book_title: title }], rowCount: 1 };
+          }
+          if (sql.includes("SET reserved = GREATEST(reserved - $2, 0)")) {
+            const [title, qty] = values;
+            const current = inventoryState.get(title);
+            if (current) {
+              current.reserved = Math.max(current.reserved - qty, 0);
+            }
+            return { rows: [], rowCount: 1 };
+          }
+          if (sql.includes("INSERT INTO store_orders")) {
+            const updatedRecord = JSON.parse(values[17]);
+            const existingIdx = storedOrders.findIndex((o) => o.orderId === values[0]);
+            if (existingIdx >= 0) storedOrders[existingIdx] = updatedRecord;
+            else storedOrders.push(updatedRecord);
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 1 };
+        },
+        release() {},
+      };
+    },
+  });
+  const db = new PostgresDatabase({ pool, auditLogPath });
+  t.after(() => db.close());
+
+  const firstOrder = {
+    orderId: "11111111-1111-4111-8111-111111111111",
+    idempotencyKey: "inv-order-1",
+    customerName: "Reader 1",
+    phone: "0901234567",
+    address: "123 Street",
+    paymentMethod: "transfer",
+    status: "received",
+    paymentStatus: "pending",
+    subtotal: 178000,
+    discount: 0,
+    total: 178000,
+    items: [{ title: "Nhà giả kim", author: "Paulo Coelho", unitPrice: 89000, quantity: 2, lineTotal: 178000 }],
+  };
+  await db.addOrderIdempotently(
+    firstOrder,
+    "a".repeat(64),
+    [{ title: "Nhà giả kim", stock: 2, quantity: 2 }],
+  );
+  assert.equal(inventoryState.get("Nhà giả kim").reserved, 2);
+
+  await assert.rejects(
+    db.addOrderIdempotently(
+      { ...firstOrder, orderId: "22222222-2222-4222-8222-222222222222", idempotencyKey: "inv-order-2" },
+      "b".repeat(64),
+      [{ title: "Nhà giả kim", stock: 2, quantity: 1 }],
+    ),
+    /Số lượng sách vượt quá tồn kho/,
+  );
+  assert.equal(inventoryState.get("Nhà giả kim").reserved, 2);
+
+  await assert.rejects(
+    db.updateOrderStatus(
+      firstOrder.orderId,
+      { paymentStatus: "paid" },
+      undefined,
+      { actorRole: "sales", actorId: "sales-1" },
+    ),
+    /Chỉ quản trị viên/,
+  );
+
+  const cancelled = await db.updateOrderStatus(
+    firstOrder.orderId,
+    { status: "cancelled" },
+    undefined,
+    { actorRole: "user", actorId: "user-1" },
+  );
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(inventoryState.get("Nhà giả kim").reserved, 0);
+
+  await assert.rejects(
+    db.updateOrderStatus(
+      firstOrder.orderId,
+      { paymentStatus: "paid" },
+      undefined,
+      { actorRole: "admin", actorId: "admin-1" },
+    ),
+    /Không thể xác nhận thanh toán cho đơn hàng đã hủy/,
+  );
+});

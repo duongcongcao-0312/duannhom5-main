@@ -1,7 +1,9 @@
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+if (!process.env.NODE_TEST_CONTEXT) {
+  require("dotenv").config({ path: path.join(__dirname, ".env") });
+}
 const {
   createHash,
   createHmac,
@@ -105,6 +107,7 @@ const catalogBookById = new Map(
   books.map((book) => [catalogBookId(book), book]),
 );
 const defaultBookStock = 12;
+const orderWriteQueues = new Map();
 let bookCatalog = new Map(
   books.map((book) => [
     book.title,
@@ -119,6 +122,21 @@ const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
 const allowedPaymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
 const allowedConsentPurposes = new Set(["order", "service", "marketing"]);
 const allowedConsentSources = new Set(["web", "admin", "api"]);
+
+function enqueueOrderWrite(ordersPath, operation) {
+  const queueKey = path.resolve(ordersPath);
+  const previous = orderWriteQueues.get(queueKey) || Promise.resolve();
+  const result = previous.then(operation);
+  const queueEntry = result.then(() => undefined, () => undefined);
+  orderWriteQueues.set(queueKey, queueEntry);
+  queueEntry.then(() => {
+    if (orderWriteQueues.get(queueKey) === queueEntry) {
+      orderWriteQueues.delete(queueKey);
+    }
+  });
+  return result;
+}
+
 const payloadSchemas = {
   passwordReset: {
     allowed: ["email"],
@@ -374,6 +392,9 @@ const payloadSchemas = {
       "stock",
       "cover",
       "description",
+      "isActive",
+      "discontinued",
+      "status",
     ],
     required: ["title", "author", "price"],
     types: {
@@ -384,6 +405,9 @@ const payloadSchemas = {
       stock: "number",
       cover: "string",
       description: "string",
+      isActive: "boolean",
+      discontinued: "boolean",
+      status: "string",
     },
   },
   bookUpdate: {
@@ -395,6 +419,9 @@ const payloadSchemas = {
       "stock",
       "cover",
       "description",
+      "isActive",
+      "discontinued",
+      "status",
     ],
     types: {
       title: "string",
@@ -404,6 +431,9 @@ const payloadSchemas = {
       stock: "number",
       cover: "string",
       description: "string",
+      isActive: "boolean",
+      discontinued: "boolean",
+      status: "string",
     },
     minProperties: 1,
   },
@@ -657,6 +687,22 @@ function sanitizePlainText(value, maxLength = 0) {
   return cleaned;
 }
 
+function isBookDiscontinued(book) {
+  if (!book) return true;
+  if (book.deletedAt || book.deleted === true) return true;
+  if (book.isActive === false || book.enabled === false) return true;
+  if (book.discontinued === true) return true;
+  if (
+    typeof book.status === "string" &&
+    ["discontinued", "inactive", "deleted", "unavailable"].includes(
+      book.status.trim().toLowerCase(),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function normalizeAdminBook(payload, existing) {
   const title = payload.title === undefined
     ? existing?.title
@@ -669,6 +715,9 @@ function normalizeAdminBook(payload, existing) {
     : sanitizePlainText(payload.category, 64);
   const price = payload.price === undefined ? existing?.price : payload.price;
   const stock = payload.stock === undefined ? existing?.stock : payload.stock;
+  const status = payload.status === undefined
+    ? existing?.status
+    : sanitizePlainText(payload.status, 32).toLowerCase();
 
   if (!title || !author) {
     throw new RequestError(400, "Vui lòng nhập tên sách và tác giả.");
@@ -682,8 +731,14 @@ function normalizeAdminBook(payload, existing) {
   if (!Number.isSafeInteger(stock) || stock < 0 || stock > 1_000_000_000) {
     throw new RequestError(400, "Tồn kho phải là số nguyên từ 0 đến 1.000.000.000.");
   }
+  if (
+    status !== undefined &&
+    !["active", "discontinued", "inactive"].includes(status)
+  ) {
+    throw new RequestError(400, "Trạng thái sách không hợp lệ.");
+  }
 
-  return {
+  const normalized = {
     title,
     author,
     category,
@@ -696,6 +751,20 @@ function normalizeAdminBook(payload, existing) {
       ? existing?.description || ""
       : sanitizePlainText(payload.description, 1000),
   };
+  if (payload.isActive !== undefined || existing?.isActive !== undefined) {
+    normalized.isActive = payload.isActive !== undefined
+      ? payload.isActive
+      : existing.isActive;
+  }
+  if (payload.discontinued !== undefined || existing?.discontinued !== undefined) {
+    normalized.discontinued = payload.discontinued !== undefined
+      ? payload.discontinued
+      : existing.discontinued;
+  }
+  if (status !== undefined) {
+    normalized.status = status;
+  }
+  return normalized;
 }
 
 function normalizeCoupon(payload, code) {
@@ -1006,10 +1075,16 @@ function createOrder(payload, userId = null, requester = null, coupon = null) {
         "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.",
       );
     }
+    if (isBookDiscontinued(book)) {
+      throw new RequestError(
+        400,
+        "Sách đã ngừng kinh doanh hoặc không còn bán.",
+      );
+    }
     if (!Number.isInteger(item.quantity) || item.quantity < 1) {
       throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
     }
-    if (item.quantity > stock) {
+    if (stock <= 0 || item.quantity > stock) {
       throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
     }
     quantities.set(
@@ -1103,12 +1178,25 @@ function createUpdatedOrderItems(items) {
     if (!book) {
       throw new RequestError(400, "Một hoặc nhiều sách trong giỏ hàng không hợp lệ.");
     }
+    if (isBookDiscontinued(book)) {
+      throw new RequestError(
+        400,
+        "Sách đã ngừng kinh doanh hoặc không còn bán.",
+      );
+    }
     if (!Number.isSafeInteger(item.quantity) || item.quantity < 1) {
       throw new RequestError(400, "Số lượng sách phải là số nguyên lớn hơn 0.");
     }
+    const stock =
+      Number.isInteger(book && book.stock) && book.stock >= 0
+        ? book.stock
+        : defaultBookStock;
     const quantity = (quantities.get(book.title) || 0) + item.quantity;
     if (!Number.isSafeInteger(quantity)) {
       throw new RequestError(400, "Số lượng sách không hợp lệ.");
+    }
+    if (stock <= 0 || quantity > stock) {
+      throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
     }
     quantities.set(book.title, quantity);
   }
@@ -1280,7 +1368,17 @@ function createServer({
   }
 
   let persistenceQueue = Promise.resolve();
-  const db = database || (process.env.DATABASE_URL
+  const hasExplicitFilePaths = Boolean(
+    ordersPath !== defaultOrdersPath ||
+    usersPath ||
+    customersPath ||
+    servicesPath ||
+    booksPath ||
+    couponsPath ||
+    customerInteractionsPath ||
+    consentRecordsPath,
+  );
+  const db = database || (process.env.DATABASE_URL && !hasExplicitFilePaths
     ? new PostgresDatabase()
     : new Database({
       root,
@@ -1438,7 +1536,6 @@ function createServer({
     }
     reauthenticationAttempts.delete(address);
   }
-  let orderWriteQueue = Promise.resolve();
   const allowedOrigins = new Set(
     corsOrigins
       .split(",")
@@ -1455,22 +1552,33 @@ function createServer({
           ? db.getCatalogBookOverrides()
           : Promise.resolve([]),
       ]);
+      const refreshedCatalog = new Map(
+        books.map((book) => [
+          book.title,
+          { ...book, id: catalogBookId(book), stock: book.stock ?? defaultBookStock, isCustom: false },
+        ]),
+      );
+      const refreshedOverrides = new Map();
       for (const override of overrides) {
         const baseBook = catalogBookById.get(override.id);
         if (!baseBook) continue;
-        if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
-        catalogBookOverrides.set(override.id, override);
-        bookCatalog.set(override.title, {
+        if (override.title !== baseBook.title) refreshedCatalog.delete(baseBook.title);
+        refreshedOverrides.set(override.id, override);
+        refreshedCatalog.set(override.title, {
           ...baseBook,
+          stock: defaultBookStock,
           ...override,
+          id: override.id,
           isCustom: false,
         });
       }
       for (const book of custom) {
         if (book && book.title) {
-          bookCatalog.set(book.title, { ...book, isCustom: true });
+          refreshedCatalog.set(book.title, { ...book, isCustom: true });
         }
       }
+      bookCatalog = refreshedCatalog;
+      catalogBookOverrides = refreshedOverrides;
       catalogLoadError = null;
     } catch (error) {
       catalogLoadError = error;
@@ -1502,7 +1610,7 @@ function createServer({
 
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     await waitForCatalogReady();
-    const operation = orderWriteQueue.then(async () => {
+    return enqueueOrderWrite(ordersPath, async () => {
       const couponCode = typeof payload?.couponCode === "string"
         ? sanitizePlainText(payload.couponCode, 32).toUpperCase()
         : "";
@@ -1622,8 +1730,6 @@ function createServer({
       }
       return { order, replayed: false };
     });
-    orderWriteQueue = operation.catch(() => {});
-    return operation;
   }
 
   async function getAuthUser(request) {
@@ -2756,6 +2862,7 @@ function createServer({
         "Dữ liệu báo giá không hợp lệ.",
         payloadSchemas.orderQuote,
       );
+      await waitForCatalogReady();
       const requester = await getAuthUser(request);
       const couponCode = typeof payload.couponCode === "string"
         ? sanitizePlainText(payload.couponCode, 32).toUpperCase()
@@ -2947,6 +3054,7 @@ function createServer({
         if (order.status === "cancelled" || payload.status === "cancelled") {
           throw new RequestError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
         }
+        await waitForCatalogReady();
         const items = createUpdatedOrderItems(payload.items);
         const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
         if (!Number.isSafeInteger(subtotal)) {
@@ -3045,11 +3153,13 @@ function createServer({
           throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
         }
       }
-      const updated = await db.updateOrderStatus(
-        orderMatch[1],
-        safePayload,
-        ordersPath,
-        orderUpdateOptions,
+      const updated = await enqueueOrderWrite(ordersPath, () =>
+        db.updateOrderStatus(
+          orderMatch[1],
+          safePayload,
+          ordersPath,
+          orderUpdateOptions,
+        ),
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
@@ -3220,11 +3330,13 @@ function createServer({
           throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
         }
       }
-      const updated = await db.updateOrderStatus(
-        adminOrderMatch[1],
-        safePayload,
-        ordersPath,
-        { actorRole: requester.role, actorId: requester.userId },
+      const updated = await enqueueOrderWrite(ordersPath, () =>
+        db.updateOrderStatus(
+          adminOrderMatch[1],
+          safePayload,
+          ordersPath,
+          { actorRole: requester.role, actorId: requester.userId },
+        ),
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
@@ -3358,13 +3470,16 @@ function createServer({
         "Dữ liệu sách không hợp lệ.",
         payloadSchemas.book,
       );
-      const newBookData = normalizeAdminBook(payload);
-      await assertUniqueBookTitle(newBookData.title);
-      const newBook = {
-        ...(await db.addCustomBook(newBookData)),
-        isCustom: true,
-      };
-      bookCatalog.set(newBook.title, newBook);
+      const newBook = await enqueueOrderWrite(ordersPath, async () => {
+        const newBookData = normalizeAdminBook(payload);
+        await assertUniqueBookTitle(newBookData.title);
+        const created = {
+          ...(await db.addCustomBook(newBookData)),
+          isCustom: true,
+        };
+        bookCatalog.set(created.title, created);
+        return created;
+      });
       sendJson(response, 201, newBook);
       return;
     }
@@ -3377,33 +3492,36 @@ function createServer({
       (request.method === "PUT" || request.method === "PATCH")
     ) {
       await requireRole(request, "write:books");
-      await waitForCatalogReady();
       const id = adminBookMatch[1];
-      const isCatalogBook = catalogBookById.has(id);
-      const previousBooks = isCatalogBook ? [] : await db.getCustomBooks();
-      const previous = isCatalogBook
-        ? { ...catalogBookById.get(id), ...catalogBookOverrides.get(id), id, isCustom: false }
-        : previousBooks.find((book) => book.id === id);
-      if (!previous) throw new RequestError(404, "Không tìm thấy sách.");
       const payload = requireJsonObject(
         await readJson(request),
         "Dữ liệu cập nhật sách không hợp lệ.",
         payloadSchemas.bookUpdate,
       );
-      const updatedData = normalizeAdminBook(payload, previous);
-      await assertUniqueBookTitle(updatedData.title, id);
-      await assertStockCoversReservations(previous.title, updatedData.stock);
-      const expectedUpdatedAt = request.headers["if-match"];
-      const updated = isCatalogBook
-        ? await db.updateCatalogBook(id, updatedData, expectedUpdatedAt, previous)
-        : await db.updateCustomBook(id, updatedData, expectedUpdatedAt);
-      if (!updated) throw new RequestError(404, "Không tìm thấy sách.");
-      const updatedBook = { ...updated, isCustom: !isCatalogBook };
-      if (previous?.title && previous.title !== updated.title) {
-        bookCatalog.delete(previous.title);
-      }
-      if (isCatalogBook) catalogBookOverrides.set(id, updated);
-      if (updatedBook.title) bookCatalog.set(updatedBook.title, updatedBook);
+      const updatedBook = await enqueueOrderWrite(ordersPath, async () => {
+        await waitForCatalogReady();
+        const isCatalogBook = catalogBookById.has(id);
+        const previousBooks = isCatalogBook ? [] : await db.getCustomBooks();
+        const previous = isCatalogBook
+          ? { ...catalogBookById.get(id), ...catalogBookOverrides.get(id), id, isCustom: false }
+          : previousBooks.find((book) => book.id === id);
+        if (!previous) throw new RequestError(404, "Không tìm thấy sách.");
+        const updatedData = normalizeAdminBook(payload, previous);
+        await assertUniqueBookTitle(updatedData.title, id);
+        await assertStockCoversReservations(previous.title, updatedData.stock);
+        const expectedUpdatedAt = request.headers["if-match"];
+        const updated = isCatalogBook
+          ? await db.updateCatalogBook(id, updatedData, expectedUpdatedAt, previous)
+          : await db.updateCustomBook(id, updatedData, expectedUpdatedAt);
+        if (!updated) throw new RequestError(404, "Không tìm thấy sách.");
+        const result = { ...updated, isCustom: !isCatalogBook };
+        if (previous?.title && previous.title !== updated.title) {
+          bookCatalog.delete(previous.title);
+        }
+        if (isCatalogBook) catalogBookOverrides.set(id, updated);
+        if (result.title) bookCatalog.set(result.title, result);
+        return result;
+      });
       sendJson(response, 200, updatedBook);
       return;
     }
@@ -3413,11 +3531,13 @@ function createServer({
       if (catalogBookById.has(adminBookMatch[1])) {
         throw new RequestError(409, "Không thể xóa sách mặc định khỏi danh mục.");
       }
-      const previousBooks = await db.getCustomBooks();
-      const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
-      const deleted = await db.deleteCustomBook(adminBookMatch[1]);
-      if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
-      if (previous?.title) bookCatalog.delete(previous.title);
+      await enqueueOrderWrite(ordersPath, async () => {
+        const previousBooks = await db.getCustomBooks();
+        const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
+        const deleted = await db.deleteCustomBook(adminBookMatch[1]);
+        if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
+        if (previous?.title) bookCatalog.delete(previous.title);
+      });
       sendJson(response, 200, { success: true });
       return;
     }

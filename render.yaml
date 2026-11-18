@@ -17,6 +17,12 @@ services:
         value: 28800000
       - key: DATABASE_URL
         sync: false
+      - key: RATE_LIMIT_HMAC_KEY
+        sync: false
+      - key: RATE_LIMIT_TRUSTED_PROXY_HOPS
+        sync: false
+      - key: RATE_LIMIT_TRUSTED_PROXY_IPS
+        sync: false
       - key: SEPAY_API_KEY
         sync: false
       - key: SEPAY_BANK_CODE

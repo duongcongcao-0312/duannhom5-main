@@ -23,6 +23,9 @@ const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
 const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info';
 const LAST_ORDER_ID_STORAGE_KEY = 'booknest-last-order-id';
 let lastCreatedOrderId = '';
+let lastCreatedOrderAccessCode = '';
+let checkoutAccessCodeKey = '';
+let checkoutAccessCode = '';
 let paymentConfig = null;
 let paymentConfigPromise = null;
 let activeTransferOrder = null;
@@ -37,6 +40,21 @@ const firebaseAuth = (() => {
 		return null;
 	}
 })();
+function generateOrderAccessCode() {
+	if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function') {
+		throw new Error('Trình duyệt không thể tạo mã truy cập đơn hàng an toàn.');
+	}
+	const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
+	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function getCheckoutOrderAccessCode(idempotencyKey) {
+	if (checkoutAccessCodeKey !== idempotencyKey) {
+		checkoutAccessCodeKey = idempotencyKey;
+		checkoutAccessCode = generateOrderAccessCode();
+	}
+	return checkoutAccessCode;
+}
 const serviceDetails = {
 	rent: {
 		title: 'Thuê sách theo nhu cầu',
@@ -747,6 +765,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		};
 		const token = window.booknestAuth.getToken();
 		if (token) headers.Authorization = `Bearer ${token}`;
+		const accessCode = token ? '' : getCheckoutOrderAccessCode(idempotencyKey);
 		let result;
 		try {
 			const response = await window.booknestApiFetch('/api/orders', {
@@ -758,6 +777,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 					phone,
 					paymentMethod: method,
 					couponCode: state.coupon,
+					...(accessCode ? { accessCode } : {}),
 					items
 				})
 			});
@@ -771,6 +791,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 				throw new Error('Đơn chuyển khoản thiếu mã thanh toán hợp lệ.');
 			}
 		lastCreatedOrderId = result.orderId;
+		lastCreatedOrderAccessCode = accessCode;
 		try {
 			sessionStorage.setItem(LAST_ORDER_ID_STORAGE_KEY, result.orderId);
 		} catch (storageError) {
@@ -794,7 +815,7 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			updatePaymentQr(result);
 			activeTransferOrder = result;
 			const confirmation = document.querySelector('#paymentConfirmation');
-			confirmation.textContent = `Đơn hàng ${result.orderId} đã được lưu. Mã chuyển khoản: ${result.paymentCode}. Vui lòng quét QR để thanh toán đúng số tiền.`;
+			confirmation.textContent = `Đơn hàng ${result.orderId} đã được lưu. Mã chuyển khoản: ${result.paymentCode}.${accessCode ? ` Mã truy cập đơn khách (chỉ hiển thị lần này): ${accessCode}.` : ''} Vui lòng quét QR để thanh toán đúng số tiền.`;
 			confirmation.hidden = false;
 			form.querySelector('.payment-methods').hidden = true;
 			form.querySelector('.shipping-fields').hidden = true;
@@ -809,7 +830,8 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			title: method === 'cod' ? 'Đặt hàng thành công!' : 'Đã tạo đơn, đang chờ thanh toán',
 			details: [
 				{ label: 'Mã đơn', value: result.orderId },
-				{ label: 'Tổng tiền', value: formatPrice(result.total) }
+				{ label: 'Tổng tiền', value: formatPrice(result.total) },
+				...(accessCode ? [{ label: 'Mã truy cập đơn khách', value: accessCode }] : [])
 			],
 			duration: method === 'cod' ? 5000 : 6000,
 			action: { label: 'Tra cứu đơn', onClick: () => openOrderTracker(result.orderId) }
@@ -1364,13 +1386,21 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 function openOrderTracker(orderId = '') {
 	const form = document.querySelector('#trackOrderForm');
 	const orderIdInput = form?.elements?.orderId;
+	let selectedOrderId = '';
 	if (orderIdInput) {
 		let savedOrderId = lastCreatedOrderId;
 		try {
 			savedOrderId = sessionStorage.getItem(LAST_ORDER_ID_STORAGE_KEY) || savedOrderId;
 		} catch (storageError) {
 		}
-		orderIdInput.value = orderId || orderIdInput.value || savedOrderId;
+		selectedOrderId = orderId || orderIdInput.value || savedOrderId;
+		orderIdInput.value = selectedOrderId;
+	}
+	const accessCodeInput = form?.elements?.accessCode;
+	if (accessCodeInput) {
+		accessCodeInput.value = selectedOrderId === lastCreatedOrderId
+			? lastCreatedOrderAccessCode
+			: '';
 	}
 	document.querySelector('#trackOrderError').hidden = true;
 	document.querySelector('#orderResult').hidden = true;
@@ -1387,9 +1417,12 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 	result.hidden = true;
 	if (!form.reportValidity()) return;
 	try {
-		const orderId = String(new FormData(form).get('orderId')).trim();
+		const formData = new FormData(form);
+		const orderId = String(formData.get('orderId')).trim();
+		const accessCode = String(formData.get('accessCode') || '').trim();
 		const token = window.booknestAuth.getToken();
 		const headers = token ? { Authorization: `Bearer ${token}` } : {};
+		if (accessCode) headers['X-Order-Access-Code'] = accessCode;
 		const response = await window.booknestApiFetch(
 			`/api/orders/${encodeURIComponent(orderId)}`,
 			{ headers }

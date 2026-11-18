@@ -3,6 +3,7 @@ const path = require("node:path");
 const { createBackup, verifyBackup } = require("./backup");
 const { createPostgresBackup, validateDatabaseUrl } = require("./postgres-backup");
 const { redactLogText } = require("../backend/monitoring");
+const { resolveBackupEncryptionConfig } = require("./backup-encryption");
 
 const BACKUP_PREFIX = "booknest-";
 const MIN_RETAINED_BACKUPS = 2;
@@ -52,6 +53,7 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
   const timeoutMs = positiveInteger(env.BACKUP_ALERT_TIMEOUT_MS, "BACKUP_ALERT_TIMEOUT_MS", 10000, 120000);
   const databaseUrl = env.DATABASE_URL || "";
   if (databaseUrl) validateDatabaseUrl(databaseUrl);
+  const encryption = resolveBackupEncryptionConfig({ env });
   const databaseBackupTimeoutMs = positiveInteger(
     env.DATABASE_BACKUP_TIMEOUT_MS,
     "DATABASE_BACKUP_TIMEOUT_MS",
@@ -70,6 +72,8 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
     alertWebhookUrl,
     timeoutMs,
     databaseUrl,
+    backupEncryptionKey: encryption.key,
+    backupEncryptionRequired: encryption.required,
     pgOptions: {
       timeoutMs: databaseBackupTimeoutMs,
       pgDumpPath: env.PG_DUMP_PATH || "pg_dump",
@@ -230,6 +234,9 @@ async function runBackupCycle(config, dependencies = {}) {
     ...(dependencies.env || {}),
     ...(config.databaseUrl ? { DATABASE_URL: config.databaseUrl } : {}),
     ...(config.alertWebhookUrl ? { BACKUP_ALERT_WEBHOOK_URL: config.alertWebhookUrl } : {}),
+    ...(config.backupEncryptionKey
+      ? { BACKUP_ENCRYPTION_KEY: config.backupEncryptionKey.toString("base64") }
+      : {}),
   };
   try {
     if (config.databaseUrl) {
@@ -237,17 +244,34 @@ async function runBackupCycle(config, dependencies = {}) {
         config.databaseUrl,
         backupPath,
         now,
-        { ...config.pgOptions, runCommand: dependencies.pgRunCommand },
+        {
+          ...config.pgOptions,
+          runCommand: dependencies.pgRunCommand,
+          encryptionKey: config.backupEncryptionKey,
+          encryptionRequired: config.backupEncryptionRequired,
+        },
       );
     } else {
-      await (dependencies.createBackup || createBackup)(config.dataDir, backupPath, now);
+      await (dependencies.createBackup || createBackup)(
+        config.dataDir,
+        backupPath,
+        now,
+        {
+          encryptionKey: config.backupEncryptionKey,
+          encryptionRequired: config.backupEncryptionRequired,
+        },
+      );
     }
     await (dependencies.verifyBackup || ((directory) => verifyBackup(directory, {
       ...config.pgOptions,
       runCommand: dependencies.pgRunCommand,
+      encryptionKey: config.backupEncryptionKey,
+      encryptionRequired: config.backupEncryptionRequired,
     })))(backupPath);
     const pruned = await pruneOldBackups(config, now.getTime(), {
       runCommand: dependencies.pgRunCommand,
+      encryptionKey: config.backupEncryptionKey,
+      encryptionRequired: config.backupEncryptionRequired,
     });
     await writeBackupStatus(config, "succeeded", {
       timestamp: now.toISOString(),

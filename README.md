@@ -161,6 +161,7 @@ vẫn xác minh TLS như bình thường. Nếu database chưa có tài khoản,
 | `npm run test:coverage` | Chạy test kèm báo cáo coverage của Node.js. |
 | `npm run backup:schedule` | Tạo backup file hoặc PostgreSQL tùy `DATABASE_URL` ngay khi khởi động rồi lặp theo cấu hình. |
 | `npm run smoke` | Kiểm tra health/readiness và các endpoint thiết yếu; trả mã lỗi khác 0 khi có check thất bại. |
+| `npm run load-test` | Benchmark giới hạn, chỉ local theo mặc định; host staging cần allow-list tường minh và production bị từ chối. |
 | `npm run build:pages` | Tạo thư mục `dist/` cho frontend tĩnh. |
 | `npm run migrate` | Chạy migration PostgreSQL khi có `DATABASE_URL`. |
 | `npm run seed:customers` | Seed dữ liệu CRM mẫu cho development; không chạy trên production có dữ liệu thật. |
@@ -235,7 +236,9 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 ### PostgreSQL/Supabase
 
-`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM; migration 008 tạo bảng `privacy_consents` để ghi nhận và rút lại consent theo tài khoản, mục đích và phiên bản chính sách. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM; migration 008 tạo bảng `privacy_consents`; migration 014 tạo bảng yêu cầu truy cập/cập nhật/xóa dữ liệu cá nhân, giới hạn một yêu cầu đang mở cho mỗi loại và tài khoản. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+
+`npm run privacy:retention` chạy xem trước, chỉ đếm consent đã hết hạn có `retentionDays > 0`; thêm `-- --apply` để xóa các bản ghi đủ điều kiện. Với `DATABASE_URL`, lệnh dùng PostgreSQL; nếu không, lệnh dùng kho file local. Giá trị retention bằng 0 được giữ lại. Lệnh không xóa đơn hàng, tài khoản, yêu cầu dịch vụ hoặc yêu cầu dữ liệu cá nhân và không tự lên lịch; chỉ cấu hình lịch sau khi chính sách lưu giữ được xác định và kiểm chứng trên môi trường phù hợp. Trạng thái yêu cầu dữ liệu chỉ ghi nhận quy trình, không tự thực hiện việc truy xuất/cập nhật/xóa.
 
 Coupon được xác thực và tính giảm ở backend khi báo giá và tạo đơn. Mức giảm coupon cộng với ưu đãi tài khoản bị giới hạn tổng cộng 30%; đơn hàng phải đạt mức tối thiểu, coupon phải đang bật/trong thời hạn và chưa vượt giới hạn lượt. Lượt chỉ được ghi nhận khi đơn được tạo thành công. Local lưu coupon trong `data/coupons.json`; PostgreSQL cần chạy `npm run migrate` để áp dụng migration 006.
 

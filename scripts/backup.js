@@ -7,6 +7,13 @@ const {
   verifyPostgresBackup,
 } = require("./postgres-backup");
 const { redactLogText } = require("../backend/monitoring");
+const {
+  authenticateBackupManifest,
+  decryptBuffer,
+  encryptBuffer,
+  resolveBackupEncryptionConfig,
+  verifyBackupManifestAuthentication,
+} = require("./backup-encryption");
 
 const DATA_FILES = [
   "users.json",
@@ -19,8 +26,10 @@ const DATA_FILES = [
 ];
 const MANIFEST_FILE = "manifest.json";
 
-async function digest(filePath) {
-  const contents = await fs.readFile(filePath);
+async function digest(filePathOrContents) {
+  const contents = Buffer.isBuffer(filePathOrContents)
+    ? filePathOrContents
+    : await fs.readFile(filePathOrContents);
   return {
     sha256: crypto.createHash("sha256").update(contents).digest("hex"),
     bytes: contents.length,
@@ -40,7 +49,13 @@ async function existingDataFiles(dataDir) {
   return files;
 }
 
-async function createBackup(dataDir, backupDir, now = new Date()) {
+function resolveEncryptionKey(options = {}) {
+  const { key } = resolveBackupEncryptionConfig(options);
+  return key;
+}
+
+async function createBackup(dataDir, backupDir, now = new Date(), options = {}) {
+  const encryptionKey = resolveEncryptionKey(options);
   const files = await existingDataFiles(dataDir);
   if (files.length === 0) {
     throw new Error(`Không tìm thấy tệp dữ liệu trong ${dataDir}.`);
@@ -52,29 +67,53 @@ async function createBackup(dataDir, backupDir, now = new Date()) {
   try {
     await fs.mkdir(stagingDir, { mode: 0o700 });
     const manifest = {
-      format: 1,
+      format: encryptionKey ? 3 : 1,
+      ...(encryptionKey
+        ? {
+          storage: "file",
+          encryption: { algorithm: "aes-256-gcm", version: 1 },
+        }
+        : {}),
       createdAt: now.toISOString(),
       files: {},
     };
     for (const name of files) {
       const source = path.join(dataDir, name);
       const before = await digest(source);
-      const destination = path.join(stagingDir, name);
-      await fs.copyFile(source, destination);
-      const [after, copied] = await Promise.all([digest(source), digest(destination)]);
-      if (before.sha256 !== after.sha256 || before.sha256 !== copied.sha256) {
-        throw new Error(`Dữ liệu thay đổi trong khi sao lưu: ${name}. Hãy tạm dừng ghi dữ liệu và thử lại.`);
+      if (encryptionKey) {
+        const contents = await fs.readFile(source);
+        const [after, copied] = await Promise.all([digest(source), digest(contents)]);
+        if (before.sha256 !== after.sha256 || before.sha256 !== copied.sha256) {
+          throw new Error(`Dữ liệu thay đổi trong khi sao lưu: ${name}. Hãy tạm dừng ghi dữ liệu và thử lại.`);
+        }
+        const encryptedFile = `${name}.enc`;
+        await fs.writeFile(
+          path.join(stagingDir, encryptedFile),
+          encryptBuffer(contents, encryptionKey),
+          { mode: 0o600, flag: "wx" },
+        );
+        manifest.files[name] = { ...copied, encryptedFile };
+      } else {
+        const destination = path.join(stagingDir, name);
+        await fs.copyFile(source, destination);
+        const [after, copied] = await Promise.all([digest(source), digest(destination)]);
+        if (before.sha256 !== after.sha256 || before.sha256 !== copied.sha256) {
+          throw new Error(`Dữ liệu thay đổi trong khi sao lưu: ${name}. Hãy tạm dừng ghi dữ liệu và thử lại.`);
+        }
+        manifest.files[name] = copied;
+        await fs.chmod(destination, 0o600);
       }
-      manifest.files[name] = copied;
-      await fs.chmod(destination, 0o600);
     }
+    const finalManifest = encryptionKey
+      ? authenticateBackupManifest(manifest, encryptionKey)
+      : manifest;
     await fs.writeFile(
       path.join(stagingDir, MANIFEST_FILE),
-      `${JSON.stringify(manifest, null, 2)}\n`,
+      `${JSON.stringify(finalManifest, null, 2)}\n`,
       { encoding: "utf8", mode: 0o600, flag: "wx" },
     );
     await fs.rename(stagingDir, backupDir);
-    return manifest;
+    return finalManifest;
   } catch (error) {
     await fs.rm(stagingDir, { recursive: true, force: true });
     throw error;
@@ -82,18 +121,23 @@ async function createBackup(dataDir, backupDir, now = new Date()) {
 }
 
 async function verifyBackup(backupDir, options = {}) {
+  const encryption = resolveBackupEncryptionConfig(options);
   let manifest;
   try {
     manifest = JSON.parse(await fs.readFile(path.join(backupDir, MANIFEST_FILE), "utf8"));
   } catch (error) {
     throw new Error(`Backup không có manifest hợp lệ: ${error.message}`);
   }
-  if (manifest?.format === 2 && manifest.storage === "postgresql") {
+  if (
+    [2, 3].includes(manifest?.format) &&
+    manifest.storage === "postgresql"
+  ) {
     return verifyPostgresBackup(backupDir, manifest, options);
   }
+  const encrypted = manifest?.format === 3 && manifest.storage === "file";
   if (
     !manifest ||
-    manifest.format !== 1 ||
+    (manifest.format !== 1 && !encrypted) ||
     !Number.isFinite(Date.parse(manifest.createdAt)) ||
     !manifest.files ||
     typeof manifest.files !== "object" ||
@@ -101,6 +145,28 @@ async function verifyBackup(backupDir, options = {}) {
     Object.keys(manifest.files).length === 0
   ) {
     throw new Error("Manifest backup không đúng định dạng.");
+  }
+  if (encryption.required && !encrypted) {
+    throw new Error("BACKUP_ENCRYPTION_REQUIRED yêu cầu backup file được mã hóa.");
+  }
+  if (
+    encrypted &&
+    (
+      manifest.encryption?.algorithm !== "aes-256-gcm" ||
+      manifest.encryption?.version !== 1
+    )
+  ) {
+    throw new Error("Manifest backup mã hóa không đúng định dạng.");
+  }
+  const encryptionKey = encrypted ? encryption.key : null;
+  if (encrypted && !encryptionKey) {
+    throw new Error("BACKUP_ENCRYPTION_KEY là bắt buộc để xác minh backup mã hóa.");
+  }
+  if (
+    encrypted &&
+    !verifyBackupManifestAuthentication(manifest, encryptionKey)
+  ) {
+    throw new Error("Xác thực manifest backup thất bại.");
   }
 
   for (const [name, expected] of Object.entries(manifest.files)) {
@@ -114,9 +180,23 @@ async function verifyBackup(backupDir, options = {}) {
     ) {
       throw new Error(`Manifest chứa mục dữ liệu không hợp lệ: ${name}.`);
     }
-    const actual = await digest(path.join(backupDir, name)).catch((error) => {
-      throw new Error(`Không đọc được ${name}: ${error.message}`);
-    });
+    let actual;
+    if (encrypted) {
+      if (expected.encryptedFile !== `${name}.enc`) {
+        throw new Error(`Manifest chứa mục mã hóa không hợp lệ: ${name}.`);
+      }
+      let contents;
+      try {
+        contents = await fs.readFile(path.join(backupDir, expected.encryptedFile));
+      } catch (error) {
+        throw new Error(`Không đọc được ${expected.encryptedFile}: ${error.message}`);
+      }
+      actual = await digest(decryptBuffer(contents, encryptionKey));
+    } else {
+      actual = await digest(path.join(backupDir, name)).catch((error) => {
+        throw new Error(`Không đọc được ${name}: ${error.message}`);
+      });
+    }
     if (actual.sha256 !== expected.sha256 || actual.bytes !== expected.bytes) {
       throw new Error(`Kiểm tra toàn vẹn thất bại cho ${name}.`);
     }
@@ -124,17 +204,23 @@ async function verifyBackup(backupDir, options = {}) {
   return manifest;
 }
 
-async function restoreBackup(backupDir, dataDir) {
-  const manifest = await verifyBackup(backupDir);
+async function restoreBackup(backupDir, dataDir, options = {}) {
+  const manifest = await verifyBackup(backupDir, options);
   if (manifest.storage === "postgresql") {
     throw new Error("Backup PostgreSQL cần được khôi phục bằng lệnh restore-postgres.");
   }
+  const encrypted = manifest.format === 3 && manifest.storage === "file";
+  const encryptionKey = encrypted ? resolveEncryptionKey(options) : null;
   await fs.mkdir(dataDir, { recursive: true });
-  for (const name of Object.keys(manifest.files)) {
+  for (const [name, expected] of Object.entries(manifest.files)) {
     const restoredPath = path.join(dataDir, name);
-    await fs.copyFile(path.join(backupDir, name), restoredPath);
+    if (encrypted) {
+      const contents = await fs.readFile(path.join(backupDir, expected.encryptedFile));
+      await fs.writeFile(restoredPath, decryptBuffer(contents, encryptionKey), { mode: 0o600 });
+    } else {
+      await fs.copyFile(path.join(backupDir, name), restoredPath);
+    }
     const restored = await digest(restoredPath);
-    const expected = manifest.files[name];
     if (restored.sha256 !== expected.sha256 || restored.bytes !== expected.bytes) {
       throw new Error(`Kiểm tra toàn vẹn sau khôi phục thất bại cho ${name}.`);
     }

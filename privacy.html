@@ -36,14 +36,56 @@
     </ul>
     <p>Không gửi service-account private key, mật khẩu, API key riêng tư hoặc dữ liệu không cần thiết tới frontend. Các giá trị cấu hình Firebase Web app là public; API key vẫn cần được giới hạn theo cấu hình của dự án.</p>
 
-    <h2>4. Consent, lưu giữ và xóa</h2>
-    <p>Backend có API ghi nhận và rút lại bản ghi consent theo tài khoản, mục đích, phiên bản chính sách, nguồn và số ngày lưu giữ. Hiện giao diện chưa tự động yêu cầu consent trước khi gửi đơn hàng/yêu cầu dịch vụ và backend chưa áp dụng <code>retentionDays</code> để tự xóa dữ liệu. Vì vậy các bản ghi API không chứng minh rằng mọi luồng đã thu thập consent hoặc dữ liệu được xóa theo lịch.</p>
-    <p>Bản demo chưa xác định thời hạn lưu giữ thống nhất hay kênh liên hệ quyền riêng tư được công bố. Trước khi dùng với người thật, đơn vị vận hành phải công bố đầu mối liên hệ, thời hạn lưu giữ, quy trình xử lý yêu cầu và kiểm tra thực tế cơ chế xóa/ẩn danh phù hợp.</p>
+    <h2>4. Consent, lưu giữ và yêu cầu dữ liệu</h2>
+    <p>Bạn có thể xem, ghi nhận hoặc rút lại consent gắn với tài khoản ở phần bên dưới. Việc ghi nhận consent tại đây không tự động chặn hoặc cho phép gửi đơn hàng/yêu cầu dịch vụ. Yêu cầu truy cập, cập nhật hoặc xóa dữ liệu được lưu để nhân viên quản trị xử lý; việc gửi yêu cầu không tự xóa dữ liệu.</p>
+    <p>Chỉ bản ghi consent có <code>retentionDays</code> lớn hơn 0 mới đủ điều kiện được công cụ vận hành xóa sau khi hết hạn. Công cụ chạy ở chế độ xem trước theo mặc định; việc chạy định kỳ cần được nhà vận hành cấu hình. Giá trị 0 không tự hết hạn. Công cụ này không xóa đơn hàng, tài khoản hoặc yêu cầu dịch vụ.</p>
+    <p>Thời hạn lưu giữ thống nhất và đầu mối liên hệ quyền riêng tư vẫn cần được đơn vị vận hành công bố trước khi dùng với người thật. Các yêu cầu phải được xem xét và thực hiện theo chính sách áp dụng; giao diện hiện chỉ ghi nhận trạng thái quy trình.</p>
+
+    <section id="consentManagement" aria-labelledby="consentHeading">
+      <h2 id="consentHeading">Quản lý consent của tài khoản</h2>
+      <p id="consentStatus" aria-live="polite">Đăng nhập để xem và quản lý consent.</p>
+      <div class="privacy-consent-controls">
+        <div>
+          <label><input type="checkbox" data-consent="order"> Consent xử lý dữ liệu đơn hàng</label>
+          <button type="button" data-consent-save="order">Lưu lựa chọn</button>
+          <button type="button" data-consent-revoke="order">Rút lại</button>
+        </div>
+        <div>
+          <label><input type="checkbox" data-consent="service"> Consent xử lý yêu cầu dịch vụ</label>
+          <button type="button" data-consent-save="service">Lưu lựa chọn</button>
+          <button type="button" data-consent-revoke="service">Rút lại</button>
+        </div>
+        <div>
+          <label><input type="checkbox" data-consent="marketing"> Consent tiếp thị</label>
+          <button type="button" data-consent-save="marketing">Lưu lựa chọn</button>
+          <button type="button" data-consent-revoke="marketing">Rút lại</button>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="privacyDataRequestHeading">
+      <h2 id="privacyDataRequestHeading">Yêu cầu dữ liệu cá nhân</h2>
+      <p>Đăng nhập để gửi yêu cầu truy cập, cập nhật hoặc xóa dữ liệu. Bạn có thể xem trạng thái xử lý bên dưới.</p>
+      <form id="privacyDataRequestForm">
+        <label for="privacyDataRequestType">Loại yêu cầu</label>
+        <select id="privacyDataRequestType" name="type" required>
+          <option value="access">Truy cập dữ liệu</option>
+          <option value="update">Cập nhật dữ liệu</option>
+          <option value="delete">Xóa dữ liệu</option>
+        </select>
+        <button type="submit">Gửi yêu cầu</button>
+      </form>
+      <p id="privacyDataRequestStatus" aria-live="polite">Đăng nhập để xem yêu cầu.</p>
+      <ul id="privacyDataRequestList"></ul>
+    </section>
 
     <h2>5. Bảo vệ thông tin</h2>
     <p>Mật khẩu tài khoản được băm ở backend. Không có cam kết rằng toàn bộ dữ liệu khác được mã hóa ở cấp ứng dụng khi lưu trữ; biện pháp bảo vệ còn phụ thuộc cấu hình hosting, database, quyền truy cập, HTTPS, backup và quản lý secret của môi trường triển khai. Không coi ứng dụng mẫu là hệ thống đã được chứng nhận hoặc sẵn sàng xử lý dữ liệu nhạy cảm.</p>
 
     <p><a href="index.html">Về trang chủ</a></p>
   </main>
+  <script src="assets/api-config.js"></script>
+  <script src="assets/api-client.js"></script>
+  <script src="assets/privacy-consent.js"></script>
 </body>
 </html>

@@ -1,4 +1,7 @@
 const assert = require("node:assert/strict");
+const fsPromises = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const { PostgresDatabase } = require("../backend/postgres-db");
 
@@ -429,6 +432,11 @@ test("collection updates roll back when a mutator fails", async (t) => {
 
 test("PostgresDatabase updates an order status while preserving payment status", async (t) => {
   withAdminConfig(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-postgres-order-audit-test-"),
+  );
+  const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
+  t.after(() => fsPromises.rm(temporaryDirectory, { recursive: true, force: true }));
   const orderId = "11111111-1111-4111-8111-111111111111";
   const orderRow = {
     order_id: orderId,
@@ -475,14 +483,14 @@ test("PostgresDatabase updates an order status while preserving payment status",
       };
     },
   });
-  const db = new PostgresDatabase({ pool });
+  const db = new PostgresDatabase({ pool, auditLogPath });
   t.after(() => db.close());
 
   const updated = await db.updateOrderStatus(
     orderId,
     { status: "processing" },
     undefined,
-    { actorRole: "admin" },
+    { actorRole: "admin", actorId: "admin-user-1" },
   );
 
   assert.equal(updated.orderId, orderId);
@@ -491,6 +499,13 @@ test("PostgresDatabase updates an order status while preserving payment status",
   assert.ok(statements.includes("BEGIN"));
   assert.ok(statements.includes("COMMIT"));
   assert.ok(!statements.includes("ROLLBACK"));
+  const [auditEntry] = (await fsPromises.readFile(auditLogPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  assert.equal(auditEntry.action, "order.status.update");
+  assert.equal(auditEntry.actorId, "admin-user-1");
+  assert.equal(auditEntry.actorRole, "admin");
 });
 
 test("payment webhook events are idempotent and update relational orders", async (t) => {

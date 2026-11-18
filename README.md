@@ -176,31 +176,32 @@ Các endpoint chính hiện có:
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi. |
 | `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng. |
 | `GET` | `/api/orders` | Người dùng | Tra cứu các đơn thuộc tài khoản đang đăng nhập. |
-| `GET` | `/api/orders/:id` | Công khai/Chủ đơn | Tra cứu trạng thái và thông tin cơ bản của đơn. |
+| `GET` | `/api/orders/:id` | Chủ đơn/admin; đơn khách dùng UUID ngẫu nhiên | Tra cứu trạng thái và thông tin cơ bản của đơn. |
+| `GET` | `/api/orders/:id/status` | Chủ đơn/admin; đơn khách dùng UUID ngẫu nhiên | Tra cứu trạng thái thanh toán và xử lý. |
 | `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua hoặc trao đổi sách. |
 | `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản. |
 | `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận phiên xác thực. |
 | `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại. |
 | `PATCH` | `/api/auth/customer-info` | Người dùng | Cập nhật thông tin liên hệ. |
 | `POST` | `/api/auth/logout` | Người dùng | Đăng xuất. |
-| `GET` | `/api/admin/stats` | Quản trị | Lấy thống kê. |
-| `GET` | `/api/admin/orders` | Quản trị | Liệt kê đơn hàng. |
-| `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn/thanh toán. |
-| `GET` | `/api/admin/books` | `read:books` | Liệt kê sách trong cổng quản trị. |
-| `POST` | `/api/admin/books` | Quản trị | Thêm sách. |
+| `GET` | `/api/admin/stats` | `read:dashboard` (admin/sales) | Lấy thống kê. |
+| `GET` | `/api/admin/orders` | `read:orders` (admin/sales) | Liệt kê đơn hàng. |
+| `PATCH` | `/api/admin/orders/:id` | `write:orders` (admin/sales); chỉ admin xác nhận thanh toán | Cập nhật trạng thái đơn/thanh toán. |
+| `GET` | `/api/admin/books` | `read:books` (admin) | Liệt kê sách trong cổng quản trị. |
+| `POST` | `/api/admin/books` | `write:books` (admin) | Thêm sách. |
 | `PUT` | `/api/admin/books/:id` | `write:books` | Cập nhật thông tin, thể loại và tồn kho; gửi `If-Match` với `updatedAt` để phát hiện cập nhật cũ. |
-| `DELETE` | `/api/admin/books/:id` | Quản trị | Xóa sách. |
+| `DELETE` | `/api/admin/books/:id` | `write:books` (admin) | Xóa sách. |
 | `GET` | `/api/admin/coupons` | `read:coupons` | Liệt kê coupon và lượt sử dụng. |
 | `POST` | `/api/admin/coupons` | `write:coupons` | Tạo coupon. |
 | `PUT` / `PATCH` | `/api/admin/coupons/:code` | `write:coupons` | Cập nhật điều kiện hoặc bật/tắt coupon. |
 | `GET` / `POST` | `/api/admin/customers/:id/interactions` | Quyền CRM | Xem lịch sử có phân trang hoặc ghi nhận tương tác chăm sóc. |
 | `PUT` / `PATCH` / `DELETE` | `/api/admin/customers/:id/interactions/:interactionId` | Quyền CRM | Cập nhật hoặc xoá tương tác; chỉ admin được xoá. |
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra coupon còn hiệu lực. |
-| `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
+| `GET` | `/api/admin/services` | `read:services` (admin/sales/support) | Liệt kê yêu cầu dịch vụ. |
 
 Danh sách hỗ trợ phân trang, sắp xếp có whitelist và header `X-Pagination`; xem [tài liệu phân trang API](docs/api-pagination.md) và [OpenAPI](docs/openapi.json).
-| `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
-| `GET` | `/api/admin/users` | Quản trị | Liệt kê người dùng. |
+| `PATCH` | `/api/admin/services/:id` | `write:services` (admin/sales/support) | Cập nhật yêu cầu dịch vụ. |
+| `GET` | `/api/admin/users` | `read:users` (admin) | Liệt kê người dùng. |
 | `GET` | `/api/admin/staff` | `read:staff` | Liệt kê nhân viên và các quyền hiệu lực theo vai trò. |
 | `POST` | `/api/admin/staff` | `write:staff` | Tạo tài khoản nhân viên với vai trò `sales` hoặc `support` và mật khẩu tối thiểu 12 ký tự. |
 | `PATCH` | `/api/admin/staff/:id` | `write:staff` | Cập nhật tên/email/vai trò hoặc kích hoạt/vô hiệu hóa nhân viên; phiên hiện có bị thu hồi. |
@@ -359,6 +360,7 @@ cần tạo tag và cấu hình quyền package. Production cần `ADMIN_EMAIL` 
 
 BookNest hiện phù hợp cho demo, chưa phải cấu hình production hoàn chỉnh. Trước khi vận hành thực tế:
 
+- Ma trận quyền, ranh giới tin cậy, kiểm tra sở hữu đơn hàng và audit trail nằm trong [docs/authorization.md](docs/authorization.md).
 - Bật HTTPS và giới hạn `CORS_ORIGINS`.
 - Dùng mật khẩu quản trị mạnh, duy nhất; không dùng credential mẫu.
 - Không lưu secret, token, mật khẩu hoặc dữ liệu cá nhân trong repository.

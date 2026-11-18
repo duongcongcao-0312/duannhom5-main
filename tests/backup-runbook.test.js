@@ -1,8 +1,15 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const {
+  decryptBuffer,
+  encryptBuffer,
+  loadBackupEncryptionConfig,
+  resolveBackupEncryptionConfig,
+} = require("../scripts/backup-encryption");
 const { createBackup, restoreBackup, verifyBackup } = require("../scripts/backup");
 const {
   createPostgresBackup,
@@ -16,6 +23,42 @@ const {
   startBackupScheduler,
   writeLog,
 } = require("../scripts/backup-scheduler");
+
+test("backup encryption authenticates ciphertext and validates environment keys", () => {
+  const key = crypto.randomBytes(32);
+  const plaintext = Buffer.from("synthetic backup content");
+  const encrypted = encryptBuffer(plaintext, key);
+
+  assert.notDeepEqual(encrypted, plaintext);
+  assert.deepEqual(decryptBuffer(encrypted, key), plaintext);
+  assert.throws(
+    () => decryptBuffer(encrypted, crypto.randomBytes(32)),
+    /authentication/i,
+  );
+  const tamperedEnvelope = JSON.parse(encrypted.toString("utf8"));
+  const ciphertext = Buffer.from(tamperedEnvelope.ciphertext, "base64");
+  ciphertext[0] ^= 1;
+  tamperedEnvelope.ciphertext = ciphertext.toString("base64");
+  const tampered = Buffer.from(JSON.stringify(tamperedEnvelope));
+  assert.throws(() => decryptBuffer(tampered, key), /authentication/i);
+  assert.throws(
+    () => loadBackupEncryptionConfig({ BACKUP_ENCRYPTION_REQUIRED: "true" }),
+    /BACKUP_ENCRYPTION_KEY/,
+  );
+  assert.throws(
+    () => loadBackupEncryptionConfig({
+      BACKUP_ENCRYPTION_KEY: "not-a-valid-key",
+    }),
+    /32-byte/,
+  );
+  assert.throws(
+    () => resolveBackupEncryptionConfig({
+      encryptionRequired: true,
+      env: {},
+    }),
+    /BACKUP_ENCRYPTION_KEY/,
+  );
+});
 
 test("backup create, verify, and restore succeeds with a manifest", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-backup-success-"));
@@ -37,6 +80,45 @@ test("backup create, verify, and restore succeeds with a manifest", async (t) =>
   assert.equal(await fs.readFile(path.join(restoredDir, "orders.jsonl"), "utf8"), '{"id":"order-1"}\n');
   assert.equal(await fs.readFile(path.join(restoredDir, "coupons.json"), "utf8"), '[{"code":"WELCOME5"}]\n');
   assert.equal(await fs.readFile(path.join(restoredDir, "customer-interactions.json"), "utf8"), "[]\n");
+});
+
+test("encrypted file backups verify and restore without plaintext backup files", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-encrypted-backup-"));
+  const dataDir = path.join(root, "data");
+  const backupDir = path.join(root, "backup");
+  const restoredDir = path.join(root, "restored");
+  const key = crypto.randomBytes(32);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(dataDir);
+  await fs.writeFile(path.join(dataDir, "users.json"), '[{"email":"synthetic@example.test"}]\n');
+
+  const manifest = await createBackup(
+    dataDir,
+    backupDir,
+    new Date("2026-11-18T00:00:00.000Z"),
+    { encryptionKey: key },
+  );
+
+  assert.equal(manifest.format, 3);
+  assert.equal(manifest.encryption.algorithm, "aes-256-gcm");
+  await assert.rejects(fs.access(path.join(backupDir, "users.json")), { code: "ENOENT" });
+  await verifyBackup(backupDir, { encryptionKey: key });
+  await assert.rejects(verifyBackup(backupDir), /BACKUP_ENCRYPTION_KEY/);
+  const manifestPath = path.join(backupDir, "manifest.json");
+  const originalManifest = await fs.readFile(manifestPath);
+  const alteredManifest = JSON.parse(originalManifest);
+  alteredManifest.createdAt = "2026-11-19T00:00:00.000Z";
+  await fs.writeFile(manifestPath, JSON.stringify(alteredManifest));
+  await assert.rejects(
+    verifyBackup(backupDir, { encryptionKey: key }),
+    /manifest.*thất bại/i,
+  );
+  await fs.writeFile(manifestPath, originalManifest);
+  await restoreBackup(backupDir, restoredDir, { encryptionKey: key });
+  assert.equal(
+    await fs.readFile(path.join(restoredDir, "users.json"), "utf8"),
+    '[{"email":"synthetic@example.test"}]\n',
+  );
 });
 
 test("backup verification fails when a file is changed or missing", async (t) => {
@@ -151,6 +233,33 @@ test("scheduled backup verifies, logs completion, and alerts with redacted failu
   assert.equal(delivered[0].message.includes("private-password"), false);
 });
 
+test("scheduled backups encrypt data files when an operator key is configured", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-scheduled-encryption-"));
+  const dataDir = path.join(root, "data");
+  const backupDir = path.join(root, "backups");
+  const encryptionKey = crypto.randomBytes(32);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(dataDir);
+  await fs.writeFile(path.join(dataDir, "users.json"), '[{"email":"synthetic@example.test"}]\n');
+  const config = loadBackupConfig({
+    DATA_DIR: dataDir,
+    BACKUP_DIR: backupDir,
+    BACKUP_ENCRYPTION_KEY: encryptionKey.toString("base64"),
+    BACKUP_ENCRYPTION_REQUIRED: "true",
+  }, root);
+  const records = [];
+  const backupPath = await runBackupCycle(config, {
+    now: "2026-11-18T00:00:00.000Z",
+    log: async (_config, event, details) => records.push({ event, ...details }),
+  });
+
+  const manifest = await verifyBackup(backupPath, { encryptionKey });
+  assert.equal(manifest.format, 3);
+  assert.equal(manifest.encryption.algorithm, "aes-256-gcm");
+  await assert.rejects(fs.access(path.join(backupPath, "users.json")), { code: "ENOENT" });
+  assert.equal(JSON.stringify(records).includes(encryptionKey.toString("base64")), false);
+});
+
 test("backup scheduler runs immediately and stops its timer cleanly", async () => {
   let runs = 0;
   const scheduler = startBackupScheduler({ intervalMs: 60_000 }, {
@@ -166,6 +275,7 @@ test("PostgreSQL backup, verification, and restore keep connection credentials o
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-postgres-backup-"));
   const backupDir = path.join(root, "booknest-20261111T000000000Z");
   const databaseUrl = "postgres://backup-user:private-password@db.example.test/store";
+  const encryptionKey = crypto.randomBytes(32);
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const commands = [];
   const runProcess = async (command, args, options) => {
@@ -175,12 +285,27 @@ test("PostgreSQL backup, verification, and restore keep connection credentials o
     }
   };
 
-  const manifest = await createPostgresBackup(databaseUrl, backupDir, new Date("2026-11-11T00:00:00Z"), {
-    runCommand: runProcess,
-  });
+  const manifest = await createPostgresBackup(
+    databaseUrl,
+    backupDir,
+    new Date("2026-11-11T00:00:00Z"),
+    { runCommand: runProcess, encryptionKey },
+  );
   assert.equal(manifest.storage, "postgresql");
-  await verifyBackup(backupDir, { runCommand: runProcess });
-  await restorePostgresBackup(backupDir, databaseUrl, { runCommand: runProcess });
+  assert.equal(manifest.format, 3);
+  await assert.rejects(fs.access(path.join(backupDir, "database.dump")), { code: "ENOENT" });
+  await verifyBackup(backupDir, { runCommand: runProcess, encryptionKey });
+  const manifestPath = path.join(backupDir, "manifest.json");
+  const originalManifest = await fs.readFile(manifestPath);
+  const alteredManifest = JSON.parse(originalManifest);
+  alteredManifest.createdAt = "2026-11-12T00:00:00.000Z";
+  await fs.writeFile(manifestPath, JSON.stringify(alteredManifest));
+  await assert.rejects(
+    verifyBackup(backupDir, { runCommand: runProcess, encryptionKey }),
+    /manifest.*thất bại/i,
+  );
+  await fs.writeFile(manifestPath, originalManifest);
+  await restorePostgresBackup(backupDir, databaseUrl, { runCommand: runProcess, encryptionKey });
   assert.equal(commands.length, 4);
   for (const command of commands) {
     assert.equal(command.args.includes(databaseUrl), false);
@@ -204,6 +329,7 @@ test("PostgreSQL child process receives connection details only through its envi
   const { EventEmitter } = require("node:events");
   const { PassThrough } = require("node:stream");
   const databaseUrl = "postgres://backup-user:private-password@db.example.test/store";
+  const backupEncryptionKey = crypto.randomBytes(32).toString("base64");
   let invocation;
   const spawnImpl = (command, args, options) => {
     invocation = { command, args, options };
@@ -215,14 +341,20 @@ test("PostgreSQL child process receives connection details only through its envi
   };
   await runCommand("pg_dump", ["--format=custom"], {
     databaseUrl,
-    env: { DATABASE_URL: databaseUrl, PGPASSWORD: "should-not-be-forwarded" },
+    env: {
+      DATABASE_URL: databaseUrl,
+      PGPASSWORD: "should-not-be-forwarded",
+      BACKUP_ENCRYPTION_KEY: backupEncryptionKey,
+    },
     spawnImpl,
     timeoutMs: 1000,
   });
   assert.equal(invocation.options.env.PGDATABASE, databaseUrl);
   assert.equal("DATABASE_URL" in invocation.options.env, false);
   assert.equal("PGPASSWORD" in invocation.options.env, false);
+  assert.equal("BACKUP_ENCRYPTION_KEY" in invocation.options.env, false);
   assert.equal(invocation.args.includes(databaseUrl), false);
+  assert.equal(invocation.args.includes(backupEncryptionKey), false);
 
   const failedSpawn = (_command, _args, options) => {
     const child = new EventEmitter();
@@ -247,14 +379,20 @@ test("backup logs are persisted as JSON Lines with secret values redacted", asyn
   const logFile = path.join(root, "backup.log");
   const config = { logFile };
   const secret = "postgres://backup-user:private-password@db.example.test/store";
+  const backupEncryptionKey = crypto.randomBytes(32).toString("base64");
   await writeLog(config, "backup_failed", {
     message: `pg_dump failed: ${secret}`,
-  }, { DATABASE_URL: secret });
+    keyMaterial: backupEncryptionKey,
+  }, {
+    DATABASE_URL: secret,
+    BACKUP_ENCRYPTION_KEY: backupEncryptionKey,
+  });
   const content = await fs.readFile(logFile, "utf8");
   const record = JSON.parse(content);
   assert.equal(record.event, "backup_failed");
   assert.equal(record.message.includes("private-password"), false);
   assert.match(record.message, /\[REDACTED\]/);
+  assert.equal(JSON.stringify(record).includes(backupEncryptionKey), false);
 });
 
 test("scheduled backup selects PostgreSQL when DATABASE_URL is configured", async (t) => {

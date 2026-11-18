@@ -163,6 +163,29 @@ test("production server requires explicit admin credentials", () => {
   assert.match(result.stderr, /Production requires a valid ADMIN_EMAIL/);
 });
 
+test("production server requires an explicit rate-limit HMAC secret", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", "require('./server').createServer()"],
+    {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        RENDER: "",
+        DATABASE_URL: "postgresql://test:test@127.0.0.1:5432/booknest",
+        ADMIN_EMAIL: "admin@example.com",
+        ADMIN_PASSWORD: "password1234",
+        RATE_LIMIT_HMAC_KEY: "",
+        NODE_ENV: "production",
+      },
+      encoding: "utf8",
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /RATE_LIMIT_HMAC_KEY/);
+});
+
 test("production server requires PostgreSQL for shared authentication sessions", () => {
   const result = spawnSync(
     process.execPath,
@@ -175,6 +198,7 @@ test("production server requires PostgreSQL for shared authentication sessions",
         DATABASE_URL: "",
         ADMIN_EMAIL: "admin@example.com",
         ADMIN_PASSWORD: "password1234",
+        RATE_LIMIT_HMAC_KEY: "test-rate-limit-hmac-secret-000000",
         NODE_ENV: "production",
       },
       encoding: "utf8",

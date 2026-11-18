@@ -54,10 +54,12 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     headers: {
       Origin: "https://shop.example",
       "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,x-order-access-code",
     },
   });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get("access-control-allow-origin"), "https://shop.example");
+  assert.match(preflight.headers.get("access-control-allow-headers"), /X-Order-Access-Code/i);
   const rejectedPreflight = await fetch(`${baseUrl}/api/orders`, {
     method: "OPTIONS",
     headers: { Origin: "https://untrusted.example" },
@@ -498,12 +500,24 @@ test("registration returns a JSON service error when user persistence is unavail
     NODE_ENV: process.env.NODE_ENV,
     ADMIN_EMAIL: process.env.ADMIN_EMAIL,
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    RATE_LIMIT_HMAC_KEY: process.env.RATE_LIMIT_HMAC_KEY,
+    RATE_LIMIT_TRUSTED_PROXY_HOPS: process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS,
+    RATE_LIMIT_TRUSTED_PROXY_IPS: process.env.RATE_LIMIT_TRUSTED_PROXY_IPS,
   };
   process.env.NODE_ENV = "production";
   process.env.ADMIN_EMAIL = "admin@example.com";
   process.env.ADMIN_PASSWORD = "secure-test-password-123";
+  process.env.RATE_LIMIT_HMAC_KEY = "workflow-test-rate-limit-hmac-secret";
+  process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS = "0";
+  process.env.RATE_LIMIT_TRUSTED_PROXY_IPS = "";
   const server = createServer({
     database: {
+      async consumeRateLimit(_bucketKey, limit, windowMs, now) {
+        return { allowed: true, count: 1, remaining: limit - 1, resetAt: now + windowMs };
+      },
+      async clearRateLimit() {
+        return 1;
+      },
       async getCustomBooks() {
         return [];
       },

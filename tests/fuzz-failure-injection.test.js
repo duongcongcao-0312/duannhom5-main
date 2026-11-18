@@ -59,6 +59,7 @@ test("fuzzed JSON bodies and checkout quantities fail safely while valid checkou
     address: "12 Đường Sách",
     phone: "0901234567",
     paymentMethod: "cod",
+    accessCode: "a1".repeat(32),
     discountRate: 0,
     couponCode,
     items: [{ title: "Nhà giả kim", quantity }],
@@ -130,6 +131,7 @@ test("fuzzed emails, reset tokens, static paths and order statuses stay within A
     address: "12 Đường Sách",
     phone: "0901234567",
     paymentMethod: "cod",
+    accessCode: "a1".repeat(32),
     discountRate: 0,
     items: [{ title: "Nhà giả kim", quantity: 1 }],
   });

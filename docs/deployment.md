@@ -141,6 +141,11 @@ bằng biến `HOST_PORT` trong `.env`. Compose local chạy chế độ develop
 kho dữ liệu dạng file được lưu trong volume `backend-data`, và chỉ bind cổng
 trên loopback của máy.
 
+Nếu chạy riêng frontend bằng VS Code Live Server hoặc Vite, dùng cổng mặc định
+`5500` hoặc `5173`; frontend local sẽ tự gọi API tại `http://localhost:8000`
+hoặc `http://127.0.0.1:8000`. Cách đơn giản nhất vẫn là mở trực tiếp
+`http://localhost:8000`.
+
 Không commit `.env` hoặc đưa mật khẩu/API key vào repository. Cấu hình Compose
 này dành cho local development; production cần PostgreSQL, `DATABASE_URL`,
 migration trước khi khởi động, và các biến bí mật được cấp qua secret manager.

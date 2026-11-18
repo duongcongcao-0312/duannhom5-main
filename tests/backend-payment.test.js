@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 const { CustomerError } = require("../backend/db");
-const { buildPaymentQrUrl } = require("../assets/vietqr");
+const { bindPaymentQrFallback, buildPaymentQrUrl } = require("../assets/vietqr");
 
 const webhookSecret = "test-payment-webhook-secret-with-32-bytes-min";
 
@@ -344,7 +344,7 @@ test("SePay config, webhook, and order status endpoints work together", async (t
 
 test("VietQR builder encodes only the payment code and rejects invalid payment data", () => {
   const config = {
-    bankCode: "970415",
+    bankCode: "970422",
     accountNumber: "123456789",
     accountName: "BookNest Test",
   };
@@ -359,13 +359,56 @@ test("VietQR builder encodes only the payment code and rejects invalid payment d
   assert.equal(qrUrl.hostname, "img.vietqr.io");
   assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
   assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
+  assert.equal(qrUrl.searchParams.get("accountName"), config.accountName);
   assert.doesNotMatch(qrUrl.searchParams.get("addInfo"), /BOOKNEST/i);
-  assert.ok(qrUrl.pathname.endsWith("-compact2.png"));
+	assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.png`);
+	const fallbackUrl = new URL(buildPaymentQrUrl(config, order, "svg"));
+	assert.equal(fallbackUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.svg`);
+	assert.equal(fallbackUrl.searchParams.get("amount"), String(order.total));
+	assert.equal(fallbackUrl.searchParams.get("addInfo"), order.paymentCode);
+  assert.equal(fallbackUrl.searchParams.get("accountName"), config.accountName);
 
   assert.throws(() => buildPaymentQrUrl(config, null), /Đơn hàng chuyển khoản/);
   assert.throws(() => buildPaymentQrUrl(config, { ...order, paymentMethod: "cod" }), /Đơn hàng chuyển khoản/);
   assert.throws(() => buildPaymentQrUrl({ ...config, bankCode: "TCB" }, order), /BIN gồm 6 chữ số/);
   assert.throws(() => buildPaymentQrUrl({ ...config, accountNumber: "bad-account" }, order), /Số tài khoản/);
+});
+
+test("VietQR image failure retries SVG then shows safe manual transfer details", () => {
+  const order = {
+    orderId: "order-test",
+    paymentMethod: "transfer",
+    paymentCode: "BN1234567890AB",
+    total: 245000,
+  };
+  const fields = {
+    "[data-payment-qr-amount]": { textContent: "" },
+    "[data-payment-qr-code]": { textContent: "" },
+  };
+  const fallback = {
+    hidden: true,
+    querySelector(selector) { return fields[selector]; },
+  };
+  const image = {
+    hidden: true,
+    src: "",
+    style: { visibility: "" },
+    removed: false,
+    removeAttribute(name) { if (name === "src") this.removed = true; },
+  };
+
+  bindPaymentQrFallback(image, fallback, order, "https://img.vietqr.io/fallback.svg");
+  image.onerror();
+  assert.equal(image.src, "https://img.vietqr.io/fallback.svg");
+  assert.equal(image.hidden, true);
+  assert.equal(fallback.hidden, true);
+
+  image.onerror();
+  assert.equal(image.hidden, true);
+  assert.equal(image.removed, true);
+  assert.equal(fallback.hidden, false);
+  assert.equal(fields["[data-payment-qr-amount]"].textContent, "245.000");
+  assert.equal(fields["[data-payment-qr-code]"].textContent, order.paymentCode);
 });
 
 test("a created transfer order produces a QR whose payment code matches the SePay webhook", async (t) => {
@@ -389,8 +432,8 @@ test("a created transfer order produces a QR whose payment code matches the SePa
     },
   };
   const config = {
-    bankCode: "970415",
-    bankName: "VietinBank",
+    bankCode: "970422",
+    bankName: "MB Bank",
     accountNumber: "123456789",
     accountName: "BookNest Test",
   };
@@ -435,7 +478,7 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   const qrUrl = new URL(buildPaymentQrUrl(config, order));
   assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
   assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
-  assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.png`);
+	assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.png`);
 
   const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
     method: "POST",

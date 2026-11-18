@@ -1,4 +1,4 @@
-﻿const fs = require("node:fs/promises");
+const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -18,7 +18,17 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
-const { readAuditEntries } = require("./backend/audit");
+const { normalizeSePayConfig } = require("./backend/sepay-config");
+const {
+  appendAuditEntry,
+  readAuditEntries,
+  withAuditRequestContext,
+} = require("./backend/audit");
+const {
+  MonitoringMetrics,
+  normalizeRequestRoute,
+  redactLogText,
+} = require("./backend/monitoring");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
@@ -446,9 +456,12 @@ class RequestError extends Error {
 
 function getRequestId(request) {
   const suppliedId = request.headers["x-request-id"];
+  const authorization = request.headers["authorization"] || "";
+  const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
   return typeof suppliedId === "string" &&
     suppliedId.length <= 128 &&
-    /^[A-Za-z0-9._:-]+$/.test(suppliedId)
+    /^[A-Za-z0-9._:-]+$/.test(suppliedId) &&
+    suppliedId !== bearerToken
     ? suppliedId
     : randomUUID();
 }
@@ -463,17 +476,59 @@ function logRequestError(request, requestId, error, message) {
   const cause = error && typeof error === "object" ? error.cause : undefined;
   const loggedError = cause || error;
   console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
     level: "error",
+    event: "request_error",
     message,
-    requestId,
+    requestId: redactLogText(requestId),
     method: request.method,
-    path: pathname,
+    route: normalizeRequestRoute(pathname),
     error: {
       name: loggedError instanceof Error ? loggedError.name : "UnknownError",
-      message: loggedError instanceof Error ? loggedError.message : String(loggedError),
-      stack: loggedError instanceof Error ? loggedError.stack : undefined,
+      message: redactLogText(loggedError instanceof Error ? loggedError.message : String(loggedError)),
+      stack: redactLogText(loggedError instanceof Error ? loggedError.stack : ""),
     },
   }));
+}
+
+function parseMonitoringAlertUrl(value) {
+  const alertUrl = String(value || "").trim();
+  if (!alertUrl) return "";
+  let parsed;
+  try {
+    parsed = new URL(alertUrl);
+  } catch {
+    throw new Error("MONITORING_ALERT_WEBHOOK_URL không phải URL hợp lệ.");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error("MONITORING_ALERT_WEBHOOK_URL phải dùng HTTPS và không nhúng thông tin đăng nhập.");
+  }
+  return alertUrl;
+}
+
+async function readBackupStatus(statusFile) {
+  try {
+    const status = JSON.parse(await fs.readFile(statusFile, "utf8"));
+    if (!status || typeof status !== "object" || Array.isArray(status) ||
+        !["succeeded", "failed"].includes(status.status)) {
+      return { status: "unavailable", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    return {
+      status: status.status,
+      lastAttemptAt: typeof status.lastAttemptAt === "string" ? status.lastAttemptAt : null,
+      lastSuccessAt: typeof status.lastSuccessAt === "string" ? status.lastSuccessAt : null,
+      storage: typeof status.storage === "string" ? status.storage : null,
+      durationMs: Number.isFinite(status.durationMs) ? status.durationMs : null,
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return { status: "unknown", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    if (error instanceof SyntaxError) {
+      return { status: "unavailable", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    throw error;
+  }
 }
 
 function roundMoney(value) {
@@ -1171,6 +1226,12 @@ function createServer({
   customerInteractionsPath,
   consentRecordsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
+  backupStatusFile = path.resolve(
+    process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
+  ),
+  monitoringAlertUrl = process.env.MONITORING_ALERT_WEBHOOK_URL || "",
+  monitoringAlertFetch = globalThis.fetch,
+  monitoringAlertCooldownMs = 15 * 60 * 1000,
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sepayApiKey = process.env.SEPAY_API_KEY || "",
@@ -1202,6 +1263,17 @@ function createServer({
       );
     }
   }
+
+  const sepayConfiguration = normalizeSePayConfig({
+    apiKey: sepayApiKey,
+    bankCode: sepayBankCode,
+    bankName: sepayBankName,
+    accountNumber: sepayAccountNumber,
+    accountName: sepayAccountName,
+  });
+  const invalidPaymentDisplaySettings = sepayConfiguration.invalid.filter(
+    (setting) => setting !== "SEPAY_API_KEY",
+  );
 
   if (process.env.RENDER && !database && !process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL phải được cấu hình trên Render trước khi chạy backend.");
@@ -1240,6 +1312,14 @@ function createServer({
   if (db && typeof db === "object") {
     db.auditLogPath = auditLogPath;
   }
+  const monitoringMetrics = new MonitoringMetrics();
+  const startedAt = Date.now();
+  const alertUrl = parseMonitoringAlertUrl(monitoringAlertUrl);
+  if (typeof monitoringAlertCooldownMs !== "number" ||
+      !Number.isFinite(monitoringAlertCooldownMs) ||
+      monitoringAlertCooldownMs < 0) {
+    throw new RangeError("monitoringAlertCooldownMs must be a non-negative number.");
+  }
   const sessionStore = new SessionStore({
     repository: sessionRepository,
     sessionTtlMs,
@@ -1255,6 +1335,84 @@ function createServer({
   const registrationAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
+
+  function dispatchMonitoringAlert(alert, requestId) {
+    const now = Date.now();
+    if (!monitoringMetrics.shouldSendAlert(alert.event, now, monitoringAlertCooldownMs)) return;
+    const payload = {
+      event: alert.event,
+      severity: alert.severity,
+      timestamp: new Date(now).toISOString(),
+      service: "BookNest",
+      count: alert.count,
+      threshold: alert.threshold,
+      requestId: redactLogText(requestId),
+      text: `BookNest alert: ${alert.event} (${alert.count}; ${alert.threshold}).`,
+    };
+    console.warn(JSON.stringify({ level: "warn", event: "monitoring_alert", ...payload }));
+    if (!alertUrl) return;
+
+    void (async () => {
+      try {
+        if (typeof monitoringAlertFetch !== "function") {
+          throw new Error("No fetch implementation is available for monitoring alerts.");
+        }
+        const response = await monitoringAlertFetch(alertUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) throw new Error(`Alert endpoint returned HTTP ${response.status}.`);
+      } catch (error) {
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "error",
+          event: "monitoring_alert_delivery_failed",
+          message: redactLogText(error.message),
+        }));
+      }
+    })();
+  }
+
+  async function getDatabaseMonitoringStatus(requestId) {
+    let status;
+    try {
+      if (typeof db.getMonitoringStatus === "function") {
+        status = await db.getMonitoringStatus();
+      } else {
+        await db.init();
+        status = {
+          status: "healthy",
+          storage: process.env.DATABASE_URL ? "postgresql" : "file",
+          connections: null,
+        };
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "database_health_check_failed",
+        requestId: redactLogText(requestId),
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      }));
+      status = {
+        status: "unavailable",
+        storage: process.env.DATABASE_URL ? "postgresql" : "file",
+        connections: null,
+      };
+    }
+    if (status.status !== "healthy") {
+      dispatchMonitoringAlert({
+        event: "database_unavailable",
+        severity: "critical",
+        count: 1,
+        threshold: "database health check failed",
+      }, requestId);
+    }
+    return status;
+  }
+
   function verifyPasswordReauthentication(request, user, password) {
     const now = Date.now();
     for (const [address, attempt] of reauthenticationAttempts) {
@@ -1289,78 +1447,59 @@ function createServer({
   );
 
   let catalogLoadError;
-  let catalogLoadPromise = null;
-  let catalogLoaded = false;
-  let nextCatalogRetryAt = 0;
-  const catalogRetryDelaysMs = [200, 600];
-  const catalogRetryCooldownMs = 2_000;
-
-  async function loadCatalogWithRetries() {
-    let lastError;
-    for (let attempt = 0; attempt <= catalogRetryDelaysMs.length; attempt += 1) {
-      try {
-        const [custom, overrides] = await Promise.all([
-          db.getCustomBooks(),
-          typeof db.getCatalogBookOverrides === "function"
-            ? db.getCatalogBookOverrides()
-            : Promise.resolve([]),
-        ]);
-        for (const override of overrides) {
-          const baseBook = catalogBookById.get(override.id);
-          if (!baseBook) continue;
-          if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
-          catalogBookOverrides.set(override.id, override);
-          bookCatalog.set(override.title, {
-            ...baseBook,
-            ...override,
-            isCustom: false,
-          });
-        }
-        for (const book of custom) {
-          if (book && book.title) {
-            bookCatalog.set(book.title, { ...book, isCustom: true });
-          }
-        }
-        catalogLoaded = true;
-        catalogLoadError = null;
-        nextCatalogRetryAt = 0;
-        return;
-      } catch (error) {
-        lastError = error;
-        if (attempt < catalogRetryDelaysMs.length) {
-          await new Promise((resolve) => setTimeout(resolve, catalogRetryDelaysMs[attempt]));
+  async function loadCatalog() {
+    try {
+      const [custom, overrides] = await Promise.all([
+        db.getCustomBooks(),
+        typeof db.getCatalogBookOverrides === "function"
+          ? db.getCatalogBookOverrides()
+          : Promise.resolve([]),
+      ]);
+      for (const override of overrides) {
+        const baseBook = catalogBookById.get(override.id);
+        if (!baseBook) continue;
+        if (override.title !== baseBook.title) bookCatalog.delete(baseBook.title);
+        catalogBookOverrides.set(override.id, override);
+        bookCatalog.set(override.title, {
+          ...baseBook,
+          ...override,
+          isCustom: false,
+        });
+      }
+      for (const book of custom) {
+        if (book && book.title) {
+          bookCatalog.set(book.title, { ...book, isCustom: true });
         }
       }
+      catalogLoadError = null;
+    } catch (error) {
+      catalogLoadError = error;
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "catalog_load_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+        message: redactLogText(error?.message),
+      }));
     }
-    throw lastError;
   }
 
-  function startCatalogLoad() {
-    if (catalogLoaded) return Promise.resolve();
-    if (catalogLoadPromise) return catalogLoadPromise;
-    catalogLoadPromise = (async () => {
-      try {
-        await loadCatalogWithRetries();
-      } catch (error) {
-        catalogLoadError = error;
-        nextCatalogRetryAt = Date.now() + catalogRetryCooldownMs;
-        console.error("Catalog load failed:", error);
-      } finally {
-        catalogLoadPromise = null;
-      }
-    })();
-    return catalogLoadPromise;
-  }
-
-  void startCatalogLoad();
+  let catalogReady = loadCatalog();
+  let catalogRetry;
 
   async function waitForCatalogReady() {
-    if (!catalogLoadPromise && catalogLoadError && Date.now() < nextCatalogRetryAt) {
-      throw catalogLoadError;
+    await catalogReady;
+    if (!catalogLoadError) return;
+    if (!catalogRetry) {
+      catalogRetry = loadCatalog().finally(() => {
+        catalogReady = catalogRetry;
+        catalogRetry = null;
+      });
     }
-    await startCatalogLoad();
+    await catalogRetry;
     if (catalogLoadError) throw catalogLoadError;
   }
+
   async function createAndPersistOrder(payload, userId, requester, idempotencyKey) {
     await waitForCatalogReady();
     const operation = orderWriteQueue.then(async () => {
@@ -1493,6 +1632,32 @@ function createServer({
     return await sessionStore.getSession(token);
   }
 
+  async function auditSensitiveRequest(request, response, requestUrl) {
+    const pathname = requestUrl.pathname;
+    const isAdminRequest = pathname.startsWith("/api/admin/");
+    const isSensitiveRequest = isAdminRequest ||
+      pathname === "/api/orders" ||
+      /^\/api\/orders\/[0-9a-f-]{36}(?:\/status)?$/i.test(pathname) ||
+      pathname === "/api/auth/customer-info" ||
+      pathname.startsWith("/api/privacy/consents") ||
+      /^\/api\/auth\/social\/(?:link|unlink)$/.test(pathname);
+    if (!isSensitiveRequest) return;
+
+    const actor = await getAuthUser(request);
+    await appendAuditEntry(auditLogPath, {
+      action: isAdminRequest ? "admin.api.request" : "sensitive.api.request",
+      actorId: actor?.userId || null,
+      actorRole: actor?.role || "anonymous",
+      entityType: isAdminRequest ? "admin_api" : "sensitive_api",
+      entityId: pathname,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: {
+        method: request.method,
+        route: pathname,
+      },
+    });
+  }
+
   async function requireCustomerPermission(request, permission) {
     return requireCustomerPermissionMiddleware(
       request,
@@ -1617,6 +1782,8 @@ function createServer({
       return;
     }
 
+    await auditSensitiveRequest(request, response, requestUrl);
+
     if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
       sendJson(response, 200, { status: "ok", service: "booknest" }, request.method);
       return;
@@ -1639,20 +1806,14 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/api/payments/config" && request.method === "GET") {
-      const accountNumber = String(sepayAccountNumber || "").trim();
-      const bankCode = String(sepayBankCode || "").trim();
-      const bankName = String(sepayBankName || "").trim();
-      const accountName = String(sepayAccountName || "").trim();
-      // VietQR Quick Link uses a bank BIN; do not guess a BIN from a bank alias.
-      if (!/^\d{6}$/.test(bankCode) || !/^\d{6,19}$/.test(accountNumber) ||
-          !bankName || !accountName) {
+      if (invalidPaymentDisplaySettings.length > 0) {
         throw new RequestError(503, "Thông tin tài khoản nhận thanh toán chưa được cấu hình.");
       }
       sendJson(response, 200, {
-        bankCode,
-        bankName,
-        accountNumber,
-        accountName,
+        bankCode: sepayConfiguration.config.bankCode,
+        bankName: sepayConfiguration.config.bankName,
+        accountNumber: sepayConfiguration.config.accountNumber,
+        accountName: sepayConfiguration.config.accountName,
       });
       return;
     }
@@ -1733,6 +1894,7 @@ function createServer({
         amount: payload.amount,
         occurredAt: payload.occurredAt,
       });
+      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
       if (result.conflict) {
         throw new RequestError(409, "Webhook ID đã được dùng với payload khác.");
       }
@@ -1752,11 +1914,15 @@ function createServer({
       if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
         throw new RequestError(415, "SePay webhook cần được gửi ở định dạng JSON.");
       }
-      if (typeof sepayApiKey !== "string" || sepayApiKey.length < 16) {
-        throw new RequestError(503, "SePay webhook chưa được cấu hình API Key.");
+      if (sepayConfiguration.invalid.includes("SEPAY_API_KEY") ||
+          sepayConfiguration.invalid.includes("SEPAY_ACCOUNT_NUMBER")) {
+        throw new RequestError(503, "SePay webhook chưa được cấu hình đầy đủ.");
       }
       const authorization = request.headers.authorization || "";
-      const expectedAuthorization = Buffer.from(`Apikey ${sepayApiKey}`, "utf8");
+      const expectedAuthorization = Buffer.from(
+        `Apikey ${sepayConfiguration.config.apiKey}`,
+        "utf8",
+      );
       const suppliedAuthorization = Buffer.from(String(authorization), "utf8");
       if (expectedAuthorization.length !== suppliedAuthorization.length ||
           !timingSafeEqual(expectedAuthorization, suppliedAuthorization)) {
@@ -1785,7 +1951,7 @@ function createServer({
         sendJson(response, 200, { success: true, ignored: true, reason: "not_incoming" });
         return;
       }
-      if (String(payload.accountNumber || "").trim() !== String(sepayAccountNumber || "").trim()) {
+      if (String(payload.accountNumber || "").trim() !== sepayConfiguration.config.accountNumber) {
         sendJson(response, 200, { success: true, ignored: true, reason: "bank_account_mismatch" });
         return;
       }
@@ -1840,6 +2006,7 @@ function createServer({
         amount: Number(payload.transferAmount),
         occurredAt: new Date(occurredAt).toISOString(),
       });
+      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
       if (result.conflict) {
         throw new RequestError(409, "Mã giao dịch SePay đã được sử dụng với dữ liệu khác.");
       }
@@ -1951,7 +2118,13 @@ function createServer({
           });
         } catch (error) {
           await db.clearPasswordResetToken(tokenHash);
-          console.error("Không thể gửi email khôi phục mật khẩu:", error);
+          console.error(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            level: "error",
+            event: "password_reset_delivery_failed",
+            errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+            message: redactLogText(error?.message),
+          }));
           throw new RequestError(
             503,
             "Không thể gửi email khôi phục. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
@@ -2258,7 +2431,8 @@ function createServer({
       const updatedUser = await db.updateCustomerInfo(
         session.userId,
         customerInfo,
-        session.email || session.name || "self-service",
+        session.userId,
+        session.role,
       );
       if (!updatedUser)
         throw new RequestError(404, "Không tìm thấy tài khoản.");
@@ -2387,6 +2561,7 @@ function createServer({
       const customer = await db.createCustomer(
         validateCustomerData(payload),
         user.userId,
+        user.role,
       );
       sendJson(response, 201, customer);
       return;
@@ -2423,6 +2598,7 @@ function createServer({
       const customer = await db.createCustomer(
         validateCustomerData(payload),
         user.userId,
+        user.role,
       );
       sendJson(response, 201, customer);
       return;
@@ -2460,6 +2636,7 @@ function createServer({
           customerId,
           validateCustomerInteractionData(payload),
           user.userId,
+          user.role,
         );
         if (!interaction) throw new RequestError(404, "Không tìm thấy khách hàng.");
         sendJson(response, 201, interaction);
@@ -2481,6 +2658,7 @@ function createServer({
           interactionId,
           validateCustomerInteractionData(payload, { partial: true }),
           user.userId,
+          user.role,
         );
         if (!interaction) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, interaction);
@@ -2489,7 +2667,12 @@ function createServer({
 
       if (interactionId && request.method === "DELETE") {
         const user = await requireCustomerPermission(request, "interaction:delete");
-        const deleted = await db.deleteCustomerInteraction(customerId, interactionId, user.userId);
+        const deleted = await db.deleteCustomerInteraction(
+          customerId,
+          interactionId,
+          user.userId,
+          user.role,
+        );
         if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, { success: true });
         return;
@@ -2518,7 +2701,11 @@ function createServer({
 
       if (request.method === "DELETE") {
         const user = await requireCustomerPermission(request, "delete");
-        const deleted = await db.softDeleteCustomer(customerMatch[1], user.userId);
+        const deleted = await db.softDeleteCustomer(
+          customerMatch[1],
+          user.userId,
+          user.role,
+        );
         if (!deleted) {
           throw new RequestError(404, "Không tìm thấy khách hàng.");
         }
@@ -2534,8 +2721,18 @@ function createServer({
       );
       const updated =
         payload && payload.status !== undefined
-          ? await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId)
-          : await db.updateCustomer(customerMatch[1], payload, user.userId);
+          ? await db.updateCustomerStatus(
+            customerMatch[1],
+            payload.status,
+            user.userId,
+            user.role,
+          )
+          : await db.updateCustomer(
+            customerMatch[1],
+            payload,
+            user.userId,
+            user.role,
+          );
 
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy khách hàng.");
@@ -2658,6 +2855,21 @@ function createServer({
       if (!order) {
         sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
         return;
+      }
+      const requester = await getAuthUser(request);
+      if (order.userId) {
+        if (!requester) {
+          throw new RequestError(
+            401,
+            "Vui lòng đăng nhập để tra cứu trạng thái đơn hàng này.",
+          );
+        }
+        if (requester.role !== ROLES.ADMIN && order.userId !== requester.userId) {
+          throw new RequestError(
+            403,
+            "Bạn không có quyền xem trạng thái đơn hàng của người dùng khác.",
+          );
+        }
       }
       sendJson(response, 200, {
         paymentStatus: order.paymentStatus,
@@ -2933,6 +3145,25 @@ function createServer({
       return;
     }
 
+    if (
+      requestUrl.pathname === "/api/admin/monitoring" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:dashboard");
+      const databaseStatus = await getDatabaseMonitoringStatus(
+        response.getHeader("X-Request-Id"),
+      );
+      const backupStatus = await readBackupStatus(backupStatusFile);
+      sendJson(response, 200, {
+        generatedAt: new Date().toISOString(),
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        requests: monitoringMetrics.getSnapshot(),
+        database: databaseStatus,
+        backup: backupStatus,
+      });
+      return;
+    }
+
     // --- Admin API: Orders (Full detail, status update) ---
     if (
       requestUrl.pathname === "/api/admin/orders" &&
@@ -2965,6 +3196,12 @@ function createServer({
       const safePayload = {
         ...payload,
       };
+      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
+        throw new RequestError(
+          403,
+          "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
+        );
+      }
       if (safePayload.status !== undefined) {
         safePayload.status = sanitizePlainText(
           typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
@@ -2987,7 +3224,7 @@ function createServer({
         adminOrderMatch[1],
         safePayload,
         ordersPath,
-        { actorRole: requester.role },
+        { actorRole: requester.role, actorId: requester.userId },
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");
@@ -3380,11 +3617,44 @@ function createServer({
 
   const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
+    const requestStartedAt = process.hrtime.bigint();
     response.setHeader("X-Request-Id", requestId);
     for (const [name, value] of Object.entries(securityHeaders)) {
       response.setHeader(name, value);
     }
-    void handleRequest(request, response).catch((error) => {
+    response.once("finish", () => {
+      let pathname = "/";
+      try {
+        pathname = new URL(request.url, "http://localhost").pathname;
+      } catch {
+        pathname = "<invalid-url>";
+      }
+      const durationMs = Number(process.hrtime.bigint() - requestStartedAt) / 1e6;
+      const sample = monitoringMetrics.recordRequest({
+        method: request.method,
+        pathname,
+        status: response.statusCode,
+        durationMs,
+      });
+      const record = {
+        timestamp: new Date().toISOString(),
+        level: response.statusCode >= 500 ? "error" : response.statusCode >= 400 ? "warn" : "info",
+        event: "http_request",
+        requestId: redactLogText(requestId),
+        method: sample.method,
+        route: sample.route,
+        status: sample.status,
+        durationMs: Number(durationMs.toFixed(2)),
+      };
+      const serialized = JSON.stringify(record);
+      if (response.statusCode >= 500) console.error(serialized);
+      else if (response.statusCode >= 400) console.warn(serialized);
+      else console.log(serialized);
+      for (const alert of monitoringMetrics.getTriggeredAlerts()) {
+        dispatchMonitoringAlert(alert, requestId);
+      }
+    });
+    void withAuditRequestContext(requestId, () => handleRequest(request, response)).catch((error) => {
       const isExpectedError =
         error instanceof RequestError || error instanceof CustomerError;
       const status =
@@ -3433,17 +3703,21 @@ function createServer({
     try {
       Promise.resolve(db.close()).catch((error) => {
         console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
           level: "error",
-          message: "Failed to close the database pool",
-          error: error instanceof Error ? error.message : String(error),
+          event: "database_pool_close_failed",
+          errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+          message: redactLogText(error instanceof Error ? error.message : String(error)),
         }));
         process.exitCode = 1;
       });
     } catch (error) {
       console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
         level: "error",
-        message: "Failed to close the database pool",
-        error: error instanceof Error ? error.message : String(error),
+        event: "database_pool_close_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+        message: redactLogText(error instanceof Error ? error.message : String(error)),
       }));
       process.exitCode = 1;
     }
@@ -3462,7 +3736,12 @@ if (require.main === module) {
     console.log(`Nhận ${signal}, đang dừng server an toàn.`);
     server.close((error) => {
       if (!error) return;
-      console.error(`Không thể dừng server an toàn: ${error.message}`);
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "server_shutdown_failed",
+        message: redactLogText(error.message),
+      }));
       process.exitCode = 1;
     });
   };

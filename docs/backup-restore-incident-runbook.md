@@ -41,6 +41,7 @@ Các biến cấu hình:
 | `BACKUP_INTERVAL_HOURS` | `24` | Chu kỳ, từ 1 đến 8760 giờ. |
 | `BACKUP_RETENTION_DAYS` | `30` | Số ngày giữ; luôn giữ ít nhất hai bản mới nhất. |
 | `BACKUP_LOG_FILE` | `<BACKUP_DIR>/backup.log` | Log kết quả dạng JSON Lines. |
+| `BACKUP_STATUS_FILE` | `<DATA_DIR>/backup-status.json` | Trạng thái lần backup gần nhất cho dashboard. |
 | `BACKUP_ALERT_WEBHOOK_URL` | Không cấu hình | Webhook HTTPS nhận sự kiện `backup_failed`; lưu URL trong secret manager. |
 | `DATABASE_URL` | Không cấu hình | Nếu có, scheduler backup PostgreSQL thay vì file JSON/JSONL. Không log hoặc truyền URL trong đối số tiến trình. |
 | `DATABASE_BACKUP_TIMEOUT_MS` | `1800000` | Timeout cho `pg_dump`/`pg_restore`; từ 1 đến 86400000 ms. |
@@ -98,6 +99,38 @@ không tăng bộ đếm rate-limit đăng nhập/đăng ký. Có thể đặt `
 `SMOKE_ALERT_WEBHOOK_URL` HTTPS. Chạy lệnh này theo lịch qua monitoring provider
 hoặc task scheduler; check lỗi trả exit code khác 0, log JSON Lines ra stdout/
 stderr và gửi webhook nếu đã cấu hình.
+
+## Dashboard và cảnh báo
+
+Admin dashboard hiển thị chỉ số API 5 phút gần nhất, tỷ lệ lỗi 5xx, p95 latency,
+trạng thái database, số kết nối PostgreSQL, webhook thanh toán và lần backup gần
+nhất. API `/api/admin/monitoring` chỉ dành cho người có quyền `read:dashboard`;
+request log chỉ ghi route đã chuẩn hóa, method, status, duration và request ID,
+không ghi body, header xác thực hoặc query string.
+
+Đặt `MONITORING_ALERT_WEBHOOK_URL` qua secret manager để nhận cảnh báo runtime.
+Payload không chứa request body, thông tin khách hàng hoặc lỗi thô. Các ngưỡng
+mặc định và người xử lý:
+
+| Alert | Ngưỡng | Owner | Hướng xử lý ban đầu |
+| --- | --- | --- | --- |
+| API 5xx | 5 lỗi API trong 5 phút | Backend on-call | Dùng `requestId` tra log, kiểm tra `/ready` và database trước khi rollback. |
+| Database | `/ready` trả 5xx hoặc health probe thất bại | Backend/database on-call | Kiểm tra connection limit, network/TLS và provider; không xóa hoặc seed lại dữ liệu. |
+| Payment webhook | 3 lỗi 5xx hoặc 3 xung đột trong 5 phút | Payment on-call | Đối chiếu event ID/request ID với provider; không phát lại event xung đột thủ công. |
+| Order idempotency | 3 response 409 trong 5 phút | Backend on-call | Kiểm tra retry cùng key và payload; giữ nguyên khóa, không tạo key mới để né conflict. |
+| Backup | Bất kỳ `backup_failed` | Data/backup on-call | Kiểm tra `backup.log`, dung lượng/quyền và verify checksum; chạy lại sau khi khắc phục. |
+
+`BACKUP_ALERT_WEBHOOK_URL` gửi cảnh báo backup thất bại ngay; trạng thái được
+ghi nguyên tử vào `BACKUP_STATUS_FILE` (mặc định
+`<DATA_DIR>/backup-status.json`) để dashboard đọc lần chạy gần nhất. Nếu
+scheduler chạy ở worker riêng, worker và web service phải chia sẻ file này qua
+storage bền vững; nếu không, dashboard sẽ hiển thị trạng thái `unknown` và cần
+dùng webhook/provider log để giám sát backup.
+
+Kiểm thử ngưỡng API/payment và database trong môi trường staging bằng payload
+giả, xác nhận webhook nhận event đúng một lần trong thời gian cooldown 15 phút;
+kiểm thử backup bằng `node --test tests/backup-runbook.test.js` với webhook
+mock. Không cố ý làm lỗi hoặc gửi webhook giả trong production.
 
 ## File storage: backup và restore
 

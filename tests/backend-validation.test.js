@@ -366,6 +366,14 @@ test("order creation calculates catalog prices and rejects invalid checkout data
   assert.equal(createdOrder.items[0].lineTotal, 89000);
   assert.equal(createdOrder.paymentStatus, "cod_pending");
 
+  const forgedOrderFieldsResponse = await submitOrder({
+    ...validOrder,
+    userId: "another-user",
+    role: "admin",
+    paymentStatus: "paid",
+  });
+  assert.equal(forgedOrderFieldsResponse.status, 400);
+
   const anonymousDiscountAttempt = await submitOrder({
     ...validOrder,
     discountRate: 0.1,

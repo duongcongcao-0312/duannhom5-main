@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { Pool } = require("pg");
+const { redactLogText } = require("../backend/monitoring");
 require("dotenv").config();
 
 const migrationsDirectory = path.join(__dirname, "..", "data", "migrations");
@@ -76,7 +77,12 @@ async function migrate() {
 
 if (require.main === module) {
   migrate().catch((error) => {
-    console.error("Customer CRM migration failed:", error.message);
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "error",
+      event: "database_migration_failed",
+      message: redactLogText(error.message),
+    }));
     process.exitCode = 1;
   });
 }

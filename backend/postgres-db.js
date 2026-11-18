@@ -285,6 +285,12 @@ class PostgresDatabase {
           CREATE TABLE IF NOT EXISTS payment_webhook_events (
             event_id TEXT PRIMARY KEY,
             event_hash TEXT NOT NULL,
+            order_id UUID,
+            amount BIGINT CHECK (amount IS NULL OR amount >= 0),
+            payment_status VARCHAR(16) CHECK (
+              payment_status IS NULL OR payment_status IN ('pending', 'paid', 'failed', 'cancelled', 'refunded')
+            ),
+            occurred_at TIMESTAMPTZ,
             received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
         `);
@@ -374,6 +380,25 @@ class PostgresDatabase {
       });
     }
     await this.initialization;
+  }
+
+  async getMonitoringStatus() {
+    const connections = {
+      total: Number.isInteger(this.pool.totalCount) ? this.pool.totalCount : 0,
+      idle: Number.isInteger(this.pool.idleCount) ? this.pool.idleCount : 0,
+      waiting: Number.isInteger(this.pool.waitingCount) ? this.pool.waitingCount : 0,
+    };
+    try {
+      await this.pool.query("SELECT 1");
+      return { status: "healthy", storage: "postgresql", connections };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        storage: "postgresql",
+        connections,
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      };
+    }
   }
 
   async close() {
@@ -488,6 +513,15 @@ class PostgresDatabase {
       }
 
       const eventTime = new Date(occurredAt).getTime();
+      const reconciliation = await client.query(
+        `UPDATE payment_webhook_events
+         SET order_id = $2, amount = $3, payment_status = $4, occurred_at = $5
+         WHERE event_id = $1`,
+        [eventId, orderId, amount, paymentStatus, new Date(eventTime).toISOString()],
+      );
+      if (reconciliation.rowCount !== 1) {
+        throw new Error("Payment event could not be recorded for reconciliation.");
+      }
       const previousEventTime = Date.parse(order.paymentEventAt || "");
       const terminalStatuses = new Set(["paid", "failed", "cancelled", "refunded"]);
       const isStale = Number.isFinite(previousEventTime) &&
@@ -546,7 +580,7 @@ class PostgresDatabase {
     };
   }
 
-  async createCustomerInteraction(customerId, data, actorId) {
+  async createCustomerInteraction(customerId, data, actorId, actorRole = ROLES.ADMIN) {
     const interaction = validateCustomerInteractionData(data);
     const actor = validateCustomerActor(actorId);
     await this.init();
@@ -558,10 +592,31 @@ class PostgresDatabase {
        RETURNING id, customer_id, type, note, created_by, created_at, updated_by, updated_at`,
       [customerId, interaction.type, interaction.note, actor],
     );
-    return rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+    const created = rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+    if (created) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.create",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer_interaction",
+        entityId: created.id,
+        after: sanitizeAuditValue({
+          customerId,
+          type: created.type,
+          note: created.note,
+        }),
+      });
+    }
+    return created;
   }
 
-  async updateCustomerInteraction(customerId, interactionId, data, actorId) {
+  async updateCustomerInteraction(
+    customerId,
+    interactionId,
+    data,
+    actorId,
+    actorRole = ROLES.ADMIN,
+  ) {
     const interaction = validateCustomerInteractionData(data, { partial: true });
     const actor = validateCustomerActor(actorId);
     await this.init();
@@ -581,10 +636,33 @@ class PostgresDatabase {
          interaction.created_by, interaction.created_at, interaction.updated_by, interaction.updated_at`,
       [interactionId, customerId, interaction.type ?? null, interaction.note ?? null, actor],
     );
-    return rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+    const updated = rows[0] ? customerInteractionRowToRecord(rows[0]) : null;
+    if (updated) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.update",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer_interaction",
+        entityId: interactionId,
+        after: sanitizeAuditValue({
+          customerId,
+          type: updated.type,
+          note: updated.note,
+        }),
+      });
+    }
+    return updated;
   }
 
-  async deleteCustomerInteraction(customerId, interactionId) {
+  async deleteCustomerInteraction(
+    customerId,
+    interactionId,
+    actorId = "system",
+    actorRole = ROLES.ADMIN,
+  ) {
+    const actor = typeof actorId === "string" && actorId.trim()
+      ? actorId.trim()
+      : "system";
     await this.init();
     const { rowCount } = await this.pool.query(
       `DELETE FROM customer_interactions AS interaction
@@ -596,7 +674,18 @@ class PostgresDatabase {
          )`,
       [interactionId, customerId],
     );
-    return rowCount > 0;
+    const deleted = rowCount > 0;
+    if (deleted) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.interaction.delete",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer_interaction",
+        entityId: interactionId,
+        metadata: { customerId },
+      });
+    }
+    return deleted;
   }
 
   async readCollection(name) {
@@ -1019,7 +1108,7 @@ class PostgresDatabase {
     if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(status)) {
       throw new CustomerError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
     }
-    return this.updateCollection("users", (users) => {
+    const updatedUser = await this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === id);
       if (!user || normalizeRole(user.role) !== ROLES.USER) return null;
       const now = new Date().toISOString();
@@ -1035,6 +1124,17 @@ class PostgresDatabase {
       const { password, passwordReset, ...safeUser } = user;
       return safeUser;
     });
+    if (updatedUser) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "user.student_verification.update",
+        actorId: actor,
+        actorRole: ROLES.ADMIN,
+        entityType: "user",
+        entityId: id,
+        after: sanitizeAuditValue(updatedUser.studentVerification),
+      });
+    }
+    return updatedUser;
   }
 
   async createStaffUser(data, actorId) {
@@ -1044,12 +1144,24 @@ class PostgresDatabase {
       throw new CustomerError(400, "Nhân viên chỉ có thể được gán vai trò sales hoặc support.");
     }
     try {
-      return await this.createUser({
+      const created = await this.createUser({
         ...data,
         role: normalizedRole,
         createdBy: actor,
         updatedBy: actor,
       });
+      await appendAuditEntry(this.auditLogPath, {
+        action: "staff.profile.create",
+        actorId: actor,
+        actorRole: ROLES.ADMIN,
+        entityType: "staff",
+        entityId: created.id,
+        after: sanitizeAuditValue({
+          role: created.role,
+          isActive: created.isActive,
+        }),
+      });
+      return created;
     } catch (error) {
       if (error.message.includes("đã được đăng ký")) {
         throw new CustomerError(409, error.message);
@@ -1074,12 +1186,17 @@ class PostgresDatabase {
       throw new CustomerError(400, "Cập nhật nhân viên không hợp lệ.");
     }
     try {
-      return await this.updateCollection("users", (users) => {
+      let before = null;
+      const updated = await this.updateCollection("users", (users) => {
         const user = users.find((entry) => entry.id === id);
         if (!user || !["sales", "support"].includes(normalizeRole(user.role))) return null;
         if (updatedEmail && users.some((entry) => entry.id !== id && entry.email.toLowerCase() === updatedEmail)) {
           throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
         }
+        before = sanitizeAuditValue({
+          role: user.role,
+          isActive: user.isActive,
+        });
         if (updatedName !== undefined) user.name = updatedName;
         if (updatedEmail !== undefined) user.email = updatedEmail;
         if (normalizedRole !== undefined) user.role = normalizedRole;
@@ -1089,6 +1206,21 @@ class PostgresDatabase {
         const { password, passwordAuthEnabled, passwordReset, ...safeUser } = user;
         return safeUser;
       });
+      if (updated) {
+        await appendAuditEntry(this.auditLogPath, {
+          action: "staff.profile.update",
+          actorId: actor,
+          actorRole: ROLES.ADMIN,
+          entityType: "staff",
+          entityId: id,
+          before,
+          after: sanitizeAuditValue({
+            role: updated.role,
+            isActive: updated.isActive,
+          }),
+        });
+      }
+      return updated;
     } catch (error) {
       if (error.code === "23505") {
         throw new CustomerError(409, "Email này đã được đăng ký trên hệ thống.");
@@ -1097,15 +1229,26 @@ class PostgresDatabase {
     }
   }
 
-  async updateCustomerInfo(id, customerInfo, actorName = "system") {
-    return this.updateCollection("users", (users) => {
+  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER) {
+    const updatedUser = await this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === id);
       if (!user) return null;
       user.customerInfo = { ...(user.customerInfo || {}), ...customerInfo };
-      user.updatedBy = String(actorName || "system").trim() || "system";
+      user.updatedBy = String(actorId || "system").trim() || "system";
       user.updatedAt = new Date().toISOString();
       return user;
     });
+    if (updatedUser) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "user.customer_info.update",
+        actorId,
+        actorRole: normalizeRole(actorRole),
+        entityType: "user",
+        entityId: id,
+        metadata: { changedFields: Object.keys(customerInfo || {}) },
+      });
+    }
+    return updatedUser;
   }
 
   async findOrCreateSocialUser(data) {
@@ -1255,10 +1398,10 @@ class PostgresDatabase {
     return (await this.readCustomers()).find((customer) => customer.id === id && !customer.deletedAt) || null;
   }
 
-  async createCustomer(data, actorId) {
+  async createCustomer(data, actorId, actorRole = ROLES.ADMIN) {
     const customerData = validateCustomerData(data);
     const actor = validateActor(actorId);
-    return this.updateCollection("customers", (customers) => {
+    const created = await this.updateCollection("customers", (customers) => {
       const phoneDigits = customerData.phone.replace(/\D/g, "");
       if (customers.some((customer) => !customer.deletedAt && (
         customer.email.toLowerCase() === customerData.email ||
@@ -1277,17 +1420,40 @@ class PostgresDatabase {
       customers.push(customer);
       return customer;
     });
+    if (created) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.create",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer",
+        entityId: created.id,
+        after: sanitizeAuditValue({
+          name: created.name,
+          email: created.email,
+          phone: created.phone,
+          status: created.status,
+        }),
+      });
+    }
+    return created;
   }
 
-  async updateCustomer(id, data, actorId) {
+  async updateCustomer(id, data, actorId, actorRole = ROLES.ADMIN) {
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new CustomerError(400, "Dữ liệu khách hàng không hợp lệ.");
     }
     const actor = validateActor(actorId);
-    return this.updateCollection("customers", (customers) => {
+    let before = null;
+    const updated = await this.updateCollection("customers", (customers) => {
       const index = customers.findIndex((item) => item.id === id && !item.deletedAt);
       if (index < 0) return null;
       const existing = customers[index];
+      before = sanitizeAuditValue({
+        name: existing.name,
+        email: existing.email,
+        phone: existing.phone,
+        status: existing.status,
+      });
       const validated = validateCustomerData({
         name: data.name !== undefined ? String(data.name).trim() : existing.name,
         email: data.email !== undefined ? String(data.email).trim().toLowerCase() : existing.email,
@@ -1317,35 +1483,83 @@ class PostgresDatabase {
       customers[index] = updated;
       return updated;
     });
+    if (updated) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.update",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer",
+        entityId: id,
+        before,
+        after: sanitizeAuditValue({
+          name: updated.name,
+          email: updated.email,
+          phone: updated.phone,
+          status: updated.status,
+        }),
+      });
+    }
+    return updated;
   }
 
-  async updateCustomerStatus(id, status, actorId) {
+  async updateCustomerStatus(id, status, actorId, actorRole = ROLES.ADMIN) {
     if (!customerStatuses.has(status)) throw new CustomerError(400, "Trạng thái khách hàng không hợp lệ.");
     const actor = validateActor(actorId);
-    return this.updateCollection("customers", (customers) => {
+    let before = null;
+    const updated = await this.updateCollection("customers", (customers) => {
       const customer = customers.find((item) => item.id === id && !item.deletedAt);
       if (!customer) return null;
       if (nextCustomerStatus.get(customer.status) !== status) {
         throw new CustomerError(409, "Trạng thái chỉ có thể chuyển lần lượt từ mới sang tiềm năng rồi thành khách hàng.");
       }
+      before = customer.status;
       customer.status = status;
       customer.updated_by = actor;
       customer.updatedAt = new Date().toISOString();
       return customer;
     });
+    if (updated) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.update",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer",
+        entityId: id,
+        before: { status: before },
+        after: { status: updated.status },
+      });
+    }
+    return updated;
   }
 
-  async softDeleteCustomer(id, actorId) {
+  async softDeleteCustomer(id, actorId, actorRole = ROLES.ADMIN) {
     const actor = validateActor(actorId);
-    return this.updateCollection("customers", (customers) => {
+    let before = null;
+    const deleted = await this.updateCollection("customers", (customers) => {
       const customer = customers.find((item) => item.id === id && !item.deletedAt);
       if (!customer) return false;
+      before = sanitizeAuditValue({
+        status: customer.status,
+        deletedAt: customer.deletedAt || null,
+      });
       const now = new Date().toISOString();
       customer.deletedAt = now;
       customer.updated_by = actor;
       customer.updatedAt = now;
       return true;
     });
+    if (deleted) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "customer.delete",
+        actorId: actor,
+        actorRole: normalizeRole(actorRole),
+        entityType: "customer",
+        entityId: id,
+        before,
+        after: { deleted: true },
+      });
+    }
+    return deleted;
   }
 
   async getAllOrders() {
@@ -1558,6 +1772,14 @@ class PostgresDatabase {
         await client.query("COMMIT");
         return null;
       }
+      const before = sanitizeAuditValue({
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        items: order.items,
+        subtotal: order.subtotal,
+        discount: order.discount,
+        total: order.total,
+      });
       if (
         status !== undefined &&
         !isOrderStatusTransitionAllowedForRole(order.status, status, actorRole)
@@ -1701,6 +1923,22 @@ class PostgresDatabase {
         );
       }
       await client.query("COMMIT");
+      await appendAuditEntry(this.auditLogPath, {
+        action: "order.status.update",
+        actorId: options.actorId || null,
+        actorRole,
+        entityType: "order",
+        entityId: orderId,
+        before,
+        after: sanitizeAuditValue({
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          items: order.items,
+          subtotal: order.subtotal,
+          discount: order.discount,
+          total: order.total,
+        }),
+      });
       return order;
     } catch (error) {
       await client.query("ROLLBACK");

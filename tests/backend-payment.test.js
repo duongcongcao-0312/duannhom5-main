@@ -190,9 +190,16 @@ test("payment webhook authenticates, applies payment states once, and ignores st
   assert.equal(wrongAmountResponse.status, 400);
   assert.equal(database.events.has("wrong-amount"), false);
 
+  const unknownOrderResponse = await send({
+    ...event("unknown-order", "succeeded", 7),
+    orderId: "99999999-9999-4999-8999-999999999999",
+  });
+  assert.equal(unknownOrderResponse.status, 404);
+  assert.equal(database.events.has("unknown-order"), false);
+
   const codOrderId = "22222222-2222-4222-8222-222222222222";
   const codResponse = await send({
-    ...event("cod-event", "succeeded", 7),
+    ...event("cod-event", "succeeded", 8),
     orderId: codOrderId,
   });
   assert.equal(codResponse.status, 400);
@@ -200,7 +207,7 @@ test("payment webhook authenticates, applies payment states once, and ignores st
 
   const cancelledOrderId = "33333333-3333-4333-8333-333333333333";
   const cancelledResponse = await send({
-    ...event("cancelled-event", "cancelled", 8),
+    ...event("cancelled-event", "cancelled", 9),
     orderId: cancelledOrderId,
   });
   assert.equal(cancelledResponse.status, 200);
@@ -282,6 +289,36 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     content: `Thanh toan ${order.paymentCode}`,
     transactionDate: "2026-01-01 10:00:00",
   };
+  const amountMismatchResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, transferAmount: 10001 }),
+  });
+  assert.deepEqual(await amountMismatchResponse.json(), {
+    success: true,
+    ignored: true,
+    reason: "payment_details_mismatch",
+  });
+  assert.equal(appliedEvent, undefined);
+
+  const unknownPaymentCodeResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, content: "Thanh toan BNFFFFFFFFFFFF" }),
+  });
+  assert.deepEqual(await unknownPaymentCodeResponse.json(), {
+    success: true,
+    ignored: true,
+    reason: "order_not_found",
+  });
+  assert.equal(appliedEvent, undefined);
+
   const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
     method: "POST",
     headers: {
@@ -419,13 +456,14 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   assert.equal(appliedEvent.amount, order.total);
 });
 
-test("payment config rejects a non-BIN VietQR bank code without using fallback bank data", async (t) => {
+test("payment endpoints reject an invalid BIN and a missing SePay webhook key", async (t) => {
   const database = {
     async getCustomBooks() { return []; },
     async getCatalogBookOverrides() { return []; },
   };
   const server = createServer({
     database,
+    sepayApiKey: "",
     sepayBankCode: "TCB",
     sepayBankName: "Test Bank",
     sepayAccountNumber: "123456789",
@@ -437,7 +475,16 @@ test("payment config rejects a non-BIN VietQR bank code without using fallback b
     server.listen(0, "127.0.0.1", resolve);
   });
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payments/config`);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(`${baseUrl}/api/payments/config`);
   assert.equal(response.status, 503);
   assert.match((await response.json()).error, /chưa được cấu hình/i);
+
+  const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(webhookResponse.status, 503);
+  assert.match((await webhookResponse.json()).error, /chưa được cấu hình đầy đủ/i);
 });

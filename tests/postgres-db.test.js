@@ -1,4 +1,7 @@
 const assert = require("node:assert/strict");
+const fsPromises = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const { PostgresDatabase } = require("../backend/postgres-db");
 
@@ -44,6 +47,40 @@ test("PostgresDatabase rejects a missing DATABASE_URL", () => {
     () => new PostgresDatabase({ connectionString: "" }),
     /DATABASE_URL là bắt buộc/,
   );
+});
+
+test("monitoring status probes database connectivity and reports pool counts only", async (t) => {
+  const pool = createPool({
+    totalCount: 6,
+    idleCount: 4,
+    waitingCount: 2,
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  assert.deepEqual(await db.getMonitoringStatus(), {
+    status: "healthy",
+    storage: "postgresql",
+    connections: { total: 6, idle: 4, waiting: 2 },
+  });
+  assert.equal(pool.queries.length, 1);
+  assert.match(pool.queries[0].sql, /SELECT 1/);
+
+  const failedPool = createPool({
+    async query() {
+      const error = new Error("database credentials unavailable");
+      error.code = "ECONNREFUSED";
+      throw error;
+    },
+  });
+  const failedDb = new PostgresDatabase({ pool: failedPool });
+  t.after(() => failedDb.close());
+  assert.deepEqual(await failedDb.getMonitoringStatus(), {
+    status: "unavailable",
+    storage: "postgresql",
+    connections: { total: 0, idle: 0, waiting: 0 },
+    errorCode: "ECONNREFUSED",
+  });
 });
 
 test("initialization provisions admin users in the relational table once", async (t) => {
@@ -395,6 +432,11 @@ test("collection updates roll back when a mutator fails", async (t) => {
 
 test("PostgresDatabase updates an order status while preserving payment status", async (t) => {
   withAdminConfig(t);
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-postgres-order-audit-test-"),
+  );
+  const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
+  t.after(() => fsPromises.rm(temporaryDirectory, { recursive: true, force: true }));
   const orderId = "11111111-1111-4111-8111-111111111111";
   const orderRow = {
     order_id: orderId,
@@ -441,14 +483,14 @@ test("PostgresDatabase updates an order status while preserving payment status",
       };
     },
   });
-  const db = new PostgresDatabase({ pool });
+  const db = new PostgresDatabase({ pool, auditLogPath });
   t.after(() => db.close());
 
   const updated = await db.updateOrderStatus(
     orderId,
     { status: "processing" },
     undefined,
-    { actorRole: "admin" },
+    { actorRole: "admin", actorId: "admin-user-1" },
   );
 
   assert.equal(updated.orderId, orderId);
@@ -457,12 +499,20 @@ test("PostgresDatabase updates an order status while preserving payment status",
   assert.ok(statements.includes("BEGIN"));
   assert.ok(statements.includes("COMMIT"));
   assert.ok(!statements.includes("ROLLBACK"));
+  const [auditEntry] = (await fsPromises.readFile(auditLogPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  assert.equal(auditEntry.action, "order.status.update");
+  assert.equal(auditEntry.actorId, "admin-user-1");
+  assert.equal(auditEntry.actorRole, "admin");
 });
 
 test("payment webhook events are idempotent and update relational orders", async (t) => {
   withAdminConfig(t);
   const orderId = "11111111-1111-4111-8111-111111111111";
   const events = new Map();
+  const reconciliationRows = [];
   const order = {
     order_id: orderId,
     user_id: null,
@@ -499,6 +549,10 @@ test("payment webhook events are idempotent and update relational orders", async
           if (sql.includes("SELECT event_hash")) {
             return { rows: [{ event_hash: events.get(values[0]) }], rowCount: 1 };
           }
+          if (sql.includes("UPDATE payment_webhook_events")) {
+            reconciliationRows.push(values);
+            return { rows: [], rowCount: 1 };
+          }
           if (sql.includes("FROM store_orders orders")) return { rows: [{ ...order }] };
           if (sql.includes("INSERT INTO store_orders")) {
             order.payment_status = values[7];
@@ -525,5 +579,73 @@ test("payment webhook events are idempotent and update relational orders", async
   const applied = await db.applyPaymentWebhookEvent(event);
   assert.equal(applied.order.paymentStatus, "paid");
   assert.equal(applied.duplicate, false);
+  assert.deepEqual(reconciliationRows, [[
+    event.eventId,
+    event.orderId,
+    event.amount,
+    event.paymentStatus,
+    event.occurredAt,
+  ]]);
   assert.equal((await db.applyPaymentWebhookEvent(event)).duplicate, true);
+});
+
+test("PostgreSQL rolls back a payment event when its amount does not match the order", async (t) => {
+  withAdminConfig(t);
+  const statements = [];
+  const order = {
+    order_id: "11111111-1111-4111-8111-111111111111",
+    user_id: null,
+    customer_name: "Reader",
+    phone: "0901234567",
+    address: "Address",
+    payment_method: "transfer",
+    status: "received",
+    payment_status: "pending",
+    coupon_code: null,
+    discount_rate: 0,
+    subtotal: 25000,
+    discount: 0,
+    total: 25000,
+    idempotency_key: null,
+    idempotency_hash: null,
+    created_at: new Date("2025-01-01T00:00:00.000Z"),
+    updated_at: new Date("2025-01-01T00:00:00.000Z"),
+    legacy_record: {},
+    items: [],
+  };
+  const pool = createPool({
+    async connect() {
+      return {
+        async query(sql) {
+          statements.push(sql);
+          if (sql.includes("INSERT INTO payment_webhook_events")) {
+            return { rows: [{ event_id: "sepay:wrong-amount" }], rowCount: 1 };
+          }
+          if (sql.includes("FROM store_orders orders")) {
+            return { rows: [{ ...order }] };
+          }
+          return { rows: [], rowCount: 1 };
+        },
+        release() {},
+      };
+    },
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  await assert.rejects(
+    db.applyPaymentWebhookEvent({
+      eventId: "sepay:wrong-amount",
+      eventHash: "a".repeat(64),
+      orderId: order.order_id,
+      paymentStatus: "paid",
+      amount: 1,
+      occurredAt: "2026-01-01T00:00:00.000Z",
+    }),
+    /Số tiền thanh toán không khớp/,
+  );
+  assert.ok(statements.includes("ROLLBACK"));
+  assert.ok(!statements.some((sql) => sql.includes("UPDATE payment_webhook_events")));
+  assert.ok(!statements.some((sql) => sql.includes("INSERT INTO store_orders")));
+  assert.equal(order.payment_status, "pending");
 });

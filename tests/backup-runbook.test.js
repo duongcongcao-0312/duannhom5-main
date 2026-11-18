@@ -122,6 +122,9 @@ test("scheduled backup verifies, logs completion, and alerts with redacted failu
   });
   assert.equal(await verifyBackup(backupPath).then((manifest) => manifest.files["users.json"].bytes), 3);
   assert.equal(records[0].event, "backup_succeeded");
+  const successfulStatus = JSON.parse(await fs.readFile(config.statusFile, "utf8"));
+  assert.equal(successfulStatus.status, "succeeded");
+  assert.equal(successfulStatus.lastSuccessAt, "2026-11-11T00:00:00.000Z");
 
   const secret = "postgres://backup-user:private-password@db.example.test/store";
   const delivered = [];
@@ -141,6 +144,9 @@ test("scheduled backup verifies, logs completion, and alerts with redacted failu
   const failure = records.find((record) => record.event === "backup_failed");
   assert.ok(failure);
   assert.equal(failure.message.includes("private-password"), false);
+  const failedStatus = JSON.parse(await fs.readFile(config.statusFile, "utf8"));
+  assert.equal(failedStatus.status, "failed");
+  assert.equal(failedStatus.lastSuccessAt, successfulStatus.lastSuccessAt);
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0].message.includes("private-password"), false);
 });

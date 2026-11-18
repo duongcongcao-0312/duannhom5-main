@@ -6,6 +6,7 @@ const {
   restorePostgresBackup,
   verifyPostgresBackup,
 } = require("./postgres-backup");
+const { redactLogText } = require("../backend/monitoring");
 
 const DATA_FILES = [
   "users.json",
@@ -202,7 +203,12 @@ async function main(args) {
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch((error) => {
-    console.error(`Backup thất bại: ${error.message}`);
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "error",
+      event: "backup_command_failed",
+      message: redactLogText(error.message),
+    }));
     process.exitCode = 1;
   });
 }

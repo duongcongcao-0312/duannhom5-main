@@ -59,3 +59,35 @@ test("database migration failure rolls back the version and releases the migrati
   assert.ok(statements.includes("ROLLBACK"));
   assert.ok(statements.some((sql) => sql.includes("pg_advisory_unlock")));
 });
+
+test("payment reconciliation migration stores verified transaction details and links inventory", async () => {
+  const migration = await fs.readFile(
+    path.join(__dirname, "..", "data", "migrations", "013_payment_reconciliation_and_inventory_fk.sql"),
+    "utf8",
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS payment_webhook_events/);
+  assert.match(migration, /event_id TEXT PRIMARY KEY/);
+  assert.match(migration, /FOREIGN KEY \(order_id\) REFERENCES store_orders\(order_id\) ON DELETE RESTRICT/);
+  assert.match(migration, /CHECK \(amount IS NULL OR amount >= 0\)/);
+  assert.match(migration, /ALTER TABLE book_inventory/);
+  assert.match(migration, /FOREIGN KEY \(book_title\) REFERENCES store_products\(title\) ON DELETE CASCADE/);
+});
+
+test("privacy data request migration enforces ownership, status, audit, and active-request uniqueness", async () => {
+  const migrationPath = path.join(
+    __dirname,
+    "..",
+    "data",
+    "migrations",
+    "014_privacy_data_requests.sql",
+  );
+  assert.ok(fs.existsSync(migrationPath));
+  const migration = await fs.readFile(migrationPath, "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS privacy_data_requests/);
+  assert.match(migration, /FOREIGN KEY \(subject_id\) REFERENCES app_users\(user_id\) ON DELETE RESTRICT/);
+  assert.match(migration, /request_type IN \('access', 'update', 'delete'\)/);
+  assert.match(migration, /status IN \('pending', 'processing', 'completed', 'rejected'\)/);
+  assert.match(migration, /created_by TEXT NOT NULL/);
+  assert.match(migration, /updated_by TEXT/);
+  assert.match(migration, /ON privacy_data_requests \(subject_id, request_type\)/);
+});

@@ -96,6 +96,17 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
         }]),
       ],
     );
+    await client.query(`
+      CREATE TABLE payment_webhook_events (
+        event_id TEXT PRIMARY KEY,
+        event_hash TEXT NOT NULL,
+        received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(
+      "INSERT INTO payment_webhook_events (event_id, event_hash) VALUES ('legacy-event', $1)",
+      ["a".repeat(64)],
+    );
 
     await runMigrations(client, migrationsDirectory);
     await runMigrations(client, migrationsDirectory);
@@ -159,7 +170,10 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     assert.ok(foreignKeys.rows.every((row) => row.confdeltype === "r"));
 
     const history = await client.query("SELECT version FROM schema_migrations ORDER BY version");
-    assert.deepEqual(history.rows.map((row) => row.version), ["001", "002", "003", "004", "005"]);
+    assert.deepEqual(
+      history.rows.map((row) => row.version),
+      Array.from({ length: 13 }, (_, index) => String(index + 1).padStart(3, "0")),
+    );
 
     const idempotencyTable = await client.query(
       "SELECT to_regclass('order_idempotency') AS table_name",
@@ -169,6 +183,40 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
       "SELECT to_regclass('book_inventory') AS table_name",
     );
     assert.equal(inventoryTable.rows[0].table_name, "book_inventory");
+    const inventory = await client.query(
+      `INSERT INTO book_inventory (book_title, stock, reserved)
+       VALUES ('Migrated Book', 5, 0) RETURNING book_title`,
+    );
+    assert.equal(inventory.rows[0].book_title, "Migrated Book");
+    await assert.rejects(client.query(
+      `INSERT INTO book_inventory (book_title, stock, reserved)
+       VALUES ('Missing Product', 1, 0)`,
+    ));
+
+    const preservedPaymentEvent = await client.query(
+      "SELECT event_id, order_id, amount, payment_status FROM payment_webhook_events WHERE event_id = 'legacy-event'",
+    );
+    assert.equal(preservedPaymentEvent.rowCount, 1);
+    assert.equal(preservedPaymentEvent.rows[0].order_id, null);
+    const paymentEvent = await client.query(
+      `INSERT INTO payment_webhook_events
+        (event_id, event_hash, order_id, amount, payment_status, occurred_at)
+       VALUES ('migration-event', $1, $2, 2400, 'paid', NOW()) RETURNING event_id`,
+      ["b".repeat(64), legacyOrderId],
+    );
+    assert.equal(paymentEvent.rows[0].event_id, "migration-event");
+    await assert.rejects(client.query(
+      `INSERT INTO payment_webhook_events
+        (event_id, event_hash, order_id, amount, payment_status, occurred_at)
+       VALUES ('invalid-payment', $1, $2, -1, 'paid', NOW())`,
+      ["c".repeat(64), legacyOrderId],
+    ));
+    await assert.rejects(client.query(
+      `INSERT INTO payment_webhook_events
+        (event_id, event_hash, order_id, amount, payment_status, occurred_at)
+       VALUES ('orphan-payment', $1, $2, 1, 'paid', NOW())`,
+      ["d".repeat(64), crypto.randomUUID()],
+    ));
     const relationalCounts = await client.query(`
       SELECT
         (SELECT count(*) FROM app_users WHERE user_id = 'legacy-user-1')::int AS users,
@@ -194,7 +242,7 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     assert.equal(relationalForeignKeys.rowCount, 4);
     assert.deepEqual(
       relationalForeignKeys.rows.map((row) => row.confdeltype).sort(),
-      ["c", "n", "r", "r"],
+      ["c", "c", "n", "r"],
     );
 
     await client.query(

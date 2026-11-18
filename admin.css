@@ -278,6 +278,69 @@ body {
     color: #9ca3af;
 }
 
+.monitoring-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 2rem;
+    padding: 1.25rem;
+}
+
+.monitoring-panel-header {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.monitoring-panel-header h2 {
+    color: var(--primary);
+    font-size: 1.2rem;
+    margin-bottom: 0.25rem;
+}
+
+.monitoring-grid {
+    display: grid;
+    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.monitoring-card {
+    background: var(--bg-main);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    min-width: 0;
+    padding: 1rem;
+}
+
+.monitoring-card h3 {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin: 0 0 0.4rem;
+    text-transform: uppercase;
+}
+
+.monitoring-card strong {
+    color: var(--primary);
+    display: block;
+    font-size: 1.05rem;
+}
+
+.monitoring-card strong[data-status="unavailable"],
+.monitoring-card strong[data-status="failed"] {
+    color: #b42318;
+}
+
+.monitoring-card p {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin: 0.4rem 0 0;
+}
+
 /* PANELS & TABLES */
 .card, .panel {
     background: var(--bg-card);

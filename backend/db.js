@@ -426,22 +426,33 @@ class Database {
     });
   }
 
-  async updateCustomerInfo(id, customerInfo, actorName = "system") {
-    return this.updateUsers((users) => {
+  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER) {
+    const safeCustomerInfo = {};
+    for (const [key, value] of Object.entries(customerInfo || {})) {
+      if (typeof value === "string" || typeof value === "number") {
+        safeCustomerInfo[key] = sanitizeTextValue(value, { maxLength: 300, allowEmpty: true, fieldName: key });
+      }
+    }
+    const updatedUser = await this.updateUsers((users) => {
       const user = users.find((entry) => entry.id === id);
       if (!user) return null;
-      const normalizedActor = String(actorName || "system").trim() || "system";
-      const safeCustomerInfo = {};
-      for (const [key, value] of Object.entries(customerInfo || {})) {
-        if (typeof value === "string" || typeof value === "number") {
-          safeCustomerInfo[key] = sanitizeTextValue(value, { maxLength: 300, allowEmpty: true, fieldName: key });
-        }
-      }
+      const normalizedActor = String(actorId || "system").trim() || "system";
       user.customerInfo = { ...(user.customerInfo || {}), ...safeCustomerInfo };
       user.updatedBy = normalizedActor;
       user.updatedAt = new Date().toISOString();
       return user;
     });
+    if (updatedUser) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "user.customer_info.update",
+        actorId,
+        actorRole: normalizeRole(actorRole),
+        entityType: "user",
+        entityId: id,
+        metadata: { changedFields: Object.keys(safeCustomerInfo) },
+      });
+    }
+    return updatedUser;
   }
 
   async createUser(data) {
@@ -764,7 +775,7 @@ class Database {
     return customers.find((customer) => customer.id === id && !customer.deletedAt) || null;
   }
 
-  async createCustomer(data, actorId) {
+  async createCustomer(data, actorId, actorRole = ROLES.ADMIN) {
     const customerData = validateCustomerData(data);
     const actor = validateCustomerActor(actorId);
     const customers = await this.readCustomers();
@@ -793,7 +804,7 @@ class Database {
     await appendAuditEntry(this.auditLogPath, {
       action: "customer.create",
       actorId: actor,
-      actorRole: "admin",
+      actorRole: normalizeRole(actorRole),
       entityType: "customer",
       entityId: customer.id,
       before: null,
@@ -807,7 +818,7 @@ class Database {
     return customer;
   }
 
-  async updateCustomer(id, data, actorId) {
+  async updateCustomer(id, data, actorId, actorRole = ROLES.ADMIN) {
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new CustomerError(400, "Dữ liệu khách hàng không hợp lệ.");
     }
@@ -866,7 +877,7 @@ class Database {
     await appendAuditEntry(this.auditLogPath, {
       action: "customer.update",
       actorId: actor,
-      actorRole: "admin",
+      actorRole: normalizeRole(actorRole),
       entityType: "customer",
       entityId: id,
       before,
@@ -880,7 +891,7 @@ class Database {
     return customers[customerIndex];
   }
 
-  async updateCustomerStatus(id, status, actorId) {
+  async updateCustomerStatus(id, status, actorId, actorRole = ROLES.ADMIN) {
     if (!customerStatuses.includes(status)) {
       throw new CustomerError(400, "Trạng thái khách hàng không hợp lệ.");
     }
@@ -896,14 +907,24 @@ class Database {
       );
     }
 
+    const before = customer.status;
     customer.status = status;
     customer.updated_by = actor;
     customer.updatedAt = new Date().toISOString();
     await this.writeCustomers(customers);
+    await appendAuditEntry(this.auditLogPath, {
+      action: "customer.update",
+      actorId: actor,
+      actorRole: normalizeRole(actorRole),
+      entityType: "customer",
+      entityId: id,
+      before: { status: before },
+      after: { status: customer.status },
+    });
     return customer;
   }
 
-  async softDeleteCustomer(id, actorId) {
+  async softDeleteCustomer(id, actorId, actorRole = ROLES.ADMIN) {
     const actor = validateCustomerActor(actorId);
     const customers = await this.readCustomers();
     const customer = customers.find((item) => item.id === id && !item.deletedAt);
@@ -924,7 +945,7 @@ class Database {
     await appendAuditEntry(this.auditLogPath, {
       action: "customer.delete",
       actorId: actor,
-      actorRole: "admin",
+      actorRole: normalizeRole(actorRole),
       entityType: "customer",
       entityId: id,
       before,
@@ -973,7 +994,7 @@ class Database {
     };
   }
 
-  async createCustomerInteraction(customerId, data, actorId) {
+  async createCustomerInteraction(customerId, data, actorId, actorRole = ROLES.ADMIN) {
     const interactionData = validateCustomerInteractionData(data);
     const actor = validateCustomerActor(actorId);
     return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
@@ -998,7 +1019,7 @@ class Database {
       await appendAuditEntry(this.auditLogPath, {
         action: "customer.interaction.create",
         actorId: actor,
-        actorRole: "admin",
+        actorRole: normalizeRole(actorRole),
         entityType: "customer_interaction",
         entityId: interaction.id,
         before: null,
@@ -1012,7 +1033,7 @@ class Database {
     });
   }
 
-  async updateCustomerInteraction(customerId, interactionId, data, actorId) {
+  async updateCustomerInteraction(customerId, interactionId, data, actorId, actorRole = ROLES.ADMIN) {
     const interactionData = validateCustomerInteractionData(data, { partial: true });
     const actor = validateCustomerActor(actorId);
     return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
@@ -1037,7 +1058,7 @@ class Database {
       await appendAuditEntry(this.auditLogPath, {
         action: "customer.interaction.update",
         actorId: actor,
-        actorRole: "admin",
+        actorRole: normalizeRole(actorRole),
         entityType: "customer_interaction",
         entityId: interactionId,
         before,
@@ -1050,7 +1071,7 @@ class Database {
     });
   }
 
-  async deleteCustomerInteraction(customerId, interactionId, actorId) {
+  async deleteCustomerInteraction(customerId, interactionId, actorId, actorRole = ROLES.ADMIN) {
     const actor = typeof actorId === "string" && actorId.trim() ? actorId.trim() : "system";
     return this.enqueueFileWrite(this.customerInteractionsPath, async () => {
       if (!await this.getCustomerById(customerId)) return false;
@@ -1071,7 +1092,7 @@ class Database {
       await appendAuditEntry(this.auditLogPath, {
         action: "customer.interaction.delete",
         actorId: actor,
-        actorRole: "admin",
+        actorRole: normalizeRole(actorRole),
         entityType: "customer_interaction",
         entityId: interactionId,
         before,

@@ -1,4 +1,5 @@
 const process = require("node:process");
+const { redactLogText } = require("../backend/monitoring");
 
 function parseBaseUrl(value) {
   let url;
@@ -48,7 +49,7 @@ async function postAlert(alertUrl, payload, fetchImpl, timeoutMs, errorLog) {
   } catch (error) {
     errorLog(JSON.stringify({
       event: "monitoring_alert_failed",
-      message: error.message,
+      message: redactLogText(error.message),
     }));
   }
 }
@@ -148,7 +149,10 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error(JSON.stringify({ event: "smoke_test_failed", error: error.message }));
+    console.error(JSON.stringify({
+      event: "smoke_test_failed",
+      error: redactLogText(error.message),
+    }));
     process.exitCode = 1;
   });
 }

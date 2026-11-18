@@ -16,6 +16,18 @@ test('server entrypoint exports the HTTP server factory', () => {
 	assert.match(read('server.js'), /module\.exports/);
 });
 
+test('admin auth check does not reopen the login overlay after login succeeds', () => {
+	const script = read('admin.js');
+	const authCheckStart = script.indexOf('async function checkAuth()');
+	const loginHandlerStart = script.indexOf('adminLoginForm.addEventListener');
+	const authCheck = script.slice(authCheckStart, loginHandlerStart);
+
+	assert.match(authCheck, /if \(currentAdmin\) return;/);
+	assert.ok(
+		authCheck.indexOf('if (currentAdmin) return;') < authCheck.lastIndexOf('showLoginOverlay();'),
+	);
+});
+
 function configureTestAdmin(t) {
 	const previous = {
 		ADMIN_EMAIL: process.env.ADMIN_EMAIL,

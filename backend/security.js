@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const net = require("node:net");
 const path = require("node:path");
 
 /*============================================================================
@@ -53,22 +54,14 @@ const RATE_LIMIT_DIR = path.join(__dirname, "..", "data", "rate-limit");
 const RATE_LIMIT_TTL_MS = 15 * 60 * 1000;
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
-let rateLimitDirReady = (async () => {
-  try {
-    await fs.mkdir(RATE_LIMIT_DIR, { recursive: true });
-  } catch {
-    // ignore if exists
-  }
-})();
-
-async function rateLimitFilePath(identifier) {
+async function rateLimitFilePath(identifier, directory = RATE_LIMIT_DIR) {
+  await fs.mkdir(directory, { recursive: true });
   const safe = String(identifier).replace(/[^A-Za-z0-9_-]/g, "_");
-  return path.join(RATE_LIMIT_DIR, `${safe}.json`);
+  return path.join(directory, `${safe}.json`);
 }
 
-async function readRateLimitRecord(identifier) {
-  await rateLimitDirReady;
-  const filePath = await rateLimitFilePath(identifier);
+async function readRateLimitRecord(identifier, directory) {
+  const filePath = await rateLimitFilePath(identifier, directory);
   try {
     const content = await fs.readFile(filePath, "utf8");
     const record = JSON.parse(content);
@@ -81,9 +74,8 @@ async function readRateLimitRecord(identifier) {
   return null;
 }
 
-async function writeRateLimitRecord(identifier, record) {
-  await rateLimitDirReady;
-  const filePath = await rateLimitFilePath(identifier);
+async function writeRateLimitRecord(identifier, record, directory) {
+  const filePath = await rateLimitFilePath(identifier, directory);
   const tmp = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(record), "utf8");
   await fs.rename(tmp, filePath).catch(async (error) => {
@@ -96,49 +88,125 @@ async function writeRateLimitRecord(identifier, record) {
   });
 }
 
-async function incrementRateLimit(identifier, limit, windowMs = RATE_LIMIT_TTL_MS) {
-  const now = Date.now();
-  let record = await readRateLimitRecord(identifier);
+async function incrementRateLimit(
+  identifier,
+  limit,
+  windowMs = RATE_LIMIT_TTL_MS,
+  now = Date.now(),
+  directory = RATE_LIMIT_DIR,
+) {
+  let record = await readRateLimitRecord(identifier, directory);
   if (!record || now > record.expiresAt) {
     record = { count: 1, expiresAt: now + windowMs };
   } else {
     record.count += 1;
     record.expiresAt = record.expiresAt || now + windowMs;
   }
-  await writeRateLimitRecord(identifier, record);
+  await writeRateLimitRecord(identifier, record, directory);
   return { count: record.count, limit, remaining: Math.max(0, limit - record.count), resetAt: record.expiresAt };
 }
 
-async function checkRateLimit(identifier, limit, windowMs = RATE_LIMIT_TTL_MS) {
-  const result = await incrementRateLimit(identifier, limit, windowMs);
+async function checkRateLimit(
+  identifier,
+  limit,
+  windowMs = RATE_LIMIT_TTL_MS,
+  now = Date.now(),
+  directory = RATE_LIMIT_DIR,
+) {
+  const result = await incrementRateLimit(identifier, limit, windowMs, now, directory);
   if (result.count > limit) {
     return { allowed: false, ...result };
   }
   return { allowed: true, ...result };
 }
 
-async function cleanupRateLimitFiles() {
-  await rateLimitDirReady;
+async function clearRateLimit(identifier, directory = RATE_LIMIT_DIR) {
+  const filePath = await rateLimitFilePath(identifier, directory);
+  await fs.rm(filePath, { force: true });
+}
+
+async function cleanupRateLimitFiles(directory = RATE_LIMIT_DIR) {
+  await fs.mkdir(directory, { recursive: true });
   try {
-    const files = await fs.readdir(RATE_LIMIT_DIR);
+    const files = await fs.readdir(directory);
     const now = Date.now();
     for (const file of files) {
       if (!file.endsWith(".json")) continue;
       try {
-        const content = await fs.readFile(path.join(RATE_LIMIT_DIR, file), "utf8");
+        const content = await fs.readFile(path.join(directory, file), "utf8");
         const record = JSON.parse(content);
         if (record && Number.isFinite(record.expiresAt) && now > record.expiresAt) {
-          await fs.rm(path.join(RATE_LIMIT_DIR, file), { force: true });
+          await fs.rm(path.join(directory, file), { force: true });
         }
       } catch {
         // ignore corrupt files
       }
     }
-  } catch {
-    // ignore if dir missing
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
   }
 }
 setInterval(cleanupRateLimitFiles, RATE_LIMIT_CLEANUP_INTERVAL_MS).unref?.();
+
+function parseTrustedProxyIps(value) {
+  let entries;
+  if (Array.isArray(value)) {
+    entries = value;
+  } else if (value === undefined || value === null || value === "") {
+    entries = [];
+  } else if (typeof value === "string") {
+    entries = value.split(",");
+  } else {
+    throw new RangeError("RATE_LIMIT_TRUSTED_PROXY_IPS must be a comma-separated IP list.");
+  }
+  const addresses = entries.map((entry) => (
+    typeof entry === "string" ? entry.trim() : ""
+  ));
+  if (addresses.some((address) => !address || net.isIP(address) === 0)) {
+    throw new RangeError("RATE_LIMIT_TRUSTED_PROXY_IPS must contain only valid IP addresses.");
+  }
+  return [...new Set(addresses)];
+}
+
+function getClientAddress(request, trustedProxyHops = 0, trustedProxyIps = []) {
+  const remoteAddress = typeof request?.socket?.remoteAddress === "string" &&
+    net.isIP(request.socket.remoteAddress)
+    ? request.socket.remoteAddress
+    : "unknown";
+  const trustedPeer = Array.isArray(trustedProxyIps) && trustedProxyIps.some(
+    (address) => typeof address === "string" &&
+      address.toLowerCase() === remoteAddress.toLowerCase(),
+  );
+  if (
+    !Number.isSafeInteger(trustedProxyHops) ||
+    trustedProxyHops <= 0 ||
+    !trustedPeer
+  ) {
+    return remoteAddress;
+  }
+  const forwardedFor = request?.headers?.["x-forwarded-for"];
+  if (typeof forwardedFor !== "string" || forwardedFor.length > 1024) {
+    return remoteAddress;
+  }
+  const addresses = forwardedFor.split(",").map((address) => address.trim());
+  if (addresses.length === 0 || addresses.some((address) => net.isIP(address) === 0)) {
+    return remoteAddress;
+  }
+  return addresses[Math.max(0, addresses.length - trustedProxyHops)] || remoteAddress;
+}
+
+function createRateLimitBucketKey(secret, scope, identity) {
+  if (typeof secret !== "string" || Buffer.byteLength(secret) < 32) {
+    throw new RangeError("RATE_LIMIT_HMAC_KEY must contain at least 32 bytes.");
+  }
+  if (typeof scope !== "string" || !scope.trim()) {
+    throw new TypeError("Rate-limit scope is required.");
+  }
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${scope}\u0000${String(identity)}`)
+    .digest("hex");
+}
 
 /*============================================================================
   INPUT SANITIZATION & VALIDATION
@@ -302,7 +370,11 @@ module.exports = {
   cleanupCsrfTokens,
   incrementRateLimit,
   checkRateLimit,
+  clearRateLimit,
   cleanupRateLimitFiles,
+  parseTrustedProxyIps,
+  getClientAddress,
+  createRateLimitBucketKey,
   escapeHtml,
   sanitizePlainText,
   validateEmail,

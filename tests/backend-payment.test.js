@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { createHmac } = require("node:crypto");
+const { createHash, createHmac } = require("node:crypto");
 const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -232,9 +232,16 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     paymentStatus: "pending",
     status: "received",
     total: 10000,
+    accessCodeHash: createHash("sha256").update("a1".repeat(32)).digest("hex"),
   };
   let appliedEvent;
   const database = {
+    async consumeRateLimit(_bucketKey, limit, windowMs, now) {
+      return { allowed: true, count: 1, remaining: limit - 1, resetAt: now + windowMs };
+    },
+    async clearRateLimit() {
+      return 1;
+    },
     async getCustomBooks() {
       return [];
     },
@@ -278,7 +285,9 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     accountName: "BookNest",
   });
 
-  const statusResponse = await fetch(`${baseUrl}/api/orders/${order.orderId}/status`);
+  const statusResponse = await fetch(`${baseUrl}/api/orders/${order.orderId}/status`, {
+    headers: { "X-Order-Access-Code": "a1".repeat(32) },
+  });
   assert.equal(statusResponse.status, 200);
   assert.deepEqual(await statusResponse.json(), {
     paymentStatus: "pending",
@@ -446,6 +455,12 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   const orders = [];
   let appliedEvent;
   const database = {
+    async consumeRateLimit(_bucketKey, limit, windowMs, now) {
+      return { allowed: true, count: 1, remaining: limit - 1, resetAt: now + windowMs };
+    },
+    async clearRateLimit() {
+      return 1;
+    },
     async getCustomBooks() { return []; },
     async getCatalogBookOverrides() { return []; },
     async getAllOrders() { return orders; },
@@ -495,6 +510,7 @@ test("a created transfer order produces a QR whose payment code matches the SePa
       address: "12 Local Test Street, District 1",
       phone: "0901234567",
       paymentMethod: "transfer",
+      accessCode: "f6".repeat(32),
       items: [{ title: "Nhà giả kim", quantity: 1 }],
     }),
   });
@@ -502,6 +518,8 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   const order = await orderResponse.json();
   assert.equal(order.paymentMethod, "transfer");
   assert.match(order.paymentCode, /^BN[A-F0-9]{12}$/);
+  assert.equal(Object.hasOwn(order, "accessCodeHash"), false);
+  assert.equal(Object.hasOwn(order, "accessCode"), false);
 
   const qrUrl = new URL(buildPaymentQrUrl(config, order));
   assert.equal(qrUrl.searchParams.get("amount"), String(order.total));

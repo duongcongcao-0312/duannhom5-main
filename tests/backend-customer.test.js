@@ -208,6 +208,13 @@ test("staff management enforces admin access, role limits, and session revocatio
     assert.equal(created.createdBy, user.id);
     assert.equal("details" in created, false);
 
+    const duplicateResponse = await fetch(`${baseUrl}/api/privacy/data-requests`, {
+      method: "POST",
+      headers: userHeaders,
+      body: JSON.stringify({ type: "access" }),
+    });
+    assert.equal(duplicateResponse.status, 409);
+
     const listedResponse = await fetch(`${baseUrl}/api/privacy/data-requests`, {
       headers: userHeaders,
     });
@@ -219,6 +226,14 @@ test("staff management enforces admin access, role limits, and session revocatio
     assert.equal((await fetch(`${baseUrl}/api/admin/privacy/data-requests`, {
       headers: userHeaders,
     })).status, 403);
+    const adminListResponse = await fetch(
+      `${baseUrl}/api/admin/privacy/data-requests`,
+      { headers: adminHeaders },
+    );
+    assert.equal(adminListResponse.status, 200);
+    const adminList = (await adminListResponse.json()).requests;
+    assert.equal(adminList.length, 1);
+    assert.equal("details" in adminList[0], false);
 
     const processingResponse = await fetch(
       `${baseUrl}/api/admin/privacy/data-requests/${created.id}`,
@@ -812,4 +827,82 @@ test("CRM customer interactions support paginated CRUD with role and audit check
     { method: "DELETE", headers: adminHeaders },
   );
   assert.equal(missingInteraction.status, 404);
+});
+
+test("user-owned orders remain visible only to their owner without a guest access code", async (t) => {
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-order-owner-isolation-"),
+  );
+  const paths = {
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+  };
+  const database = new Database(paths);
+  const password = "owner-isolation-test-password";
+  const userA = await database.createUser({
+    name: "Order Owner A",
+    email: "order-owner-a@example.com",
+    password,
+    role: "user",
+  });
+  const userB = await database.createUser({
+    name: "Order Owner B",
+    email: "order-owner-b@example.com",
+    password,
+    role: "user",
+  });
+  const server = createServer({ ...paths, database });
+  t.after(async () => {
+    if (server.listening) await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = async (user) => {
+    const response = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user.email, password }),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).token;
+  };
+  const tokenA = await login(userA);
+  const tokenB = await login(userB);
+  const orderResponse = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${tokenA}`,
+    },
+    body: JSON.stringify({
+      customerName: "Order Owner A",
+      address: "12 Account Order Street, District 1",
+      phone: "0901234567",
+      paymentMethod: "cod",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+    }),
+  });
+  assert.equal(orderResponse.status, 201);
+  const order = await orderResponse.json();
+
+  const ownerDetail = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
+    headers: { Authorization: `Bearer ${tokenA}` },
+  });
+  const otherDetail = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  const ownerStatus = await fetch(`${baseUrl}/api/orders/${order.orderId}/status`, {
+    headers: { Authorization: `Bearer ${tokenA}` },
+  });
+  const otherStatus = await fetch(`${baseUrl}/api/orders/${order.orderId}/status`, {
+    headers: { Authorization: `Bearer ${tokenB}` },
+  });
+  assert.equal(ownerDetail.status, 200);
+  assert.equal(otherDetail.status, 403);
+  assert.equal(ownerStatus.status, 200);
+  assert.equal(otherStatus.status, 403);
 });

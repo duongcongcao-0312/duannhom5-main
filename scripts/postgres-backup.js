@@ -1,7 +1,15 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const {
+  authenticateBackupManifest,
+  decryptBuffer,
+  encryptBuffer,
+  resolveBackupEncryptionConfig,
+  verifyBackupManifestAuthentication,
+} = require("./backup-encryption");
 
 const DATABASE_ARCHIVE = "database.dump";
 
@@ -38,6 +46,8 @@ function runCommand(command, args, {
     delete childEnv.PGPORT;
     delete childEnv.PGUSER;
     delete childEnv.PGDATABASE;
+    delete childEnv.BACKUP_ENCRYPTION_KEY;
+    delete childEnv.BACKUP_ENCRYPTION_REQUIRED;
     if (databaseUrl) childEnv.PGDATABASE = databaseUrl;
 
     let child;
@@ -81,6 +91,7 @@ function runCommand(command, args, {
 
 async function createPostgresBackup(databaseUrl, backupDir, now = new Date(), options = {}) {
   validateDatabaseUrl(databaseUrl);
+  const encryption = resolveBackupEncryptionConfig(options);
   const parentDir = path.dirname(backupDir);
   const stagingDir = path.join(parentDir, `.${path.basename(backupDir)}-${crypto.randomUUID()}.tmp`);
   await fs.mkdir(parentDir, { recursive: true });
@@ -94,13 +105,35 @@ async function createPostgresBackup(databaseUrl, backupDir, now = new Date(), op
     );
     const archive = await fs.readFile(archivePath);
     if (archive.length === 0) throw new Error("pg_dump đã tạo archive rỗng.");
-    const manifest = {
+    let files = { [DATABASE_ARCHIVE]: digest(archive) };
+    let manifest = {
       format: 2,
       storage: "postgresql",
       createdAt: now.toISOString(),
-      files: { [DATABASE_ARCHIVE]: digest(archive) },
+      files,
     };
-    await fs.chmod(archivePath, 0o600);
+    if (encryption.key) {
+      const encryptedFile = `${DATABASE_ARCHIVE}.enc`;
+      await fs.writeFile(
+        path.join(stagingDir, encryptedFile),
+        encryptBuffer(archive, encryption.key),
+        { mode: 0o600, flag: "wx" },
+      );
+      await fs.rm(archivePath);
+      files = { [DATABASE_ARCHIVE]: { ...digest(archive), encryptedFile } };
+      manifest = {
+        format: 3,
+        storage: "postgresql",
+        encrypted: true,
+        encryption: { algorithm: "aes-256-gcm", version: 1 },
+        createdAt: now.toISOString(),
+        files,
+      };
+    }
+    if (!encryption.key) await fs.chmod(archivePath, 0o600);
+    if (encryption.key) {
+      manifest = authenticateBackupManifest(manifest, encryption.key);
+    }
     await fs.writeFile(
       path.join(stagingDir, "manifest.json"),
       `${JSON.stringify(manifest, null, 2)}\n`,
@@ -115,8 +148,10 @@ async function createPostgresBackup(databaseUrl, backupDir, now = new Date(), op
 }
 
 async function verifyPostgresBackup(backupDir, manifest, options = {}) {
+  const encrypted = manifest?.format === 3 && manifest.encrypted === true;
+  const encryption = resolveBackupEncryptionConfig(options);
   if (
-    manifest?.format !== 2 ||
+    (manifest?.format !== 2 && !encrypted) ||
     manifest.storage !== "postgresql" ||
     !Number.isFinite(Date.parse(manifest.createdAt)) ||
     !manifest.files ||
@@ -124,6 +159,28 @@ async function verifyPostgresBackup(backupDir, manifest, options = {}) {
     !manifest.files[DATABASE_ARCHIVE]
   ) {
     throw new Error("Manifest backup PostgreSQL không đúng định dạng.");
+  }
+  if (encryption.required && !encrypted) {
+    throw new Error("BACKUP_ENCRYPTION_REQUIRED yêu cầu archive PostgreSQL được mã hóa.");
+  }
+  if (encrypted && !encryption.key) {
+    throw new Error("BACKUP_ENCRYPTION_KEY là bắt buộc để xác minh backup PostgreSQL mã hóa.");
+  }
+  if (
+    encrypted &&
+    (
+      manifest.encryption?.algorithm !== "aes-256-gcm" ||
+      manifest.encryption?.version !== 1 ||
+      manifest.files[DATABASE_ARCHIVE].encryptedFile !== `${DATABASE_ARCHIVE}.enc`
+    )
+  ) {
+    throw new Error("Manifest backup PostgreSQL mã hóa không đúng định dạng.");
+  }
+  if (
+    encrypted &&
+    !verifyBackupManifestAuthentication(manifest, encryption.key)
+  ) {
+    throw new Error("Xác thực manifest backup PostgreSQL thất bại.");
   }
   const expected = manifest.files[DATABASE_ARCHIVE];
   if (
@@ -134,21 +191,13 @@ async function verifyPostgresBackup(backupDir, manifest, options = {}) {
   ) {
     throw new Error("Manifest archive PostgreSQL không hợp lệ.");
   }
-  const archivePath = path.join(backupDir, DATABASE_ARCHIVE);
-  let actual;
-  try {
-    actual = digest(await fs.readFile(archivePath));
-  } catch (error) {
-    throw new Error(`Không đọc được archive PostgreSQL: ${error.message}`);
-  }
-  if (actual.sha256 !== expected.sha256 || actual.bytes !== expected.bytes) {
-    throw new Error("Kiểm tra toàn vẹn thất bại cho database.dump.");
-  }
-  await (options.runCommand || runCommand)(
-    options.pgRestorePath || process.env.PG_RESTORE_PATH || "pg_restore",
-    ["--list", archivePath],
-    options,
-  );
+  await withVerifiedPostgresArchive(backupDir, manifest, options, async (archivePath) => {
+    await (options.runCommand || runCommand)(
+      options.pgRestorePath || process.env.PG_RESTORE_PATH || "pg_restore",
+      ["--list", archivePath],
+      options,
+    );
+  });
   return manifest;
 }
 
@@ -161,19 +210,53 @@ async function restorePostgresBackup(backupDir, databaseUrl, options = {}) {
     throw new Error(`Backup PostgreSQL không có manifest hợp lệ: ${error.message}`);
   }
   await verifyPostgresBackup(backupDir, manifest, options);
-  await (options.runCommand || runCommand)(
-    options.pgRestorePath || process.env.PG_RESTORE_PATH || "pg_restore",
-    [
-      "--clean",
-      "--if-exists",
-      "--exit-on-error",
-      "--no-owner",
-      "--no-password",
-      path.join(backupDir, DATABASE_ARCHIVE),
-    ],
-    { ...options, databaseUrl },
-  );
+  await withVerifiedPostgresArchive(backupDir, manifest, options, async (archivePath) => {
+    await (options.runCommand || runCommand)(
+      options.pgRestorePath || process.env.PG_RESTORE_PATH || "pg_restore",
+      [
+        "--clean",
+        "--if-exists",
+        "--exit-on-error",
+        "--no-owner",
+        "--no-password",
+        archivePath,
+      ],
+      { ...options, databaseUrl },
+    );
+  });
   return manifest;
+}
+
+async function withVerifiedPostgresArchive(backupDir, manifest, options, operation) {
+  const encrypted = manifest.format === 3;
+  const expected = manifest.files[DATABASE_ARCHIVE];
+  const storedPath = path.join(
+    backupDir,
+    encrypted ? expected.encryptedFile : DATABASE_ARCHIVE,
+  );
+  let stored;
+  try {
+    stored = await fs.readFile(storedPath);
+  } catch (error) {
+    throw new Error(`Không đọc được archive PostgreSQL: ${error.message}`);
+  }
+  const contents = encrypted
+    ? decryptBuffer(stored, resolveBackupEncryptionConfig(options).key)
+    : stored;
+  const actual = digest(contents);
+  if (actual.sha256 !== expected.sha256 || actual.bytes !== expected.bytes) {
+    throw new Error("Kiểm tra toàn vẹn thất bại cho database.dump.");
+  }
+  if (!encrypted) return operation(storedPath);
+
+  const temporaryDir = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-pg-restore-"));
+  const temporaryArchive = path.join(temporaryDir, DATABASE_ARCHIVE);
+  try {
+    await fs.writeFile(temporaryArchive, contents, { mode: 0o600, flag: "wx" });
+    return await operation(temporaryArchive);
+  } finally {
+    await fs.rm(temporaryDir, { recursive: true, force: true });
+  }
 }
 
 module.exports = {

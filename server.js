@@ -31,8 +31,17 @@ const {
   normalizeRequestRoute,
   redactLogText,
 } = require("./backend/monitoring");
-const { hashOrderRequest } = require("./backend/order-idempotency");
+const {
+  hashOrderAccessCode,
+  hashOrderRequest,
+  verifyOrderAccessCode,
+} = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
+const {
+  createRateLimitBucketKey,
+  getClientAddress,
+  parseTrustedProxyIps,
+} = require("./backend/security");
 const {
   hashPasswordResetToken,
   isPasswordValid,
@@ -45,6 +54,18 @@ const {
 } = require("./backend/auth");
 const { createEmailMailer } = require("./backend/email");
 const { getCouponUnavailableReason } = require("./backend/coupons");
+const { createPaymentRoutes } = require("./backend/routes/payments");
+const { createPublicRoutes } = require("./backend/routes/public");
+const { createOrderRoutes } = require("./backend/routes/orders");
+const { createAuthRoutes } = require("./backend/routes/auth");
+const { createPrivacyRoutes } = require("./backend/routes/privacy");
+const { createCustomerRoutes } = require("./backend/routes/customers");
+const { createServiceRoutes } = require("./backend/routes/services");
+const { createAdminRoutes } = require("./backend/routes/admin");
+const {
+  PRIVACY_DATA_REQUEST_STATUSES,
+  PRIVACY_DATA_REQUEST_TYPES,
+} = require("./backend/privacy-data-requests");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
 const {
   CUSTOMER_ROLE_PERMISSIONS,
@@ -83,6 +104,8 @@ const customerInteractionQuerySchema = {
   page: { type: "integer", maxLength: 5, min: 1, max: 10000 },
   limit: { type: "integer", maxLength: 3, min: 1, max: 100 },
 };
+const privacyDataRequestTypes = new Set(PRIVACY_DATA_REQUEST_TYPES);
+const privacyDataRequestStatuses = new Set(PRIVACY_DATA_REQUEST_STATUSES);
 const publicRootFiles = new Set([
   "admin.css",
   "admin.html",
@@ -254,6 +277,7 @@ const payloadSchemas = {
       "address",
       "phone",
       "paymentMethod",
+      "accessCode",
       "discountRate",
       "couponCode",
       "subtotal",
@@ -273,6 +297,7 @@ const payloadSchemas = {
       address: "string",
       phone: "string",
       paymentMethod: "string",
+      accessCode: "string",
       discountRate: "number",
       couponCode: "string",
       subtotal: "number",
@@ -1313,6 +1338,7 @@ function createServer({
   couponsPath,
   customerInteractionsPath,
   consentRecordsPath,
+  privacyDataRequestsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
   backupStatusFile = path.resolve(
     process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
@@ -1321,6 +1347,14 @@ function createServer({
   monitoringAlertFetch = globalThis.fetch,
   monitoringAlertCooldownMs = 15 * 60 * 1000,
   database,
+  rateLimitHmacKey = process.env.RATE_LIMIT_HMAC_KEY ||
+    (String(process.env.NODE_ENV || "").toLowerCase() === "production"
+      ? ""
+      : "booknest-local-rate-limit-hmac-secret-0000"),
+  trustedProxyHops = process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS === undefined
+    ? 0
+    : Number(process.env.RATE_LIMIT_TRUSTED_PROXY_HOPS),
+  trustedProxyIps = process.env.RATE_LIMIT_TRUSTED_PROXY_IPS || "",
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sepayApiKey = process.env.SEPAY_API_KEY || "",
   sepayBankCode = process.env.SEPAY_BANK_CODE || "",
@@ -1350,6 +1384,16 @@ function createServer({
         "Production requires a valid ADMIN_EMAIL and an ADMIN_PASSWORD of at least 12 characters.",
       );
     }
+  }
+  if (typeof rateLimitHmacKey !== "string" || Buffer.byteLength(rateLimitHmacKey) < 32) {
+    throw new Error("RATE_LIMIT_HMAC_KEY must contain at least 32 bytes.");
+  }
+  if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0) {
+    throw new RangeError("RATE_LIMIT_TRUSTED_PROXY_HOPS must be a non-negative integer.");
+  }
+  const trustedProxyIpList = parseTrustedProxyIps(trustedProxyIps);
+  if (trustedProxyHops > 0 && trustedProxyIpList.length === 0) {
+    throw new Error("RATE_LIMIT_TRUSTED_PROXY_IPS is required when proxy hops are trusted.");
   }
 
   const sepayConfiguration = normalizeSePayConfig({
@@ -1390,6 +1434,7 @@ function createServer({
       couponsPath,
       customerInteractionsPath,
       consentRecordsPath,
+      privacyDataRequestsPath,
       auditLogPath,
     }));
   const sessionRepositoryMethods = [
@@ -1410,6 +1455,77 @@ function createServer({
   if (db && typeof db === "object") {
     db.auditLogPath = auditLogPath;
   }
+
+  function getRequestClientAddress(request) {
+    return getClientAddress(request, trustedProxyHops, trustedProxyIpList);
+  }
+
+  async function rateLimitRequest(
+    response,
+    scope,
+    identity,
+    limit,
+    windowMs,
+    message,
+  ) {
+    const bucketKey = createRateLimitBucketKey(rateLimitHmacKey, scope, identity);
+    let result;
+    try {
+      if (typeof db.consumeRateLimit !== "function") {
+        const error = new Error("Rate-limit storage is unavailable.");
+        error.code = "RATE_LIMIT_STORE_UNAVAILABLE";
+        throw error;
+      }
+      result = await db.consumeRateLimit(bucketKey, limit, windowMs, Date.now());
+      if (
+        !result ||
+        typeof result.allowed !== "boolean" ||
+        !Number.isSafeInteger(result.resetAt)
+      ) {
+        throw new Error("Rate-limit storage returned an invalid result.");
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "rate_limit_store_failure",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      }));
+      throw new RequestError(
+        503,
+        "Tạm thời không thể kiểm tra giới hạn yêu cầu. Vui lòng thử lại sau.",
+      );
+    }
+
+    if (!result.allowed) {
+      response.setHeader(
+        "Retry-After",
+        String(Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000))),
+      );
+      throw new RequestError(429, message);
+    }
+    return bucketKey;
+  }
+
+  async function clearRateLimit(scope, identity) {
+    const bucketKey = createRateLimitBucketKey(rateLimitHmacKey, scope, identity);
+    try {
+      if (typeof db.clearRateLimit !== "function") {
+        const error = new Error("Rate-limit storage is unavailable.");
+        error.code = "RATE_LIMIT_STORE_UNAVAILABLE";
+        throw error;
+      }
+      await db.clearRateLimit(bucketKey);
+    } catch (error) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "rate_limit_store_clear_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      }));
+    }
+  }
+
   const monitoringMetrics = new MonitoringMetrics();
   const startedAt = Date.now();
   const alertUrl = parseMonitoringAlertUrl(monitoringAlertUrl);
@@ -1424,15 +1540,15 @@ function createServer({
     refreshTtlMs,
     cleanupIntervalMs: 60 * 1000,
   });
-  const loginAttempts = new Map();
-  const reauthenticationAttempts = new Map();
   const loginAttemptLimit = 5;
   const loginAttemptWindowMs = 15 * 60 * 1000;
-  const registrationAttempts = new Map();
   const registrationAttemptLimit = 5;
   const registrationAttemptWindowMs = 15 * 60 * 1000;
-  const passwordResetAttempts = new Map();
-  const passwordResetEmailAttempts = new Map();
+  const passwordResetIpLimit = 30;
+  const passwordResetEmailLimit = 5;
+  const passwordResetWindowMs = 15 * 60 * 1000;
+  const orderRequestLimit = 30;
+  const orderRequestWindowMs = 15 * 60 * 1000;
 
   function dispatchMonitoringAlert(alert, requestId) {
     const now = Date.now();
@@ -1511,30 +1627,23 @@ function createServer({
     return status;
   }
 
-  function verifyPasswordReauthentication(request, user, password) {
-    const now = Date.now();
-    for (const [address, attempt] of reauthenticationAttempts) {
-      if (attempt.expiresAt <= now) reauthenticationAttempts.delete(address);
-    }
-    const address = request.socket.remoteAddress || "unknown";
-    const attempt = reauthenticationAttempts.get(address);
-    if (attempt && attempt.count >= loginAttemptLimit) {
-      throw new RequestError(
-        429,
-        "Bạn đã thử xác thực lại quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-      );
-    }
+  async function verifyPasswordReauthentication(request, response, user, password) {
+    const address = getRequestClientAddress(request);
+    await rateLimitRequest(
+      response,
+      "reauthentication",
+      address,
+      loginAttemptLimit,
+      loginAttemptWindowMs,
+      "Bạn đã thử xác thực lại quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+    );
     if (
       user.passwordAuthEnabled === false ||
       !verifyPassword(password, user.password)
     ) {
-      reauthenticationAttempts.set(address, {
-        count: (attempt?.count || 0) + 1,
-        expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
-      });
       throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
     }
-    reauthenticationAttempts.delete(address);
+    await clearRateLimit("reauthentication", address);
   }
   const allowedOrigins = new Set(
     corsOrigins
@@ -1645,8 +1754,10 @@ function createServer({
           };
         }
         const replayOrder = createOrder(payload, userId, requester, replayCoupon);
+        if (!userId) replayOrder.accessCodeHash = hashOrderAccessCode(payload.accessCode);
         const replayHash = hashOrderRequest(replayOrder);
-        if (existingOrder.idempotencyHash && existingOrder.idempotencyHash !== replayHash) {
+        const existingHash = existingOrder.idempotencyHash || hashOrderRequest(existingOrder);
+        if (existingHash !== replayHash) {
           throw new RequestError(
             409,
             "Idempotency-Key đã được sử dụng cho nội dung đơn hàng khác.",
@@ -1658,6 +1769,7 @@ function createServer({
       const coupons = couponCode ? await db.getCoupons() : [];
       const coupon = coupons.find((entry) => entry.code === couponCode) || null;
       const order = createOrder(payload, userId, requester, coupon);
+      if (!userId) order.accessCodeHash = hashOrderAccessCode(payload.accessCode);
       const requestHash = hashOrderRequest(order);
       order.idempotencyKey = idempotencyKey;
       order.idempotencyHash = requestHash;
@@ -1746,6 +1858,7 @@ function createServer({
       /^\/api\/orders\/[0-9a-f-]{36}(?:\/status)?$/i.test(pathname) ||
       pathname === "/api/auth/customer-info" ||
       pathname.startsWith("/api/privacy/consents") ||
+      pathname.startsWith("/api/privacy/data-requests") ||
       /^\/api\/auth\/social\/(?:link|unlink)$/.test(pathname);
     if (!isSensitiveRequest) return;
 
@@ -1864,6 +1977,196 @@ function createServer({
     return [...baseBooks, ...customBooks];
   }
 
+  const handlePublicRoute = createPublicRoutes({
+    db,
+    getCatalogBookList,
+    logRequestError,
+    paginateBookList: (records, filters) => paginateList(records, filters, "title"),
+    sendJson,
+    sendPaginatedJson,
+    validateBookQuery: (requestUrl) => validateQuery(
+      requestUrl,
+      {
+        ...listQuerySchema,
+        sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] },
+      },
+      "Bộ lọc sách không hợp lệ.",
+    ),
+  });
+  const handlePaymentRoute = createPaymentRoutes({
+    RequestError,
+    db,
+    monitoringMetrics,
+    ordersPath,
+    paymentWebhookSecret,
+    publicOrder,
+    readRawBody,
+    sepayConfig: sepayConfiguration,
+    sendJson,
+  });
+  const handleOrderRoute = createOrderRoutes({
+    RequestError,
+    ROLES,
+    allowedDiscountRates,
+    allowedOrderStatuses,
+    allowedPaymentStatuses,
+    createAndPersistOrder,
+    createOrder,
+    createUpdatedOrderItems,
+    db,
+    defaultBookStock,
+    enqueueOrderWrite,
+    getAuthUser,
+    getBookCatalog: () => bookCatalog,
+    verifyOrderAccessCode,
+    listQuerySchema,
+    ordersPath,
+    orderRequestLimit,
+    orderRequestWindowMs,
+    paginateList,
+    payloadSchemas,
+    publicOrder,
+    randomUUID,
+    rateLimitRequest,
+    getClientAddress: getRequestClientAddress,
+    readJson,
+    requireJsonObject,
+    roundMoney,
+    sanitizePlainText,
+    sendJson,
+    sendPaginatedJson,
+    validateQuery,
+    waitForCatalogReady,
+  });
+  const handleAuthRoute = createAuthRoutes({
+    RequestError,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    ROLES,
+    appBaseUrl,
+    db,
+    getAuthUser,
+    hashPasswordResetToken,
+    isPasswordValid,
+    loginAttemptLimit,
+    loginAttemptWindowMs,
+    passwordResetIpLimit,
+    passwordResetEmailLimit,
+    passwordResetWindowMs,
+    passwordResetMailer,
+    payloadSchemas,
+    publicUser,
+    rateLimitRequest,
+    clearRateLimit,
+    getClientAddress: getRequestClientAddress,
+    randomBytes,
+    readJson,
+    registrationAttemptLimit,
+    registrationAttemptWindowMs,
+    requireJsonObject,
+    sanitizePlainText,
+    sendJson,
+    sessionStore,
+    socialTokenVerifier,
+    verifyPassword,
+    verifyPasswordReauthentication,
+    verifySocialIdentity,
+  });
+  const handlePrivacyRoute = createPrivacyRoutes({
+    RequestError,
+    allowedConsentPurposes,
+    allowedConsentSources,
+    allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses,
+    allowedPrivacyDataRequestTypes: privacyDataRequestTypes,
+    db,
+    getAuthUser,
+    payloadSchemas,
+    readJson,
+    requireAdmin,
+    requireJsonObject,
+    requireRole,
+    sanitizePlainText,
+    sendJson,
+  });
+  const handleCustomerRoute = createCustomerRoutes({
+    RequestError,
+    applyCustomerFilters,
+    customerInteractionQuerySchema,
+    customerQuerySchema,
+    db,
+    paginateList,
+    payloadSchemas,
+    readJson,
+    requireCustomerPermission,
+    requireJsonObject,
+    sendJson,
+    sendPaginatedJson,
+    validateCustomerData,
+    validateCustomerInteractionData,
+    validateQuery,
+  });
+  const handleServiceRoute = createServiceRoutes({
+    RequestError,
+    allowedServiceStatuses,
+    allowedServiceTypes,
+    db,
+    getAuthUser,
+    listQuerySchema,
+    paginateList,
+    payloadSchemas,
+    readJson,
+    requireJsonObject,
+    requireRole,
+    sanitizePlainText,
+    sendJson,
+    sendPaginatedJson,
+    validateQuery,
+  });
+  const handleAdminRoute = createAdminRoutes({
+    CUSTOMER_ROLE_PERMISSIONS,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    ROLE_PERMISSIONS,
+    ROLES,
+    RequestError,
+    STUDENT_VERIFICATION_STATUSES,
+    allowedOrderStatuses,
+    allowedPaymentStatuses,
+    assertStockCoversReservations,
+    assertUniqueBookTitle,
+    auditLogPath,
+    backupStatusFile,
+    bookCount: books.length,
+    catalogBookById,
+    db,
+    enqueueOrderWrite,
+    getBookCatalog: () => bookCatalog,
+    getCatalogBookOverrides: () => catalogBookOverrides,
+    getCatalogBookList,
+    getDatabaseMonitoringStatus,
+    isPasswordValid,
+    listQuerySchema,
+    monitoringMetrics,
+    normalizeAdminBook,
+    normalizeCoupon,
+    ordersPath,
+    paginateList,
+    payloadSchemas,
+    publicUser,
+    readAuditEntries,
+    readBackupStatus,
+    readJson,
+    requireJsonObject,
+    requireRole,
+    sanitizePlainText,
+    sendJson,
+    sendPaginatedJson,
+    sessionStore,
+    startedAt,
+    validateQuery,
+    waitForCatalogReady,
+  });
+
   async function handleRequest(request, response) {
     let requestUrl;
     try {
@@ -1882,1828 +2185,21 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code",
       });
       response.end();
       return;
     }
 
     await auditSensitiveRequest(request, response, requestUrl);
-
-    if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
-      sendJson(response, 200, { status: "ok", service: "booknest" }, request.method);
-      return;
-    }
-
-    if (requestUrl.pathname === "/ready" && (request.method === "GET" || request.method === "HEAD")) {
-      try {
-        await db.init();
-        sendJson(response, 200, { status: "ready", service: "booknest" }, request.method);
-      } catch (error) {
-        logRequestError(
-          request,
-          response.getHeader("X-Request-Id"),
-          error,
-          "Readiness check failed",
-        );
-        sendJson(response, 503, { status: "not_ready", service: "booknest" }, request.method);
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/payments/config" && request.method === "GET") {
-      if (invalidPaymentDisplaySettings.length > 0) {
-        throw new RequestError(503, "Thông tin tài khoản nhận thanh toán chưa được cấu hình.");
-      }
-      sendJson(response, 200, {
-        bankCode: sepayConfiguration.config.bankCode,
-        bankName: sepayConfiguration.config.bankName,
-        accountNumber: sepayConfiguration.config.accountNumber,
-        accountName: sepayConfiguration.config.accountName,
-      });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/payments/webhook" &&
-      request.method === "POST"
-    ) {
-      if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
-        throw new RequestError(415, "Webhook cần được gửi ở định dạng JSON.");
-      }
-      if (typeof paymentWebhookSecret !== "string" ||
-          Buffer.byteLength(paymentWebhookSecret, "utf8") < 32) {
-        throw new RequestError(503, "Webhook thanh toán chưa được cấu hình an toàn.");
-      }
-      if (typeof db.applyPaymentWebhookEvent !== "function") {
-        throw new RequestError(503, "Webhook thanh toán yêu cầu kho PostgreSQL dùng chung.");
-      }
-      const signature = request.headers["x-booknest-signature"] || "";
-      const rawBody = await readRawBody(request);
-      const expectedSignature = createHmac("sha256", paymentWebhookSecret)
-        .update(rawBody)
-        .digest();
-      const suppliedSignature = typeof signature === "string"
-        ? signature.match(/^sha256=([a-f0-9]{64})$/i)?.[1]
-        : null;
-      if (!suppliedSignature) {
-        throw new RequestError(401, "Chữ ký webhook không hợp lệ.");
-      }
-      const suppliedDigest = Buffer.from(suppliedSignature, "hex");
-      if (suppliedDigest.length !== expectedSignature.length ||
-          !timingSafeEqual(suppliedDigest, expectedSignature)) {
-        throw new RequestError(401, "Chữ ký webhook không hợp lệ.");
-      }
-
-      let payload;
-      try {
-        payload = JSON.parse(rawBody.toString("utf8"));
-      } catch {
-        throw new RequestError(400, "Payload webhook không hợp lệ.");
-      }
-      if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
-          Object.keys(payload).some((key) => ![
-            "id",
-            "orderId",
-            "status",
-            "amount",
-            "currency",
-            "occurredAt",
-          ].includes(key)) ||
-          typeof payload.id !== "string" ||
-          !/^[A-Za-z0-9._:-]{1,128}$/.test(payload.id) ||
-          typeof payload.orderId !== "string" ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.orderId) ||
-          !["succeeded", "failed", "pending", "cancelled"].includes(payload.status) ||
-          !Number.isSafeInteger(payload.amount) ||
-          payload.amount < 0 ||
-          payload.currency !== "VND" ||
-          typeof payload.occurredAt !== "string" ||
-          !Number.isFinite(Date.parse(payload.occurredAt)) ||
-          Date.parse(payload.occurredAt) > Date.now() + 5 * 60 * 1000) {
-        throw new RequestError(400, "Payload webhook không hợp lệ.");
-      }
-
-      const paymentStatus = {
-        succeeded: "paid",
-        failed: "failed",
-        pending: "pending",
-        cancelled: "cancelled",
-      }[payload.status];
-      const result = await db.applyPaymentWebhookEvent({
-        eventId: payload.id,
-        eventHash: createHmac("sha256", paymentWebhookSecret)
-          .update(rawBody)
-          .digest("hex"),
-        orderId: payload.orderId,
-        paymentStatus,
-        amount: payload.amount,
-        occurredAt: payload.occurredAt,
-      });
-      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
-      if (result.conflict) {
-        throw new RequestError(409, "Webhook ID đã được dùng với payload khác.");
-      }
-      sendJson(response, 200, {
-        received: true,
-        duplicate: result.duplicate,
-        stale: result.stale || false,
-        ...(result.order ? { order: publicOrder(result.order) } : {}),
-      });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/payments/sepay-webhook" &&
-      request.method === "POST"
-    ) {
-      if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
-        throw new RequestError(415, "SePay webhook cần được gửi ở định dạng JSON.");
-      }
-      if (sepayConfiguration.invalid.includes("SEPAY_API_KEY") ||
-          sepayConfiguration.invalid.includes("SEPAY_ACCOUNT_NUMBER")) {
-        throw new RequestError(503, "SePay webhook chưa được cấu hình đầy đủ.");
-      }
-      const authorization = request.headers.authorization || "";
-      const expectedAuthorization = Buffer.from(
-        `Apikey ${sepayConfiguration.config.apiKey}`,
-        "utf8",
-      );
-      const suppliedAuthorization = Buffer.from(String(authorization), "utf8");
-      if (expectedAuthorization.length !== suppliedAuthorization.length ||
-          !timingSafeEqual(expectedAuthorization, suppliedAuthorization)) {
-        throw new RequestError(401, "SePay API Key không hợp lệ.");
-      }
-
-      const rawBody = await readRawBody(request);
-      let payload;
-      try {
-        payload = JSON.parse(rawBody.toString("utf8"));
-      } catch {
-        throw new RequestError(400, "Payload SePay không phải JSON hợp lệ.");
-      }
-      const eventId = typeof payload?.id === "string" || Number.isSafeInteger(payload?.id)
-        ? String(payload.id)
-        : "";
-      if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
-          !/^[A-Za-z0-9._:-]{1,128}$/.test(eventId) ||
-          !Number.isSafeInteger(Number(payload.transferAmount)) ||
-          Number(payload.transferAmount) <= 0 ||
-          typeof payload.transferType !== "string") {
-        throw new RequestError(400, "Payload giao dịch SePay thiếu trường bắt buộc.");
-      }
-
-      if (payload.transferType.toLowerCase() !== "in") {
-        sendJson(response, 200, { success: true, ignored: true, reason: "not_incoming" });
-        return;
-      }
-      if (String(payload.accountNumber || "").trim() !== sepayConfiguration.config.accountNumber) {
-        sendJson(response, 200, { success: true, ignored: true, reason: "bank_account_mismatch" });
-        return;
-      }
-
-      const paymentCodePattern = /\b(BN[A-F0-9]{12})\b/i;
-      const transactionText = [payload.content, payload.description, payload.code]
-        .filter((value) => typeof value === "string")
-        .join(" ");
-      const paymentCode = transactionText.match(paymentCodePattern)?.[1]?.toUpperCase();
-      if (!paymentCode) {
-        sendJson(response, 200, { success: true, ignored: true, reason: "payment_code_not_found" });
-        return;
-      }
-
-      const rawTransactionDate = typeof payload.transactionDate === "string"
-        ? payload.transactionDate.trim().replace(" ", "T")
-        : "";
-      const occurredAt = rawTransactionDate
-        ? (/Z$|[+-]\d{2}:?\d{2}$/.test(rawTransactionDate)
-          ? rawTransactionDate
-          : `${rawTransactionDate}+07:00`)
-        : new Date().toISOString();
-      if (!Number.isFinite(Date.parse(occurredAt)) ||
-          Date.parse(occurredAt) > Date.now() + 5 * 60 * 1000) {
-        throw new RequestError(400, "Thời gian giao dịch SePay không hợp lệ.");
-      }
-      if (typeof db.applyPaymentWebhookEvent !== "function") {
-        throw new RequestError(503, "SePay webhook yêu cầu kho PostgreSQL dùng chung.");
-      }
-      if (typeof db.getAllOrders !== "function") {
-        throw new RequestError(503, "Kho dữ liệu không hỗ trợ đối chiếu mã thanh toán SePay.");
-      }
-
-      const orders = await db.getAllOrders(ordersPath);
-      const matchingOrder = orders.find((order) =>
-        String(order.paymentCode || "").toUpperCase() === paymentCode);
-      if (!matchingOrder) {
-        sendJson(response, 200, { success: true, ignored: true, reason: "order_not_found" });
-        return;
-      }
-      if (matchingOrder.paymentMethod !== "transfer" ||
-          matchingOrder.total !== Number(payload.transferAmount)) {
-        sendJson(response, 200, { success: true, ignored: true, reason: "payment_details_mismatch" });
-        return;
-      }
-
-      const result = await db.applyPaymentWebhookEvent({
-        eventId: `sepay:${eventId}`,
-        eventHash: createHash("sha256").update(rawBody).digest("hex"),
-        orderId: matchingOrder.orderId,
-        paymentStatus: "paid",
-        amount: Number(payload.transferAmount),
-        occurredAt: new Date(occurredAt).toISOString(),
-      });
-      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
-      if (result.conflict) {
-        throw new RequestError(409, "Mã giao dịch SePay đã được sử dụng với dữ liệu khác.");
-      }
-      sendJson(response, 200, { success: true, duplicate: Boolean(result.duplicate) });
-      return;
-    }
-
-    // --- API: Coupons (Look up discount coupon) ---
-    const couponMatch = requestUrl.pathname.match(
-      /^\/api\/coupons\/([A-Za-z0-9_-]+)$/,
-    );
-    if (couponMatch && request.method === "GET") {
-      const code = couponMatch[1].toUpperCase();
-      const coupon = (await db.getCoupons()).find((entry) => entry.code === code);
-      const reason = getCouponUnavailableReason(coupon);
-      if (reason) {
-        sendJson(response, 404, {
-          error: reason,
-        });
-        return;
-      }
-      sendJson(response, 200, {
-        code: coupon.code,
-        label: coupon.label,
-        rate: coupon.rate,
-        minSubtotal: coupon.minSubtotal,
-      });
-      return;
-    }
-
-    // --- API: Auth (Register / Login / Password reset / Profile / Logout) ---
-    if (
-      requestUrl.pathname === "/api/auth/password-reset" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Email không hợp lệ.",
-        payloadSchemas.passwordReset,
-      );
-      const email = sanitizePlainText(
-        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
-        254,
-      ).toLowerCase();
-      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new RequestError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
-      }
-
-      const now = Date.now();
-      let resetBase;
-      try {
-        resetBase = new URL(String(appBaseUrl || ""));
-        if (
-          !["http:", "https:"].includes(resetBase.protocol) ||
-          resetBase.username ||
-          resetBase.password ||
-          resetBase.search ||
-          resetBase.hash
-        ) {
-          throw new Error("Invalid public app URL.");
-        }
-        if (!resetBase.pathname.endsWith("/")) resetBase.pathname += "/";
-      } catch {
-        throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình địa chỉ website.");
-      }
-      await db.init();
-      if (!passwordResetMailer) {
-        throw new RequestError(503, "Khôi phục mật khẩu chưa được cấu hình email.");
-      }
-
-      for (const [key, attempt] of passwordResetAttempts) {
-        if (attempt.expiresAt <= now) passwordResetAttempts.delete(key);
-      }
-      for (const [key, attempt] of passwordResetEmailAttempts) {
-        if (attempt.expiresAt <= now) passwordResetEmailAttempts.delete(key);
-      }
-      const address = request.socket.remoteAddress || "unknown";
-      const attempt = passwordResetAttempts.get(address);
-      if (attempt && attempt.count >= 30) {
-        throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
-      }
-      passwordResetAttempts.set(address, {
-        count: (attempt?.count || 0) + 1,
-        expiresAt: attempt?.expiresAt || now + 15 * 60 * 1000,
-      });
-      const emailAttempt = passwordResetEmailAttempts.get(email);
-      if (emailAttempt && emailAttempt.count >= 5) {
-        throw new RequestError(429, "Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.");
-      }
-      passwordResetEmailAttempts.set(email, {
-        count: (emailAttempt?.count || 0) + 1,
-        expiresAt: emailAttempt?.expiresAt || now + 15 * 60 * 1000,
-      });
-
-      const token = randomBytes(32).toString("hex");
-      const tokenHash = hashPasswordResetToken(token);
-      const user = await db.createPasswordResetToken(
-        email,
-        tokenHash,
-        new Date(now + 60 * 60 * 1000).toISOString(),
-      );
-      if (user) {
-        resetBase.hash = new URLSearchParams({ resetToken: token }).toString();
-        try {
-          await passwordResetMailer.sendPasswordReset({
-            to: user.email,
-            name: user.name,
-            url: resetBase.toString(),
-          });
-        } catch (error) {
-          await db.clearPasswordResetToken(tokenHash);
-          console.error(JSON.stringify({
-            timestamp: new Date().toISOString(),
-            level: "error",
-            event: "password_reset_delivery_failed",
-            errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
-            message: redactLogText(error?.message),
-          }));
-          throw new RequestError(
-            503,
-            "Không thể gửi email khôi phục. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
-          );
-        }
-      }
-      sendJson(response, 200, {
-        message: "Nếu email được đăng ký, hướng dẫn khôi phục mật khẩu sẽ được gửi đến hộp thư của bạn.",
-      });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/password-reset/confirm" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Yêu cầu đặt lại mật khẩu không hợp lệ.",
-        payloadSchemas.passwordResetConfirm,
-      );
-      const token = sanitizePlainText(
-        typeof payload.token === "string" ? payload.token : String(payload.token || ""),
-        128,
-      );
-      const password = typeof payload.password === "string" ? payload.password : "";
-      if (!/^[a-f0-9]{64}$/i.test(token)) {
-        throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
-      }
-      if (!isPasswordValid(password)) {
-        throw new RequestError(
-          400,
-          `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
-        );
-      }
-      const userId = await db.resetPassword(token, password);
-      if (!userId) {
-        throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
-      }
-      await sessionStore.destroyUserSessions(userId);
-      sendJson(response, 200, { message: "Mật khẩu đã được cập nhật." });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/register" &&
-      request.method === "POST"
-    ) {
-      const now = Date.now();
-      for (const [address, attempt] of registrationAttempts) {
-        if (attempt.expiresAt <= now) registrationAttempts.delete(address);
-      }
-      const address = request.socket.remoteAddress || "unknown";
-      const attempt = registrationAttempts.get(address);
-      if (attempt && attempt.count >= registrationAttemptLimit) {
-        throw new RequestError(
-          429,
-          "Bạn đã đăng ký quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-        );
-      }
-      if (!attempt && registrationAttempts.size >= 10_000) {
-        throw new RequestError(
-          503,
-          "Tạm thời không thể xử lý đăng ký. Vui lòng thử lại sau.",
-        );
-      }
-      registrationAttempts.set(address, {
-        count: (attempt?.count || 0) + 1,
-        expiresAt: attempt?.expiresAt || now + registrationAttemptWindowMs,
-      });
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
-        payloadSchemas.register,
-      );
-      const name = sanitizePlainText(
-        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
-        120,
-      );
-      const email = sanitizePlainText(
-        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
-        254,
-      ).toLowerCase();
-      const password = typeof payload.password === "string" ? payload.password : "";
-      if (!name || !email || !password) {
-        throw new RequestError(
-          400,
-          "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
-        );
-      }
-      if (!isPasswordValid(password)) {
-        throw new RequestError(
-          400,
-          `Mật khẩu phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
-        );
-      }
-      try {
-        const user = await db.createUser({
-          name,
-          email,
-          password,
-          studentType: sanitizePlainText(
-            typeof payload.studentType === "string" ? payload.studentType : "other",
-            32,
-          ) || "other",
-          studentId: sanitizePlainText(
-            typeof payload.studentId === "string" ? payload.studentId : "",
-            64,
-          ),
-        });
-        const session = await sessionStore.createSession(user);
-        sendJson(response, 201, {
-          token: session.token,
-          expiresAt: session.expiresAt,
-          user: publicUser(user),
-        });
-      } catch (err) {
-        if (err instanceof Error && err.message === "Email này đã được đăng ký trên hệ thống.") {
-          throw new RequestError(
-            409,
-            "Không thể hoàn tất đăng ký với thông tin đã cung cấp. Vui lòng kiểm tra và thử lại.",
-          );
-        }
-        throw new RequestError(
-          503,
-          "Hệ thống hiện không thể lưu tài khoản. Vui lòng thử lại sau hoặc liên hệ quản trị viên.",
-          err,
-        );
-      }
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/login" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu đăng nhập không hợp lệ.",
-        payloadSchemas.login,
-      );
-      const now = Date.now();
-      for (const [address, attempt] of loginAttempts) {
-        if (attempt.expiresAt <= now) loginAttempts.delete(address);
-      }
-      const address = request.socket.remoteAddress || "unknown";
-      const attempt = loginAttempts.get(address);
-      if (attempt && attempt.count >= loginAttemptLimit) {
-        throw new RequestError(
-          429,
-          "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-        );
-      }
-      loginAttempts.set(address, {
-        count: (attempt?.count || 0) + 1,
-        expiresAt: attempt?.expiresAt || now + loginAttemptWindowMs,
-      });
-      const email = sanitizePlainText(
-        typeof payload.email === "string" ? payload.email : String(payload.email || ""),
-        254,
-      ).toLowerCase();
-      const password = typeof payload.password === "string" ? payload.password : "";
-      const user = await db.findUserByEmail(email);
-      if (
-        !user ||
-        user.isActive === false ||
-        user.passwordAuthEnabled === false ||
-        !verifyPassword(password, user.password)
-      ) {
-        throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
-      }
-      loginAttempts.delete(address);
-      const session = await sessionStore.createSession(user);
-      sendJson(response, 200, {
-        token: session.token,
-        expiresAt: session.expiresAt,
-        user: publicUser(user),
-      });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/social" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu xác thực không hợp lệ.",
-        payloadSchemas.socialAuth,
-      );
-      const authHeader = request.headers["authorization"] || "";
-      const idToken = authHeader.replace(/^Bearer\s+/i, "").trim() ||
-        (typeof payload.idToken === "string" ? payload.idToken.trim() : "");
-      if (!idToken) throw new RequestError(401, "Thiếu Firebase ID Token.");
-
-      const { email, name, provider, providerId } = await verifySocialIdentity(
-        idToken,
-        socialTokenVerifier,
-      );
-
-      const user = await db.findOrCreateSocialUser({
-        name,
-        email,
-        authProvider: provider,
-        providerId,
-        emailVerified: true,
-      });
-      if (user.role === ROLES.ADMIN) {
-        throw new RequestError(403, "Tài khoản quản trị không được đăng nhập bằng social.");
-      }
-
-      const session = await sessionStore.createSession(user);
-      sendJson(response, 200, {
-        token: session.token,
-        expiresAt: session.expiresAt,
-        user: publicUser(user),
-      });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/social/link" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu liên kết tài khoản không hợp lệ.",
-        payloadSchemas.socialAuthLink,
-      );
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
-        throw new RequestError(403, "Không thể liên kết tài khoản social.");
-      }
-      verifyPasswordReauthentication(request, user, payload.password);
-      const identity = await verifySocialIdentity(payload.idToken, socialTokenVerifier);
-      const linkedUser = await db.linkSocialAccount(
-        user.id,
-        identity.provider,
-        identity.providerId,
-      );
-      sendJson(response, 200, { user: publicUser(linkedUser) });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/social/unlink" &&
-      request.method === "POST"
-    ) {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu tách tài khoản không hợp lệ.",
-        payloadSchemas.socialAuthUnlink,
-      );
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      const user = await db.findUserById(session.userId);
-      if (!user || user.isActive === false || user.role === ROLES.ADMIN) {
-        throw new RequestError(403, "Không thể tách tài khoản social.");
-      }
-      verifyPasswordReauthentication(request, user, payload.password);
-      const updatedUser = await db.unlinkSocialAccount(user.id, payload.provider);
-      sendJson(response, 200, { user: publicUser(updatedUser) });
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/auth/me" && request.method === "GET") {
-      const user = await getAuthUser(request);
-      if (!user) {
-        throw new RequestError(401, "Chưa đăng nhập.");
-      }
-      const storedUser = await db.findUserById(user.userId);
-      sendJson(response, 200, { user: publicUser(storedUser || user) });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/customer-info" &&
-      request.method === "PATCH"
-    ) {
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Thông tin khách hàng không hợp lệ.",
-        payloadSchemas.customerInfo,
-      );
-
-      const customerInfo = {};
-      for (const field of ["customerName", "name", "phone", "address"]) {
-        if (Object.prototype.hasOwnProperty.call(payload, field)) {
-          const rawValue = payload[field];
-          const safeValue = sanitizePlainText(
-            typeof rawValue === "string" ? rawValue : String(rawValue || ""),
-            field === "phone" ? 20 : 300,
-          );
-          if (!safeValue && field !== "customerName") {
-            throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
-          }
-          customerInfo[field] = safeValue;
-        }
-      }
-      const updatedUser = await db.updateCustomerInfo(
-        session.userId,
-        customerInfo,
-        session.userId,
-        session.role,
-      );
-      if (!updatedUser)
-        throw new RequestError(404, "Không tìm thấy tài khoản.");
-      session.customerInfo = updatedUser.customerInfo;
-      sendJson(response, 200, { customerInfo: updatedUser.customerInfo });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/privacy/consents" &&
-      request.method === "GET"
-    ) {
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      if (typeof db.getConsentRecords !== "function") {
-        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
-      }
-      const records = await db.getConsentRecords(session.userId);
-      const current = {};
-      for (const record of records) {
-        if (!Object.hasOwn(current, record.purpose)) current[record.purpose] = record;
-      }
-      sendJson(response, 200, { records, current });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/privacy/consents" &&
-      request.method === "POST"
-    ) {
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      if (typeof db.recordConsent !== "function") {
-        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
-      }
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu consent không hợp lệ.",
-      );
-      const purpose = sanitizePlainText(payload.purpose, 40);
-      const policyVersion = sanitizePlainText(payload.policyVersion, 20);
-      const dataSource = sanitizePlainText(payload.dataSource || "web", 20);
-      const retentionDays = Number(payload.retentionDays);
-      if (
-        !allowedConsentPurposes.has(purpose) ||
-        !/^[A-Za-z0-9._-]{1,20}$/.test(policyVersion) ||
-        !allowedConsentSources.has(dataSource) ||
-        typeof payload.consent !== "boolean" ||
-        !Number.isInteger(retentionDays) ||
-        retentionDays < 0 ||
-        retentionDays > 3650
-      ) {
-        throw new RequestError(400, "Dữ liệu consent không hợp lệ.");
-      }
-      const record = await db.recordConsent(session.userId, {
-        purpose,
-        consent: payload.consent,
-        policyVersion,
-        dataSource,
-        retentionDays,
-      });
-      sendJson(response, 201, { record });
-      return;
-    }
-
-    const revokeConsentMatch = requestUrl.pathname.match(
-      /^\/api\/privacy\/consents\/(order|service|marketing)$/,
-    );
-    if (revokeConsentMatch && request.method === "DELETE") {
-      const session = await getAuthUser(request);
-      if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-      if (typeof db.revokeConsent !== "function") {
-        throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ quản lý consent.");
-      }
-      const policyVersion = sanitizePlainText(
-        requestUrl.searchParams.get("policyVersion") || "",
-        20,
-      );
-      if (!/^[A-Za-z0-9._-]{1,20}$/.test(policyVersion)) {
-        throw new RequestError(400, "Phiên bản chính sách không hợp lệ.");
-      }
-      const record = await db.revokeConsent(
-        session.userId,
-        revokeConsentMatch[1],
-        policyVersion,
-        "web",
-      );
-      sendJson(response, 200, { record });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/auth/logout" &&
-      request.method === "POST"
-    ) {
-      const authHeader = request.headers["authorization"] || "";
-      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-      await sessionStore.destroySession(token);
-      sendJson(response, 200, { message: "Đã đăng xuất thành công." });
-      return;
-    }
-
-    // --- Customer CRM API (public and admin variants) ---
-    if (requestUrl.pathname === "/api/customers" && request.method === "GET") {
-      await requireCustomerPermission(request, "view");
-      const customers = await db.getCustomers();
-      const filters = validateQuery(
-        requestUrl,
-        customerQuerySchema,
-        "Bộ lọc khách hàng không hợp lệ.",
-      );
-      const pagedCustomers = applyCustomerFilters(customers, {
-        ...filters,
-      });
-      sendPaginatedJson(response, paginateList(pagedCustomers, filters, "createdAt", 20));
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/customers" && request.method === "POST") {
-      const user = await requireCustomerPermission(request, "create");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu khách hàng không hợp lệ.",
-        payloadSchemas.customer,
-      );
-      const customer = await db.createCustomer(
-        validateCustomerData(payload),
-        user.userId,
-        user.role,
-      );
-      sendJson(response, 201, customer);
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/customers" &&
-      request.method === "GET"
-    ) {
-      await requireCustomerPermission(request, "view");
-      const customers = await db.getCustomers();
-      const filters = validateQuery(
-        requestUrl,
-        customerQuerySchema,
-        "Bộ lọc khách hàng không hợp lệ.",
-      );
-      const pagedCustomers = applyCustomerFilters(customers, {
-        ...filters,
-      });
-      sendPaginatedJson(response, paginateList(pagedCustomers, filters, "createdAt", 20));
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/customers" &&
-      request.method === "POST"
-    ) {
-      const user = await requireCustomerPermission(request, "create");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu khách hàng không hợp lệ.",
-        payloadSchemas.customer,
-      );
-      const customer = await db.createCustomer(
-        validateCustomerData(payload),
-        user.userId,
-        user.role,
-      );
-      sendJson(response, 201, customer);
-      return;
-    }
-
-    const customerInteractionsMatch = requestUrl.pathname.match(
-      /^\/api\/(?:admin\/)?customers\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/interactions(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i,
-    );
-    if (customerInteractionsMatch) {
-      const [, customerId, interactionId] = customerInteractionsMatch;
-      if (!interactionId && request.method === "GET") {
-        await requireCustomerPermission(request, "interaction:view");
-        const query = validateQuery(
-          requestUrl,
-          customerInteractionQuerySchema,
-          "Bộ lọc lịch sử tương tác không hợp lệ.",
-        );
-        const result = await db.getCustomerInteractions(customerId, {
-          page: query.page || 1,
-          limit: query.limit || 20,
-        });
-        if (!result) throw new RequestError(404, "Không tìm thấy khách hàng.");
-        sendJson(response, 200, result);
-        return;
-      }
-
-      if (!interactionId && request.method === "POST") {
-        const user = await requireCustomerPermission(request, "interaction:create");
-        const payload = requireJsonObject(
-          await readJson(request),
-          "Dữ liệu tương tác khách hàng không hợp lệ.",
-          payloadSchemas.customerInteraction,
-        );
-        const interaction = await db.createCustomerInteraction(
-          customerId,
-          validateCustomerInteractionData(payload),
-          user.userId,
-          user.role,
-        );
-        if (!interaction) throw new RequestError(404, "Không tìm thấy khách hàng.");
-        sendJson(response, 201, interaction);
-        return;
-      }
-
-      if (
-        interactionId &&
-        (request.method === "PATCH" || request.method === "PUT")
-      ) {
-        const user = await requireCustomerPermission(request, "interaction:update");
-        const payload = requireJsonObject(
-          await readJson(request),
-          "Dữ liệu cập nhật tương tác không hợp lệ.",
-          payloadSchemas.customerInteractionUpdate,
-        );
-        const interaction = await db.updateCustomerInteraction(
-          customerId,
-          interactionId,
-          validateCustomerInteractionData(payload, { partial: true }),
-          user.userId,
-          user.role,
-        );
-        if (!interaction) throw new RequestError(404, "Không tìm thấy tương tác.");
-        sendJson(response, 200, interaction);
-        return;
-      }
-
-      if (interactionId && request.method === "DELETE") {
-        const user = await requireCustomerPermission(request, "interaction:delete");
-        const deleted = await db.deleteCustomerInteraction(
-          customerId,
-          interactionId,
-          user.userId,
-          user.role,
-        );
-        if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
-        sendJson(response, 200, { success: true });
-        return;
-      }
-    }
-
-    const customerMatch = requestUrl.pathname.match(
-      /^\/api\/(?:admin\/)?customers\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-    );
-    if (
-      customerMatch &&
-      (request.method === "GET" ||
-        request.method === "PATCH" ||
-        request.method === "PUT" ||
-        request.method === "DELETE")
-    ) {
-      if (request.method === "GET") {
-        await requireCustomerPermission(request, "view");
-        const customer = await db.getCustomerById(customerMatch[1]);
-        if (!customer) {
-          throw new RequestError(404, "Không tìm thấy khách hàng.");
-        }
-        sendJson(response, 200, customer);
-        return;
-      }
-
-      if (request.method === "DELETE") {
-        const user = await requireCustomerPermission(request, "delete");
-        const deleted = await db.softDeleteCustomer(
-          customerMatch[1],
-          user.userId,
-          user.role,
-        );
-        if (!deleted) {
-          throw new RequestError(404, "Không tìm thấy khách hàng.");
-        }
-        sendJson(response, 200, { success: true });
-        return;
-      }
-
-      const user = await requireCustomerPermission(request, "update");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật khách hàng không hợp lệ.",
-        payloadSchemas.customerUpdate,
-      );
-      const updated =
-        payload && payload.status !== undefined
-          ? await db.updateCustomerStatus(
-            customerMatch[1],
-            payload.status,
-            user.userId,
-            user.role,
-          )
-          : await db.updateCustomer(
-            customerMatch[1],
-            payload,
-            user.userId,
-            user.role,
-          );
-
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy khách hàng.");
-      }
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    // --- API: Orders ---
-    if (
-      requestUrl.pathname === "/api/orders/quote" &&
-      request.method === "POST"
-    ) {
-      if (
-        request.headers["content-type"]?.split(";")[0] !== "application/json"
-      ) {
-        throw new RequestError(415, "Báo giá cần được gửi ở định dạng JSON.");
-      }
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu báo giá không hợp lệ.",
-        payloadSchemas.orderQuote,
-      );
-      await waitForCatalogReady();
-      const requester = await getAuthUser(request);
-      const couponCode = typeof payload.couponCode === "string"
-        ? sanitizePlainText(payload.couponCode, 32).toUpperCase()
-        : "";
-      const coupon = couponCode
-        ? (await db.getCoupons()).find((entry) => entry.code === couponCode) || null
-        : null;
-      const quote = createOrder({
-        customerName: "Báo giá",
-        address: "Xem trước đơn hàng",
-        phone: "00000000",
-        paymentMethod: "cod",
-        couponCode: payload.couponCode,
-        discountRate: payload.discountRate,
-        items: payload.items,
-      }, requester?.userId || null, requester, coupon);
-      sendJson(response, 200, {
-        discountRate: quote.discountRate,
-        couponCode: quote.couponCode,
-        couponRate: quote.couponRate,
-        subtotal: quote.subtotal,
-        discount: quote.discount,
-        total: quote.total,
-        items: quote.items.map(({ title, quantity, unitPrice, lineTotal }) => ({
-          title,
-          quantity,
-          unitPrice,
-          lineTotal,
-        })),
-      });
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/orders" && request.method === "GET") {
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "total"] } },
-        "Bộ lọc đơn hàng không hợp lệ.",
-      );
-      const requester = await getAuthUser(request);
-      if (!requester) {
-        throw new RequestError(401, "Vui lòng đăng nhập để tra cứu đơn hàng.");
-      }
-      const orders = await db.getAllOrders(ordersPath);
-      sendPaginatedJson(
-        response,
-        paginateList(
-          orders.filter((order) => order.userId === requester.userId).map(publicOrder),
-          filters,
-          "createdAt",
-        ),
-      );
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/orders" && request.method === "POST") {
-      if (
-        request.headers["content-type"]?.split(";")[0] !== "application/json"
-      ) {
-        throw new RequestError(415, "Đơn hàng cần được gửi ở định dạng JSON.");
-      }
-
-      const requester = await getAuthUser(request);
-      const suppliedIdempotencyKey = String(
-        request.headers["idempotency-key"] || "",
-      ).trim();
-      if (
-        suppliedIdempotencyKey &&
-        !/^[\w\-:.]{8,128}$/.test(suppliedIdempotencyKey)
-      ) {
-        throw new RequestError(
-          400,
-          "Đơn hàng cần có Idempotency-Key hợp lệ để tránh tạo trùng.",
-        );
-      }
-      const idempotencyKey = suppliedIdempotencyKey || randomUUID();
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu đơn hàng không hợp lệ.",
-        payloadSchemas.order,
-      );
-      const { order, replayed } = await createAndPersistOrder(
-        payload,
-        requester?.userId || null,
-        requester,
-        idempotencyKey,
-      );
-      sendJson(response, replayed ? 200 : 201, publicOrder(order));
-      return;
-    }
-
-    const orderStatusMatch = requestUrl.pathname.match(
-      /^\/api\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/status$/i,
-    );
-    if (orderStatusMatch && request.method === "GET") {
-      const order = await db.findOrderById(orderStatusMatch[1], ordersPath);
-      if (!order) {
-        sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
-        return;
-      }
-      const requester = await getAuthUser(request);
-      if (order.userId) {
-        if (!requester) {
-          throw new RequestError(
-            401,
-            "Vui lòng đăng nhập để tra cứu trạng thái đơn hàng này.",
-          );
-        }
-        if (requester.role !== ROLES.ADMIN && order.userId !== requester.userId) {
-          throw new RequestError(
-            403,
-            "Bạn không có quyền xem trạng thái đơn hàng của người dùng khác.",
-          );
-        }
-      }
-      sendJson(response, 200, {
-        paymentStatus: order.paymentStatus,
-        orderStatus: order.status,
-      });
-      return;
-    }
-
-    const orderMatch = requestUrl.pathname.match(
-      /^\/api\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-    );
-    if (orderMatch && request.method === "GET") {
-      const order = await db.findOrderById(orderMatch[1], ordersPath);
-      if (!order) {
-        sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
-        return;
-      }
-      const requester = await getAuthUser(request);
-      if (requester && requester.role !== ROLES.ADMIN) {
-        if (order.userId && order.userId !== requester.userId) {
-          throw new RequestError(
-            403,
-            "Bạn không có quyền xem đơn hàng của người dùng khác.",
-          );
-        }
-        if (order.userId && order.userId === requester.userId) {
-          sendJson(response, 200, publicOrder(order));
-          return;
-        }
-      }
-      if (!requester && order.userId) {
-        throw new RequestError(
-          401,
-          "Vui lòng đăng nhập để xem thông tin đơn hàng này.",
-        );
-      }
-      sendJson(response, 200, publicOrder(order));
-      return;
-    }
-
-    if (orderMatch && (request.method === "PATCH" || request.method === "PUT")) {
-      const requester = await getAuthUser(request);
-      if (!requester) {
-        throw new RequestError(401, "Chưa đăng nhập.");
-      }
-      const order = await db.findOrderById(orderMatch[1], ordersPath);
-      if (!order) {
-        throw new RequestError(404, "Không tìm thấy đơn hàng.");
-      }
-      if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
-        throw new RequestError(
-          403,
-          "Bạn không có quyền cập nhật đơn hàng của người dùng khác.",
-        );
-      }
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật đơn hàng không hợp lệ.",
-        payloadSchemas.orderUpdate,
-      );
-      const safePayload = { ...payload };
-      let orderUpdateOptions = {};
-      orderUpdateOptions.actorRole = requester.role;
-      orderUpdateOptions.actorId = requester.userId;
-      if (
-        requester.role === ROLES.USER &&
-        (payload.paymentStatus !== undefined || payload.items !== undefined)
-      ) {
-        throw new RequestError(
-          403,
-          "Người mua chỉ được phép hủy đơn hàng ở trạng thái phù hợp.",
-        );
-      }
-      if (payload.items !== undefined) {
-        if (order.status === "cancelled" || payload.status === "cancelled") {
-          throw new RequestError(409, "Không thể cập nhật sản phẩm của đơn hàng đã hủy.");
-        }
-        await waitForCatalogReady();
-        const items = createUpdatedOrderItems(payload.items);
-        const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-        if (!Number.isSafeInteger(subtotal)) {
-          throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
-        }
-        if (!allowedDiscountRates.has(order.discountRate)) {
-          throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
-        }
-        const couponRate = Number.isFinite(order.couponRate)
-          ? order.couponRate
-          : order.couponCode
-            ? (await db.getCoupons()).find((coupon) => coupon.code === order.couponCode)?.rate
-            : 0;
-        if (order.couponCode && couponRate === undefined) {
-          throw new RequestError(400, "Không thể tính lại ưu đãi của đơn hàng.");
-        }
-        const discount = roundMoney(
-          subtotal * Math.min(order.discountRate + couponRate, 0.3),
-        );
-        const total = subtotal - discount;
-        if (!Number.isSafeInteger(discount) || !Number.isSafeInteger(total)) {
-          throw new RequestError(400, "Tổng giá trị đơn hàng không hợp lệ.");
-        }
-        safePayload.items = items;
-
-        const inventoryTitles = new Set([
-          ...(order.items || []).map((item) => item.title),
-          ...items.map((item) => item.title),
-        ]);
-        const inventory = [...inventoryTitles].map((title) => {
-          const book = bookCatalog.get(title);
-          return {
-            title,
-            stock:
-              Number.isInteger(book && book.stock) && book.stock >= 0
-                ? book.stock
-                : defaultBookStock,
-          };
-        });
-        const validateOrder = (existingOrders) => {
-          const reservedByOthers = new Map();
-          for (const existingOrder of existingOrders) {
-            if (
-              existingOrder.orderId === orderMatch[1] ||
-              existingOrder.status === "cancelled"
-            ) {
-              continue;
-            }
-            for (const item of existingOrder.items || []) {
-              reservedByOthers.set(
-                item.title,
-                (reservedByOthers.get(item.title) || 0) + Number(item.quantity || 0),
-              );
-            }
-          }
-          for (const item of items) {
-            const book = bookCatalog.get(item.title);
-            const stock =
-              Number.isInteger(book && book.stock) && book.stock >= 0
-                ? book.stock
-                : defaultBookStock;
-            if ((reservedByOthers.get(item.title) || 0) + item.quantity > stock) {
-              throw new RequestError(400, "Số lượng sách vượt quá tồn kho.");
-            }
-          }
-        };
-        orderUpdateOptions = {
-          actorRole: requester.role,
-          actorId: requester.userId,
-          inventory,
-          totals: { subtotal, discount, total },
-          validateOrder,
-        };
-      }
-      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
-        throw new RequestError(
-          403,
-          "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
-        );
-      }
-      if (safePayload.status !== undefined) {
-        safePayload.status = sanitizePlainText(
-          typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
-          32,
-        );
-        if (!allowedOrderStatuses.has(safePayload.status)) {
-          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
-        }
-      }
-      if (safePayload.paymentStatus !== undefined) {
-        safePayload.paymentStatus = sanitizePlainText(
-          typeof safePayload.paymentStatus === "string" ? safePayload.paymentStatus : String(safePayload.paymentStatus || ""),
-          32,
-        );
-        if (!allowedPaymentStatuses.has(safePayload.paymentStatus)) {
-          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
-        }
-      }
-      const updated = await enqueueOrderWrite(ordersPath, () =>
-        db.updateOrderStatus(
-          orderMatch[1],
-          safePayload,
-          ordersPath,
-          orderUpdateOptions,
-        ),
-      );
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy đơn hàng.");
-      }
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    // --- API: Services (Thuê / Thu mua / Trao đổi) ---
-    if (requestUrl.pathname === "/api/services" && request.method === "POST") {
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu yêu cầu dịch vụ không hợp lệ.",
-        payloadSchemas.service,
-      );
-      const bookTitle = sanitizePlainText(
-        typeof payload.bookTitle === "string" ? payload.bookTitle : String(payload.bookTitle || ""),
-        200,
-      );
-      const name = sanitizePlainText(
-        typeof payload.name === "string" ? payload.name : String(payload.name || ""),
-        120,
-      );
-      const phone = sanitizePlainText(
-        typeof payload.phone === "string" ? payload.phone : String(payload.phone || ""),
-        20,
-      );
-      const service = sanitizePlainText(
-        typeof payload.service === "string" ? payload.service : String(payload.service || ""),
-        32,
-      );
-      if (!bookTitle || !name || !phone || !service) {
-        throw new RequestError(400, "Vui lòng nhập đầy đủ thông tin dịch vụ.");
-      }
-      if (!allowedServiceTypes.has(service)) {
-        throw new RequestError(400, "Loại dịch vụ không hợp lệ.");
-      }
-      const entry = await db.addServiceRequest({
-        ...payload,
-        bookTitle,
-        name,
-        phone,
-        service,
-        condition: sanitizePlainText(
-          typeof payload.condition === "string" ? payload.condition : "",
-          64,
-        ),
-        note: sanitizePlainText(
-          typeof payload.note === "string" ? payload.note : "",
-          500,
-        ),
-      });
-      sendJson(response, 201, {
-        message: "Đã gửi yêu cầu thành công.",
-        request: entry,
-      });
-      return;
-    }
-
-    // --- API: Books Catalog (Base + Custom) ---
-    if (requestUrl.pathname === "/api/books" && request.method === "GET") {
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] } },
-        "Bộ lọc sách không hợp lệ.",
-      );
-      sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/books" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:books");
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] } },
-        "Bộ lọc sách không hợp lệ.",
-      );
-      sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
-      return;
-    }
-
-    // --- Admin API: Stats ---
-    if (
-      requestUrl.pathname === "/api/admin/stats" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:dashboard");
-      const stats = await db.getStats(ordersPath, books.length);
-      sendJson(response, 200, stats);
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/monitoring" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:dashboard");
-      const databaseStatus = await getDatabaseMonitoringStatus(
-        response.getHeader("X-Request-Id"),
-      );
-      const backupStatus = await readBackupStatus(backupStatusFile);
-      sendJson(response, 200, {
-        generatedAt: new Date().toISOString(),
-        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-        requests: monitoringMetrics.getSnapshot(),
-        database: databaseStatus,
-        backup: backupStatus,
-      });
-      return;
-    }
-
-    // --- Admin API: Orders (Full detail, status update) ---
-    if (
-      requestUrl.pathname === "/api/admin/orders" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:orders");
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "total"] } },
-        "Bộ lọc đơn hàng không hợp lệ.",
-      );
-      const orders = await db.getAllOrders(ordersPath);
-      sendPaginatedJson(response, paginateList(orders, filters, "createdAt"));
-      return;
-    }
-
-    const adminOrderMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/orders\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-    );
-    if (
-      adminOrderMatch &&
-      (request.method === "PATCH" || request.method === "PUT")
-    ) {
-      const requester = await requireRole(request, "write:orders");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật đơn hàng không hợp lệ.",
-        payloadSchemas.orderStatusUpdate,
-      );
-      const safePayload = {
-        ...payload,
-      };
-      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
-        throw new RequestError(
-          403,
-          "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
-        );
-      }
-      if (safePayload.status !== undefined) {
-        safePayload.status = sanitizePlainText(
-          typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
-          32,
-        );
-        if (!allowedOrderStatuses.has(safePayload.status)) {
-          throw new RequestError(400, "Trạng thái đơn hàng không hợp lệ.");
-        }
-      }
-      if (safePayload.paymentStatus !== undefined) {
-        safePayload.paymentStatus = sanitizePlainText(
-          typeof safePayload.paymentStatus === "string" ? safePayload.paymentStatus : String(safePayload.paymentStatus || ""),
-          32,
-        );
-        if (!allowedPaymentStatuses.has(safePayload.paymentStatus)) {
-          throw new RequestError(400, "Trạng thái thanh toán không hợp lệ.");
-        }
-      }
-      const updated = await enqueueOrderWrite(ordersPath, () =>
-        db.updateOrderStatus(
-          adminOrderMatch[1],
-          safePayload,
-          ordersPath,
-          { actorRole: requester.role, actorId: requester.userId },
-        ),
-      );
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy đơn hàng.");
-      }
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    // --- Admin API: Services ---
-    if (
-      requestUrl.pathname === "/api/admin/services" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:services");
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "status", "service"] } },
-        "Bộ lọc yêu cầu dịch vụ không hợp lệ.",
-      );
-      sendPaginatedJson(response, paginateList(await db.getServiceRequests(), filters, "createdAt"));
-      return;
-    }
-
-    const adminServiceMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/services\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-    );
-    if (
-      adminServiceMatch &&
-      (request.method === "PATCH" || request.method === "PUT")
-    ) {
-      await requireRole(request, "write:services");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật yêu cầu dịch vụ không hợp lệ.",
-        payloadSchemas.serviceStatus,
-      );
-      const status =
-        sanitizePlainText(payload.status, 32);
-      if (
-        status !== undefined &&
-        !allowedServiceStatuses.has(status)
-      ) {
-        throw new RequestError(400, "Trạng thái yêu cầu dịch vụ không hợp lệ.");
-      }
-      const updated = await db.updateServiceRequestStatus(
-        adminServiceMatch[1],
-        status,
-      );
-      if (!updated) {
-        throw new RequestError(404, "Không tìm thấy yêu cầu.");
-      }
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    // --- Admin API: Coupon Management ---
-    if (
-      requestUrl.pathname === "/api/admin/coupons" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:coupons");
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["code", "expiresAt", "usedCount"] } },
-        "Bộ lọc coupon không hợp lệ.",
-      );
-      sendPaginatedJson(response, paginateList(await db.getCoupons(), filters, "code"));
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/coupons" &&
-      request.method === "POST"
-    ) {
-      await requireRole(request, "write:coupons");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu coupon không hợp lệ.",
-        payloadSchemas.coupon,
-      );
-      const coupon = normalizeCoupon(payload, payload.code);
-      if ((await db.getCoupons()).some((entry) => entry.code === coupon.code)) {
-        throw new RequestError(409, "Mã coupon đã tồn tại.");
-      }
-      sendJson(response, 201, await db.saveCoupon(coupon, undefined, true));
-      return;
-    }
-
-    const adminCouponMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/coupons\/([A-Za-z0-9_-]{3,32})$/,
-    );
-    if (
-      adminCouponMatch &&
-      (request.method === "PUT" || request.method === "PATCH")
-    ) {
-      await requireRole(request, "write:coupons");
-      const code = adminCouponMatch[1].toUpperCase();
-      const existing = (await db.getCoupons()).find((entry) => entry.code === code);
-      if (!existing) throw new RequestError(404, "Không tìm thấy coupon.");
-      const expectedUpdatedAt = request.headers["if-match"];
-      if (!expectedUpdatedAt) {
-        throw new RequestError(428, "Cần gửi If-Match để cập nhật coupon mới nhất.");
-      }
-      const schema = request.method === "PATCH"
-        ? payloadSchemas.couponToggle
-        : payloadSchemas.couponUpdate;
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật coupon không hợp lệ.",
-        schema,
-      );
-      const coupon = request.method === "PATCH"
-        ? { ...existing, enabled: payload.enabled }
-        : normalizeCoupon(payload, code);
-      const updated = await db.saveCoupon(
-        coupon,
-        expectedUpdatedAt,
-      );
-      sendJson(response, 200, updated);
-      return;
-    }
-
-    // --- Admin API: Books Management ---
-    if (
-      requestUrl.pathname === "/api/admin/books" &&
-      request.method === "POST"
-    ) {
-      await requireRole(request, "write:books");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu sách không hợp lệ.",
-        payloadSchemas.book,
-      );
-      const newBook = await enqueueOrderWrite(ordersPath, async () => {
-        const newBookData = normalizeAdminBook(payload);
-        await assertUniqueBookTitle(newBookData.title);
-        const created = {
-          ...(await db.addCustomBook(newBookData)),
-          isCustom: true,
-        };
-        bookCatalog.set(created.title, created);
-        return created;
-      });
-      sendJson(response, 201, newBook);
-      return;
-    }
-
-    const adminBookMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/books\/([A-Za-z0-9_-]{1,128})$/i,
-    );
-    if (
-      adminBookMatch &&
-      (request.method === "PUT" || request.method === "PATCH")
-    ) {
-      await requireRole(request, "write:books");
-      const id = adminBookMatch[1];
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật sách không hợp lệ.",
-        payloadSchemas.bookUpdate,
-      );
-      const updatedBook = await enqueueOrderWrite(ordersPath, async () => {
-        await waitForCatalogReady();
-        const isCatalogBook = catalogBookById.has(id);
-        const previousBooks = isCatalogBook ? [] : await db.getCustomBooks();
-        const previous = isCatalogBook
-          ? { ...catalogBookById.get(id), ...catalogBookOverrides.get(id), id, isCustom: false }
-          : previousBooks.find((book) => book.id === id);
-        if (!previous) throw new RequestError(404, "Không tìm thấy sách.");
-        const updatedData = normalizeAdminBook(payload, previous);
-        await assertUniqueBookTitle(updatedData.title, id);
-        await assertStockCoversReservations(previous.title, updatedData.stock);
-        const expectedUpdatedAt = request.headers["if-match"];
-        const updated = isCatalogBook
-          ? await db.updateCatalogBook(id, updatedData, expectedUpdatedAt, previous)
-          : await db.updateCustomBook(id, updatedData, expectedUpdatedAt);
-        if (!updated) throw new RequestError(404, "Không tìm thấy sách.");
-        const result = { ...updated, isCustom: !isCatalogBook };
-        if (previous?.title && previous.title !== updated.title) {
-          bookCatalog.delete(previous.title);
-        }
-        if (isCatalogBook) catalogBookOverrides.set(id, updated);
-        if (result.title) bookCatalog.set(result.title, result);
-        return result;
-      });
-      sendJson(response, 200, updatedBook);
-      return;
-    }
-
-    if (adminBookMatch && request.method === "DELETE") {
-      await requireRole(request, "write:books");
-      if (catalogBookById.has(adminBookMatch[1])) {
-        throw new RequestError(409, "Không thể xóa sách mặc định khỏi danh mục.");
-      }
-      await enqueueOrderWrite(ordersPath, async () => {
-        const previousBooks = await db.getCustomBooks();
-        const previous = previousBooks.find((book) => book.id === adminBookMatch[1]);
-        const deleted = await db.deleteCustomBook(adminBookMatch[1]);
-        if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
-        if (previous?.title) bookCatalog.delete(previous.title);
-      });
-      sendJson(response, 200, { success: true });
-      return;
-    }
-
-    // --- Admin API: Users Management ---
-    if (
-      requestUrl.pathname === "/api/admin/staff" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:staff");
-      const staff = await db.getStaffUsers();
-      const rolePermissions = Object.fromEntries(
-        ["sales", "support"].map((role) => [
-          role,
-          [
-            ...(ROLE_PERMISSIONS[role] || []),
-            ...(CUSTOMER_ROLE_PERMISSIONS[role] || []).map((permission) => `customer:${permission}`),
-          ],
-        ]),
-      );
-      sendJson(response, 200, { staff, rolePermissions });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/audit" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:users");
-      const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "50", 10);
-      const offset = Number.parseInt(requestUrl.searchParams.get("offset") || "0", 10);
-      const entries = await readAuditEntries(auditLogPath);
-      const safeEntries = entries
-        .slice(Math.max(0, offset), Math.max(0, offset + (Number.isFinite(limit) && limit > 0 ? limit : 50)))
-        .map((entry) => ({
-          id: entry.id,
-          timestamp: entry.timestamp,
-          action: entry.action,
-          actorId: entry.actorId,
-          actorRole: entry.actorRole,
-          entityType: entry.entityType,
-          entityId: entry.entityId,
-          requestId: entry.requestId,
-          before: entry.before,
-          after: entry.after,
-          metadata: entry.metadata,
-          hash: entry.hash,
-        }));
-      sendJson(response, 200, { entries: safeEntries, total: entries.length, limit: safeEntries.length, offset });
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/staff" &&
-      request.method === "POST"
-    ) {
-      const actor = await requireRole(request, "write:staff");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu nhân viên không hợp lệ.",
-        payloadSchemas.staff,
-      );
-      if (!isPasswordValid(payload.password)) {
-        throw new RequestError(
-          400,
-          `Mật khẩu nhân viên phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự.`,
-        );
-      }
-      const name = sanitizePlainText(payload.name, 120);
-      const email = sanitizePlainText(payload.email, 254).toLowerCase();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new RequestError(400, "Địa chỉ email nhân viên không hợp lệ.");
-      }
-      const staff = await db.createStaffUser({
-        name,
-        email,
-        password: payload.password,
-        role: payload.role,
-      }, actor.userId);
-      const { password, passwordAuthEnabled, passwordReset, ...safeStaff } = staff;
-      sendJson(response, 201, safeStaff);
-      return;
-    }
-
-    const staffMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/staff\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
-    );
-    if (staffMatch && request.method === "PATCH") {
-      const actor = await requireRole(request, "write:staff");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu cập nhật nhân viên không hợp lệ.",
-        payloadSchemas.staffUpdate,
-      );
-      if (payload.role !== undefined && !["sales", "support"].includes(payload.role)) {
-        throw new RequestError(400, "Vai trò nhân viên chỉ có thể là sales hoặc support.");
-      }
-      if (payload.name !== undefined) {
-        payload.name = sanitizePlainText(payload.name, 120);
-        if (!payload.name) throw new RequestError(400, "Họ tên nhân viên không hợp lệ.");
-      }
-      if (payload.email !== undefined) {
-        payload.email = sanitizePlainText(payload.email, 254).toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
-          throw new RequestError(400, "Địa chỉ email nhân viên không hợp lệ.");
-        }
-      }
-      const staff = await db.updateStaffUser(staffMatch[1], payload, actor.userId);
-      if (!staff) throw new RequestError(404, "Không tìm thấy nhân viên.");
-      await sessionStore.destroyUserSessions(staff.id);
-      sendJson(response, 200, staff);
-      return;
-    }
-
-    if (
-      requestUrl.pathname === "/api/admin/users" &&
-      request.method === "GET"
-    ) {
-      await requireRole(request, "read:users");
-      const filters = validateQuery(
-        requestUrl,
-        { ...listQuerySchema, sort: { type: "string", maxLength: 32, values: ["createdAt", "name", "role"] } },
-        "Bộ lọc người dùng không hợp lệ.",
-      );
-      const users = await db.getUsers();
-      const safeUsers = users.map((u) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        role: u.role,
-        studentType: u.studentType,
-        studentId: u.studentId,
-        studentVerification: u.studentVerification || { status: STUDENT_VERIFICATION_STATUSES.PENDING },
-        createdAt: u.createdAt,
-      }));
-      sendPaginatedJson(response, paginateList(safeUsers, filters, "createdAt"));
-      return;
-    }
-
-    const adminUserMatch = requestUrl.pathname.match(
-      /^\/api\/admin\/users\/([0-9a-f-]+)$/i,
-    );
-    if (adminUserMatch && request.method === "PATCH") {
-      const actor = await requireRole(request, "write:users");
-      const payload = requireJsonObject(
-        await readJson(request),
-        "Dữ liệu xác minh sinh viên không hợp lệ.",
-        {
-          allowed: ["studentVerificationStatus"],
-          required: ["studentVerificationStatus"],
-          types: { studentVerificationStatus: "string" },
-        },
-      );
-      if (!Object.values(STUDENT_VERIFICATION_STATUSES).includes(payload.studentVerificationStatus)) {
-        throw new RequestError(400, "Trạng thái xác minh sinh viên không hợp lệ.");
-      }
-      const updated = await db.updateStudentVerification(
-        adminUserMatch[1],
-        payload.studentVerificationStatus,
-        actor.userId,
-      );
-      if (!updated) throw new RequestError(404, "Không tìm thấy tài khoản người dùng.");
-      await sessionStore.destroyUserSessions(updated.id);
-      sendJson(response, 200, publicUser(updated));
-      return;
-    }
+    if (await handlePublicRoute(request, response, requestUrl)) return;
+    if (await handlePaymentRoute(request, response, requestUrl.pathname)) return;
+    if (await handleAuthRoute(request, response, requestUrl)) return;
+    if (await handlePrivacyRoute(request, response, requestUrl)) return;
+    if (await handleCustomerRoute(request, response, requestUrl)) return;
+    if (await handleServiceRoute(request, response, requestUrl)) return;
+    if (await handleOrderRoute(request, response, requestUrl)) return;
+    if (await handleAdminRoute(request, response, requestUrl)) return;
 
     if (requestUrl.pathname.startsWith("/api/admin/")) {
       const requester = await getAuthUser(request);

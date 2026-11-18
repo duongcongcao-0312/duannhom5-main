@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { normalizeSePayConfig } = require("../backend/sepay-config");
+const { parseTrustedProxyIps } = require("../backend/security");
 
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
@@ -20,6 +21,29 @@ function assertProductionEnvironment(env = process.env) {
     if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.trim().length < 12) {
       failures.push("ADMIN_PASSWORD must contain at least 12 non-space characters.");
     }
+    if (
+      typeof env.RATE_LIMIT_HMAC_KEY !== "string" ||
+      Buffer.byteLength(env.RATE_LIMIT_HMAC_KEY) < 32
+    ) {
+      failures.push("Production requires a RATE_LIMIT_HMAC_KEY of at least 32 bytes.");
+    }
+  }
+
+  const trustedProxyHops = env.RATE_LIMIT_TRUSTED_PROXY_HOPS === undefined ||
+    String(env.RATE_LIMIT_TRUSTED_PROXY_HOPS).trim() === ""
+    ? 0
+    : Number(env.RATE_LIMIT_TRUSTED_PROXY_HOPS);
+  if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0) {
+    failures.push("RATE_LIMIT_TRUSTED_PROXY_HOPS must be a non-negative integer.");
+  }
+  let trustedProxyIps = [];
+  try {
+    trustedProxyIps = parseTrustedProxyIps(env.RATE_LIMIT_TRUSTED_PROXY_IPS);
+  } catch {
+    failures.push("RATE_LIMIT_TRUSTED_PROXY_IPS must be a comma-separated list of valid IP addresses.");
+  }
+  if (trustedProxyHops > 0 && trustedProxyIps.length === 0) {
+    failures.push("RATE_LIMIT_TRUSTED_PROXY_IPS is required when proxy hops are trusted.");
   }
 
   const origins = String(env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);

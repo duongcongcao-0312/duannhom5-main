@@ -167,6 +167,17 @@ test('admin API authentication uses bearer tokens without cross-origin cookies',
 	assert.doesNotMatch(script, /credentials:\s*['"]include['"]/);
 });
 
+test('admin dashboard exposes live API, database, payment and backup health', () => {
+	const html = read('admin.html');
+	const script = read('admin.js');
+	assert.match(html, /aria-labelledby="monitoringTitle"/);
+	assert.match(html, /id="monitoringApiStatus"/);
+	assert.match(html, /id="monitoringDatabaseStatus"/);
+	assert.match(html, /id="monitoringPaymentStatus"/);
+	assert.match(html, /id="monitoringBackupStatus"/);
+	assert.match(script, /api\/admin\/monitoring/);
+});
+
 test('authentication tokens use tab-scoped storage and expire consistently', async () => {
 	const apiClient = read('assets/api-client.js');
 	const main = read('main.js');

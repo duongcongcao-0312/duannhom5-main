@@ -18,7 +18,12 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
-const { readAuditEntries } = require("./backend/audit");
+const { readAuditEntries, withAuditRequestContext } = require("./backend/audit");
+const {
+  MonitoringMetrics,
+  normalizeRequestRoute,
+  redactLogText,
+} = require("./backend/monitoring");
 const { hashOrderRequest } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
@@ -446,9 +451,12 @@ class RequestError extends Error {
 
 function getRequestId(request) {
   const suppliedId = request.headers["x-request-id"];
+  const authorization = request.headers["authorization"] || "";
+  const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
   return typeof suppliedId === "string" &&
     suppliedId.length <= 128 &&
-    /^[A-Za-z0-9._:-]+$/.test(suppliedId)
+    /^[A-Za-z0-9._:-]+$/.test(suppliedId) &&
+    suppliedId !== bearerToken
     ? suppliedId
     : randomUUID();
 }
@@ -463,17 +471,59 @@ function logRequestError(request, requestId, error, message) {
   const cause = error && typeof error === "object" ? error.cause : undefined;
   const loggedError = cause || error;
   console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
     level: "error",
+    event: "request_error",
     message,
-    requestId,
+    requestId: redactLogText(requestId),
     method: request.method,
-    path: pathname,
+    route: normalizeRequestRoute(pathname),
     error: {
       name: loggedError instanceof Error ? loggedError.name : "UnknownError",
-      message: loggedError instanceof Error ? loggedError.message : String(loggedError),
-      stack: loggedError instanceof Error ? loggedError.stack : undefined,
+      message: redactLogText(loggedError instanceof Error ? loggedError.message : String(loggedError)),
+      stack: redactLogText(loggedError instanceof Error ? loggedError.stack : ""),
     },
   }));
+}
+
+function parseMonitoringAlertUrl(value) {
+  const alertUrl = String(value || "").trim();
+  if (!alertUrl) return "";
+  let parsed;
+  try {
+    parsed = new URL(alertUrl);
+  } catch {
+    throw new Error("MONITORING_ALERT_WEBHOOK_URL không phải URL hợp lệ.");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error("MONITORING_ALERT_WEBHOOK_URL phải dùng HTTPS và không nhúng thông tin đăng nhập.");
+  }
+  return alertUrl;
+}
+
+async function readBackupStatus(statusFile) {
+  try {
+    const status = JSON.parse(await fs.readFile(statusFile, "utf8"));
+    if (!status || typeof status !== "object" || Array.isArray(status) ||
+        !["succeeded", "failed"].includes(status.status)) {
+      return { status: "unavailable", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    return {
+      status: status.status,
+      lastAttemptAt: typeof status.lastAttemptAt === "string" ? status.lastAttemptAt : null,
+      lastSuccessAt: typeof status.lastSuccessAt === "string" ? status.lastSuccessAt : null,
+      storage: typeof status.storage === "string" ? status.storage : null,
+      durationMs: Number.isFinite(status.durationMs) ? status.durationMs : null,
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return { status: "unknown", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    if (error instanceof SyntaxError) {
+      return { status: "unavailable", lastAttemptAt: null, lastSuccessAt: null };
+    }
+    throw error;
+  }
 }
 
 function roundMoney(value) {
@@ -1171,6 +1221,12 @@ function createServer({
   customerInteractionsPath,
   consentRecordsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
+  backupStatusFile = path.resolve(
+    process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
+  ),
+  monitoringAlertUrl = process.env.MONITORING_ALERT_WEBHOOK_URL || "",
+  monitoringAlertFetch = globalThis.fetch,
+  monitoringAlertCooldownMs = 15 * 60 * 1000,
   database,
   paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || "",
   sepayApiKey = process.env.SEPAY_API_KEY || "",
@@ -1240,6 +1296,14 @@ function createServer({
   if (db && typeof db === "object") {
     db.auditLogPath = auditLogPath;
   }
+  const monitoringMetrics = new MonitoringMetrics();
+  const startedAt = Date.now();
+  const alertUrl = parseMonitoringAlertUrl(monitoringAlertUrl);
+  if (typeof monitoringAlertCooldownMs !== "number" ||
+      !Number.isFinite(monitoringAlertCooldownMs) ||
+      monitoringAlertCooldownMs < 0) {
+    throw new RangeError("monitoringAlertCooldownMs must be a non-negative number.");
+  }
   const sessionStore = new SessionStore({
     repository: sessionRepository,
     sessionTtlMs,
@@ -1255,6 +1319,84 @@ function createServer({
   const registrationAttemptWindowMs = 15 * 60 * 1000;
   const passwordResetAttempts = new Map();
   const passwordResetEmailAttempts = new Map();
+
+  function dispatchMonitoringAlert(alert, requestId) {
+    const now = Date.now();
+    if (!monitoringMetrics.shouldSendAlert(alert.event, now, monitoringAlertCooldownMs)) return;
+    const payload = {
+      event: alert.event,
+      severity: alert.severity,
+      timestamp: new Date(now).toISOString(),
+      service: "BookNest",
+      count: alert.count,
+      threshold: alert.threshold,
+      requestId: redactLogText(requestId),
+      text: `BookNest alert: ${alert.event} (${alert.count}; ${alert.threshold}).`,
+    };
+    console.warn(JSON.stringify({ level: "warn", event: "monitoring_alert", ...payload }));
+    if (!alertUrl) return;
+
+    void (async () => {
+      try {
+        if (typeof monitoringAlertFetch !== "function") {
+          throw new Error("No fetch implementation is available for monitoring alerts.");
+        }
+        const response = await monitoringAlertFetch(alertUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) throw new Error(`Alert endpoint returned HTTP ${response.status}.`);
+      } catch (error) {
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "error",
+          event: "monitoring_alert_delivery_failed",
+          message: redactLogText(error.message),
+        }));
+      }
+    })();
+  }
+
+  async function getDatabaseMonitoringStatus(requestId) {
+    let status;
+    try {
+      if (typeof db.getMonitoringStatus === "function") {
+        status = await db.getMonitoringStatus();
+      } else {
+        await db.init();
+        status = {
+          status: "healthy",
+          storage: process.env.DATABASE_URL ? "postgresql" : "file",
+          connections: null,
+        };
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "database_health_check_failed",
+        requestId: redactLogText(requestId),
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      }));
+      status = {
+        status: "unavailable",
+        storage: process.env.DATABASE_URL ? "postgresql" : "file",
+        connections: null,
+      };
+    }
+    if (status.status !== "healthy") {
+      dispatchMonitoringAlert({
+        event: "database_unavailable",
+        severity: "critical",
+        count: 1,
+        threshold: "database health check failed",
+      }, requestId);
+    }
+    return status;
+  }
+
   function verifyPasswordReauthentication(request, user, password) {
     const now = Date.now();
     for (const [address, attempt] of reauthenticationAttempts) {
@@ -1316,7 +1458,13 @@ function createServer({
       catalogLoadError = null;
     } catch (error) {
       catalogLoadError = error;
-      console.error("Không thể tải sách quản trị:", error);
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "catalog_load_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+        message: redactLogText(error?.message),
+      }));
     }
   }
 
@@ -1708,6 +1856,7 @@ function createServer({
         amount: payload.amount,
         occurredAt: payload.occurredAt,
       });
+      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
       if (result.conflict) {
         throw new RequestError(409, "Webhook ID đã được dùng với payload khác.");
       }
@@ -1815,6 +1964,7 @@ function createServer({
         amount: Number(payload.transferAmount),
         occurredAt: new Date(occurredAt).toISOString(),
       });
+      if (result.duplicate) monitoringMetrics.recordPaymentWebhookDuplicate();
       if (result.conflict) {
         throw new RequestError(409, "Mã giao dịch SePay đã được sử dụng với dữ liệu khác.");
       }
@@ -1926,7 +2076,13 @@ function createServer({
           });
         } catch (error) {
           await db.clearPasswordResetToken(tokenHash);
-          console.error("Không thể gửi email khôi phục mật khẩu:", error);
+          console.error(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            level: "error",
+            event: "password_reset_delivery_failed",
+            errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+            message: redactLogText(error?.message),
+          }));
           throw new RequestError(
             503,
             "Không thể gửi email khôi phục. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
@@ -2908,6 +3064,25 @@ function createServer({
       return;
     }
 
+    if (
+      requestUrl.pathname === "/api/admin/monitoring" &&
+      request.method === "GET"
+    ) {
+      await requireRole(request, "read:dashboard");
+      const databaseStatus = await getDatabaseMonitoringStatus(
+        response.getHeader("X-Request-Id"),
+      );
+      const backupStatus = await readBackupStatus(backupStatusFile);
+      sendJson(response, 200, {
+        generatedAt: new Date().toISOString(),
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        requests: monitoringMetrics.getSnapshot(),
+        database: databaseStatus,
+        backup: backupStatus,
+      });
+      return;
+    }
+
     // --- Admin API: Orders (Full detail, status update) ---
     if (
       requestUrl.pathname === "/api/admin/orders" &&
@@ -3355,11 +3530,44 @@ function createServer({
 
   const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
+    const requestStartedAt = process.hrtime.bigint();
     response.setHeader("X-Request-Id", requestId);
     for (const [name, value] of Object.entries(securityHeaders)) {
       response.setHeader(name, value);
     }
-    void handleRequest(request, response).catch((error) => {
+    response.once("finish", () => {
+      let pathname = "/";
+      try {
+        pathname = new URL(request.url, "http://localhost").pathname;
+      } catch {
+        pathname = "<invalid-url>";
+      }
+      const durationMs = Number(process.hrtime.bigint() - requestStartedAt) / 1e6;
+      const sample = monitoringMetrics.recordRequest({
+        method: request.method,
+        pathname,
+        status: response.statusCode,
+        durationMs,
+      });
+      const record = {
+        timestamp: new Date().toISOString(),
+        level: response.statusCode >= 500 ? "error" : response.statusCode >= 400 ? "warn" : "info",
+        event: "http_request",
+        requestId: redactLogText(requestId),
+        method: sample.method,
+        route: sample.route,
+        status: sample.status,
+        durationMs: Number(durationMs.toFixed(2)),
+      };
+      const serialized = JSON.stringify(record);
+      if (response.statusCode >= 500) console.error(serialized);
+      else if (response.statusCode >= 400) console.warn(serialized);
+      else console.log(serialized);
+      for (const alert of monitoringMetrics.getTriggeredAlerts()) {
+        dispatchMonitoringAlert(alert, requestId);
+      }
+    });
+    void withAuditRequestContext(requestId, () => handleRequest(request, response)).catch((error) => {
       const isExpectedError =
         error instanceof RequestError || error instanceof CustomerError;
       const status =
@@ -3408,17 +3616,21 @@ function createServer({
     try {
       Promise.resolve(db.close()).catch((error) => {
         console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
           level: "error",
-          message: "Failed to close the database pool",
-          error: error instanceof Error ? error.message : String(error),
+          event: "database_pool_close_failed",
+          errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+          message: redactLogText(error instanceof Error ? error.message : String(error)),
         }));
         process.exitCode = 1;
       });
     } catch (error) {
       console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
         level: "error",
-        message: "Failed to close the database pool",
-        error: error instanceof Error ? error.message : String(error),
+        event: "database_pool_close_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+        message: redactLogText(error instanceof Error ? error.message : String(error)),
       }));
       process.exitCode = 1;
     }
@@ -3437,7 +3649,12 @@ if (require.main === module) {
     console.log(`Nhận ${signal}, đang dừng server an toàn.`);
     server.close((error) => {
       if (!error) return;
-      console.error(`Không thể dừng server an toàn: ${error.message}`);
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "server_shutdown_failed",
+        message: redactLogText(error.message),
+      }));
       process.exitCode = 1;
     });
   };

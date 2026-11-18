@@ -46,6 +46,40 @@ test("PostgresDatabase rejects a missing DATABASE_URL", () => {
   );
 });
 
+test("monitoring status probes database connectivity and reports pool counts only", async (t) => {
+  const pool = createPool({
+    totalCount: 6,
+    idleCount: 4,
+    waitingCount: 2,
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  assert.deepEqual(await db.getMonitoringStatus(), {
+    status: "healthy",
+    storage: "postgresql",
+    connections: { total: 6, idle: 4, waiting: 2 },
+  });
+  assert.equal(pool.queries.length, 1);
+  assert.match(pool.queries[0].sql, /SELECT 1/);
+
+  const failedPool = createPool({
+    async query() {
+      const error = new Error("database credentials unavailable");
+      error.code = "ECONNREFUSED";
+      throw error;
+    },
+  });
+  const failedDb = new PostgresDatabase({ pool: failedPool });
+  t.after(() => failedDb.close());
+  assert.deepEqual(await failedDb.getMonitoringStatus(), {
+    status: "unavailable",
+    storage: "postgresql",
+    connections: { total: 0, idle: 0, waiting: 0 },
+    errorCode: "ECONNREFUSED",
+  });
+});
+
 test("initialization provisions admin users in the relational table once", async (t) => {
   withAdminConfig(t);
   const pool = createPool();

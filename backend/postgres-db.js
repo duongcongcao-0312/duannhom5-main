@@ -382,6 +382,25 @@ class PostgresDatabase {
     await this.initialization;
   }
 
+  async getMonitoringStatus() {
+    const connections = {
+      total: Number.isInteger(this.pool.totalCount) ? this.pool.totalCount : 0,
+      idle: Number.isInteger(this.pool.idleCount) ? this.pool.idleCount : 0,
+      waiting: Number.isInteger(this.pool.waitingCount) ? this.pool.waitingCount : 0,
+    };
+    try {
+      await this.pool.query("SELECT 1");
+      return { status: "healthy", storage: "postgresql", connections };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        storage: "postgresql",
+        connections,
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+      };
+    }
+  }
+
   async close() {
     return this.pool.end();
   }

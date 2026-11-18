@@ -195,6 +195,8 @@
         showToast('Đã làm mới dữ liệu!');
     });
 
+    document.getElementById('refreshMonitoringBtn')?.addEventListener('click', loadMonitoringSummary);
+
     function loadCurrentView() {
         if (activeView === 'dashboard') loadDashboard();
         else if (activeView === 'orders') loadOrders();
@@ -206,6 +208,7 @@
 
     // --- VIEW: DASHBOARD ---
     async function loadDashboard() {
+        const monitoringLoad = loadMonitoringSummary();
         try {
             const res = await apiFetch('/api/admin/stats');
             if (res.ok) {
@@ -221,6 +224,58 @@
             }
         } catch (e) {
             console.error('Lỗi tải thống kê:', e);
+        }
+        await monitoringLoad;
+    }
+
+    async function loadMonitoringSummary() {
+        const setStatus = (id, value, status) => {
+            const element = document.getElementById(id);
+            if (!element) return;
+            element.textContent = value;
+            element.dataset.status = status;
+        };
+        try {
+            const response = await apiFetch('/api/admin/monitoring');
+            if (!response.ok) throw new Error('Không tải được chỉ số vận hành.');
+            const monitoring = await response.json();
+            const requests = monitoring.requests;
+            const database = monitoring.database;
+            const payments = requests.payments;
+            const backup = monitoring.backup;
+            const databaseHealthy = database.status === 'healthy';
+            const paymentsHealthy = payments.webhookFailuresLast5m === 0 &&
+                payments.webhookConflictsLast5m === 0 &&
+                payments.orderConflictsLast5m === 0;
+            const backupStatus = backup.status === 'succeeded'
+                ? 'Sao lưu thành công'
+                : backup.status === 'failed'
+                    ? 'Sao lưu lỗi'
+                    : 'Chưa có báo cáo';
+            const backupTimestamp = backup.lastAttemptAt
+                ? new Date(backup.lastAttemptAt).toLocaleString('vi-VN')
+                : 'Chưa ghi nhận lần chạy';
+            const connectionCounts = database.connections
+                ? `${database.connections.total} kết nối (${database.connections.idle} rảnh, ${database.connections.waiting} chờ)`
+                : `Kho ${database.storage === 'file' ? 'file' : 'dữ liệu'}`;
+
+            setStatus('monitoringApiStatus', `${requests.serverErrorsLast5m} lỗi 5xx`, requests.serverErrorsLast5m ? 'unavailable' : 'healthy');
+            document.getElementById('monitoringApiMetrics').textContent =
+                `${requests.requestsLast5m} yêu cầu API / 5 phút · lỗi ${requests.errorRatePct}% · p95 ${requests.p95LatencyMs} ms`;
+            setStatus('monitoringDatabaseStatus', databaseHealthy ? 'Hoạt động' : 'Không khả dụng', databaseHealthy ? 'healthy' : 'unavailable');
+            document.getElementById('monitoringDatabaseConnections').textContent = connectionCounts;
+            setStatus('monitoringPaymentStatus', paymentsHealthy ? 'Ổn định' : 'Cần kiểm tra', paymentsHealthy ? 'healthy' : 'unavailable');
+            document.getElementById('monitoringPaymentMetrics').textContent =
+                `${payments.webhookRequestsLast5m} webhook / 5 phút · ${payments.webhookFailuresLast5m} lỗi · ${payments.webhookConflictsLast5m} xung đột · ${payments.duplicatesSinceStart} bản lặp`;
+            setStatus('monitoringBackupStatus', backupStatus, backup.status);
+            document.getElementById('monitoringBackupMetrics').textContent = backupTimestamp;
+            document.getElementById('monitoringUpdatedAt').textContent =
+                `Cập nhật ${new Date(monitoring.generatedAt).toLocaleTimeString('vi-VN')} · uptime ${monitoring.uptimeSeconds} giây`;
+        } catch (error) {
+            setStatus('monitoringApiStatus', 'Không tải được chỉ số', 'unavailable');
+            document.getElementById('monitoringApiMetrics').textContent =
+                'Kiểm tra quyền quản trị và kết nối máy chủ.';
+            document.getElementById('monitoringUpdatedAt').textContent = 'Chỉ số vận hành hiện không khả dụng.';
         }
     }
 

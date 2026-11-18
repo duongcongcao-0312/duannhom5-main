@@ -129,7 +129,9 @@ Các biến thường dùng:
 | `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày và phải lớn hơn 0. |
 | `SESSION_REFRESH_TTL_MS` | Thời hạn refresh token tính bằng mili giây; mặc định là 30 ngày và phải lớn hơn 0. Refresh token được lưu dưới dạng hash SHA-256, không ghi token thô ra dữ liệu hoặc log. |
 | `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh chữ ký webhook thanh toán; chỉ lưu trong secret manager. |
+| `MONITORING_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn nhận cảnh báo ngưỡng API, database và payment; payload chỉ chứa mã sự kiện, số lượng, ngưỡng và request ID. |
 | `BACKUP_DIR` / `DATA_DIR` | Thư mục backup và thư mục dữ liệu file; không đặt hai thư mục trùng hoặc lồng nhau. |
+| `BACKUP_STATUS_FILE` | File trạng thái backup dùng chung giữa scheduler và backend; mặc định `<DATA_DIR>/backup-status.json`. |
 | `BACKUP_INTERVAL_HOURS` | Chu kỳ backup; mặc định 24 giờ, từ 1 đến 8760. |
 | `BACKUP_RETENTION_DAYS` | Thời gian lưu backup; mặc định 30 ngày. Luôn giữ ít nhất hai bản gần nhất. |
 | `BACKUP_LOG_FILE` | File log JSON Lines cho các lần backup, retention và lỗi. |

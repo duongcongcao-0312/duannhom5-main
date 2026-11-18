@@ -486,11 +486,23 @@ test("admin audit log records staff actions with a hash chain", async (t) => {
     path.join(os.tmpdir(), "booknest-admin-audit-test-"),
   );
   const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
-  const server = createServer({
-    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
-    usersPath: path.join(temporaryDirectory, "users.json"),
-    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+  const usersPath = path.join(temporaryDirectory, "users.json");
+  const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
+  const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const database = new Database({
+    dataDir: temporaryDirectory,
+    usersPath,
+    ordersPath,
+    servicesPath,
     auditLogPath,
+  });
+  const server = createServer({
+    database,
+    ordersPath,
+    usersPath,
+    servicesPath,
+    auditLogPath,
+    backupStatusFile: path.join(temporaryDirectory, "backup-status.json"),
   });
 
   t.after(async () => {
@@ -544,5 +556,17 @@ test("admin audit log records staff actions with a hash chain", async (t) => {
   assert.ok(auditPayload.entries.some((entry) => entry.action === "staff.profile.create"));
   assert.ok(auditPayload.entries.some((entry) => entry.action === "staff.profile.update"));
   assert.ok(auditPayload.entries.every((entry) => typeof entry.hash === "string" && entry.hash.length === 64));
+  assert.ok(auditPayload.entries.every((entry) => typeof entry.requestId === "string" && entry.requestId));
   assert.ok(auditPayload.entries.every((entry) => entry.action !== ""));
+  const auditContents = await fsPromises.readFile(auditLogPath, "utf8");
+  assert.doesNotMatch(auditContents, /audit-staff@example\.com|audit-staff-password|Nhân viên audit/);
+
+  const monitoringRes = await fetch(`${baseUrl}/api/admin/monitoring`, {
+    headers: adminHeaders,
+  });
+  assert.equal(monitoringRes.status, 200);
+  const monitoring = await monitoringRes.json();
+  assert.equal(monitoring.database.status, "healthy");
+  assert.equal(monitoring.backup.status, "unknown");
+  assert.ok(monitoring.requests.totalRequests >= 3);
 });

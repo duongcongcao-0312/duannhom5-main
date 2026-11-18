@@ -83,6 +83,38 @@
                     </div>
                 </div>
 
+                <section class="monitoring-panel" aria-labelledby="monitoringTitle">
+                    <div class="monitoring-panel-header">
+                        <div>
+                            <h2 id="monitoringTitle">Sức khỏe dịch vụ</h2>
+                            <p class="subtitle" id="monitoringUpdatedAt">Đang tải chỉ số vận hành...</p>
+                        </div>
+                        <button class="btn-refresh" id="refreshMonitoringBtn" type="button">Làm mới</button>
+                    </div>
+                    <div class="monitoring-grid" aria-live="polite">
+                        <article class="monitoring-card">
+                            <h3>API</h3>
+                            <strong id="monitoringApiStatus">Đang tải</strong>
+                            <p id="monitoringApiMetrics">—</p>
+                        </article>
+                        <article class="monitoring-card">
+                            <h3>Cơ sở dữ liệu</h3>
+                            <strong id="monitoringDatabaseStatus">Đang tải</strong>
+                            <p id="monitoringDatabaseConnections">—</p>
+                        </article>
+                        <article class="monitoring-card">
+                            <h3>Thanh toán</h3>
+                            <strong id="monitoringPaymentStatus">Đang tải</strong>
+                            <p id="monitoringPaymentMetrics">—</p>
+                        </article>
+                        <article class="monitoring-card">
+                            <h3>Sao lưu</h3>
+                            <strong id="monitoringBackupStatus">Đang tải</strong>
+                            <p id="monitoringBackupMetrics">—</p>
+                        </article>
+                    </div>
+                </section>
+
                 <div class="dashboard-panels">
                     <div class="panel">
                         <div class="panel-header">

@@ -1,10 +1,13 @@
 const crypto = require("node:crypto");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { redactLogText } = require("./monitoring");
+const auditRequestContext = new AsyncLocalStorage();
 
 function sanitizeAuditValue(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return redactLogText(value);
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return String(value);
   if (Array.isArray(value)) {
@@ -15,7 +18,7 @@ function sanitizeAuditValue(value, seen = new WeakSet()) {
     seen.add(value);
     const next = {};
     for (const [key, item] of Object.entries(value)) {
-      if (/(password|token|secret|authorization|cookie|session|card|cvv|pan|signature)/i.test(key)) {
+      if (/(password|token|secret|authorization|cookie|session|card|cvv|pan|signature|email|phone|address|customer(?:name|info)|full.?name|^name$|^note$)/i.test(key)) {
         continue;
       }
       next[key] = sanitizeAuditValue(item, seen);
@@ -40,13 +43,19 @@ function normalizeAuditEvent(event = {}) {
     entityId: typeof sanitized.entityId === "string" ? sanitized.entityId.trim() : sanitized.entityId ?? null,
     before: sanitized.before === undefined ? null : sanitized.before,
     after: sanitized.after === undefined ? null : sanitized.after,
-    requestId: typeof sanitized.requestId === "string" ? sanitized.requestId.trim() : sanitized.requestId ?? null,
+    requestId: typeof sanitized.requestId === "string"
+      ? sanitized.requestId.trim()
+      : sanitized.requestId ?? auditRequestContext.getStore() ?? null,
     metadata: sanitized.metadata === undefined ? {} : sanitizeAuditValue(sanitized.metadata),
   };
   if (entry.actorId === "") entry.actorId = null;
   if (entry.actorRole === "") entry.actorRole = null;
   if (entry.entityId === "") entry.entityId = null;
   return entry;
+}
+
+function withAuditRequestContext(requestId, operation) {
+  return auditRequestContext.run(requestId, operation);
 }
 
 function computeAuditEntryHash(previousHash, entry) {
@@ -76,7 +85,11 @@ async function appendAuditEntry(filePath, event) {
   const entry = { ...normalizedEvent, previousHash };
   entry.hash = computeAuditEntryHash(previousHash, entry);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.appendFile(absolutePath, `${JSON.stringify(entry)}\n`, "utf8");
+  await fs.appendFile(absolutePath, `${JSON.stringify(entry)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await fs.chmod(absolutePath, 0o600);
   return entry;
 }
 
@@ -130,4 +143,5 @@ module.exports = {
   normalizeAuditEvent,
   readAuditEntries,
   sanitizeAuditValue,
+  withAuditRequestContext,
 };

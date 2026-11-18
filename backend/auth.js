@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const { normalizeRole } = require("./business-constants");
 const { secureHashPasswordResetToken } = require("./security");
+const { redactLogText } = require("./monitoring");
 
 /**
  * Hash a plain password using scrypt
@@ -68,7 +69,12 @@ class SessionStore {
     if (this.cleanupIntervalMs > 0) {
       this._cleanupTimer = setInterval(() => {
         this.pruneExpiredSessions().catch((error) => {
-          console.error("Không thể dọn session hết hạn:", error);
+          console.error(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            level: "error",
+            event: "expired_session_cleanup_failed",
+            message: redactLogText(error?.message),
+          }));
         });
       }, this.cleanupIntervalMs);
       this._cleanupTimer.unref?.();

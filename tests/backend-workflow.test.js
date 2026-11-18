@@ -440,12 +440,14 @@ test("registration returns a JSON service error when user persistence is unavail
     const body = await response.json();
     assert.match(body.error, /không thể lưu tài khoản/i);
     assert.doesNotMatch(JSON.stringify(body), /database connection unavailable|stack/i);
-    assert.ok(loggedErrors.some((line) =>
-      line.includes(requestId) &&
-      line.includes("POST") &&
-      line.includes("/api/auth/register") &&
-      line.includes("database connection unavailable"),
-    ));
+    assert.ok(loggedErrors.some((line) => {
+      const record = JSON.parse(line);
+      return record.event === "request_error" &&
+        record.requestId === requestId &&
+        record.method === "POST" &&
+        record.route === "/api/auth" &&
+        record.error?.message === "database connection unavailable";
+    }));
   } finally {
     console.error = originalConsoleError;
   }

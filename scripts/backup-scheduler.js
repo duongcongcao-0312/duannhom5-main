@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { createBackup, verifyBackup } = require("./backup");
 const { createPostgresBackup, validateDatabaseUrl } = require("./postgres-backup");
+const { redactLogText } = require("../backend/monitoring");
 
 const BACKUP_PREFIX = "booknest-";
 const MIN_RETAINED_BACKUPS = 2;
@@ -45,6 +46,9 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
   const intervalHours = positiveInteger(env.BACKUP_INTERVAL_HOURS, "BACKUP_INTERVAL_HOURS", 24, 8760);
   const retentionDays = positiveInteger(env.BACKUP_RETENTION_DAYS, "BACKUP_RETENTION_DAYS", 30, 3650);
   const logFile = path.resolve(env.BACKUP_LOG_FILE || path.join(backupDir, "backup.log"));
+  const statusFile = path.resolve(
+    env.BACKUP_STATUS_FILE || path.join(dataDir, "backup-status.json"),
+  );
   const timeoutMs = positiveInteger(env.BACKUP_ALERT_TIMEOUT_MS, "BACKUP_ALERT_TIMEOUT_MS", 10000, 120000);
   const databaseUrl = env.DATABASE_URL || "";
   if (databaseUrl) validateDatabaseUrl(databaseUrl);
@@ -62,6 +66,7 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
     retentionDays,
     retentionMs: retentionDays * 24 * 60 * 60 * 1000,
     logFile,
+    statusFile,
     alertWebhookUrl,
     timeoutMs,
     databaseUrl,
@@ -73,15 +78,53 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
   };
 }
 
-function redactSecrets(message, env = process.env) {
-  let redacted = String(message);
-  for (const name of ["DATABASE_URL", "ADMIN_PASSWORD", "SMTP_PASS", "RESEND_API_KEY", "BACKUP_ALERT_WEBHOOK_URL"]) {
-    const secret = env[name];
-    if (typeof secret === "string" && secret.length >= 6) {
-      redacted = redacted.split(secret).join("[REDACTED]");
+async function writeBackupStatus(config, status, details) {
+  if (!config.statusFile) return;
+  let lastSuccessAt = null;
+  try {
+    const previous = JSON.parse(await fs.readFile(config.statusFile, "utf8"));
+    if (typeof previous.lastSuccessAt === "string") {
+      lastSuccessAt = previous.lastSuccessAt;
     }
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
   }
-  return redacted.replace(/(postgres(?:ql)?:\/\/[^:\s/@]+:)[^@\s/]+@/gi, "$1[REDACTED]@");
+
+  const timestamp = details.timestamp;
+  if (status === "succeeded") lastSuccessAt = timestamp;
+  const record = {
+    status,
+    lastAttemptAt: timestamp,
+    lastSuccessAt,
+    backup: details.backup,
+    storage: details.storage,
+    durationMs: details.durationMs,
+  };
+  const temporaryFile = `${config.statusFile}.${process.pid}.tmp`;
+  await fs.mkdir(path.dirname(config.statusFile), { recursive: true });
+  try {
+    await fs.writeFile(temporaryFile, `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    try {
+      await fs.rename(temporaryFile, config.statusFile);
+    } catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EEXIST"].includes(error.code)) {
+        throw error;
+      }
+      await fs.rm(config.statusFile, { force: true });
+      await fs.rename(temporaryFile, config.statusFile);
+    }
+    await fs.chmod(config.statusFile, 0o600);
+  } catch (error) {
+    await fs.rm(temporaryFile, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function redactSecrets(message, env = process.env) {
+  return redactLogText(message, env);
 }
 
 async function writeLog(config, event, details = {}, env = process.env) {
@@ -178,6 +221,7 @@ async function sendFailureAlert(config, payload, dependencies = {}) {
 
 async function runBackupCycle(config, dependencies = {}) {
   const now = dependencies.now ? new Date(dependencies.now) : new Date();
+  const startedAt = Date.now();
   const backupName = `${BACKUP_PREFIX}${now.toISOString().replace(/[-:.]/g, "")}`;
   const backupPath = path.join(config.backupDir, backupName);
   const log = dependencies.log || writeLog;
@@ -205,6 +249,12 @@ async function runBackupCycle(config, dependencies = {}) {
     const pruned = await pruneOldBackups(config, now.getTime(), {
       runCommand: dependencies.pgRunCommand,
     });
+    await writeBackupStatus(config, "succeeded", {
+      timestamp: now.toISOString(),
+      backup: backupName,
+      storage: config.databaseUrl ? "postgresql" : "file",
+      durationMs: Date.now() - startedAt,
+    });
     await log(config, "backup_succeeded", {
       backup: backupName,
       storage: config.databaseUrl ? "postgresql" : "file",
@@ -213,6 +263,20 @@ async function runBackupCycle(config, dependencies = {}) {
     return backupPath;
   } catch (error) {
     const message = redactSecrets(error.message, loggingEnv);
+    try {
+      await writeBackupStatus(config, "failed", {
+        timestamp: now.toISOString(),
+        backup: backupName,
+        storage: config.databaseUrl ? "postgresql" : "file",
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (statusError) {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        event: "backup_status_write_failed",
+        message: redactSecrets(statusError.message, loggingEnv),
+      }));
+    }
     try {
       await log(config, "backup_failed", {
         backup: backupName,
@@ -273,5 +337,6 @@ module.exports = {
   runBackupCycle,
   sendFailureAlert,
   startBackupScheduler,
+  writeBackupStatus,
   writeLog,
 };

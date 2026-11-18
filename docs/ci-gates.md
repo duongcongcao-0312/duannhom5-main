@@ -14,7 +14,7 @@ bước sau:
    và version migration mà không in giá trị bí mật.
 4. Chạy `npm run migrate` trên PostgreSQL service container để tạo schema cho
    integration test trước khi kiểm tra ứng dụng.
-5. Chạy unit test, integration test và kiểm tra coverage bằng
+5. Chạy unit test, integration test và kiểm tra coverage tổng thể bằng
    `npm run test:coverage`. Gate yêu cầu ít nhất **70% line coverage, 65%
    branch coverage và 60% function coverage**; thiếu bất kỳ ngưỡng nào đều làm
    lệnh thất bại và chặn job CI. Báo cáo coverage dạng bảng được in trong log
@@ -30,8 +30,21 @@ bước sau:
    schema, CRUD, rollback transaction và cleanup thật. Khi chạy local không có
    `DATABASE_URL`, test tích hợp này được skip; có thể chạy riêng bằng
    `DATABASE_URL=... npm run test:postgres-integration`.
-6. Build frontend tĩnh bằng `npm run build:pages`.
-7. Kiểm tra toàn bộ dependency, bao gồm cả công cụ test, bằng `npm audit`.
+6. Chạy `npm run test:coverage:business`, yêu cầu ít nhất **80% line coverage**
+   trên phạm vi module nghiệp vụ/API được chốt: `server.js`,
+   `backend/authorization.js`, `backend/business-constants.js`,
+   `backend/coupons.js`, `backend/order-idempotency.js`,
+   `backend/routes/auth.js`, `backend/routes/orders.js` và
+   `backend/routes/payments.js`. Các persistence adapter vẫn được kiểm tra bằng
+   unit/integration test và gate coverage tổng thể.
+7. Build frontend tĩnh bằng `npm run build:pages`.
+8. Kiểm tra toàn bộ dependency, bao gồm cả công cụ test, bằng `npm audit`.
+
+Playwright E2E hiện chưa là CI gate: phần này đang tạm hoãn theo yêu cầu của
+người dùng, và issue #121 chưa được xác nhận hoàn tất. Cấu hình hiện có yêu cầu
+một PostgreSQL database local chỉ dành cho test qua `E2E_DATABASE_URL`; không
+dùng database production. Trước khi bật lại, cần hoàn thiện và xác minh suite
+trên database dùng một lần. Screenshot, video và trace hiện được tắt.
 
 ## Quy tắc deploy
 

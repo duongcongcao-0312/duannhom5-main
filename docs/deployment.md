@@ -164,6 +164,19 @@ volume bền vững trước khi dùng chế độ này. Khi có `DATABASE_URL`,
 PostgreSQL và `render.yaml` chạy migration trước khi khởi động web server. Sao
 lưu database/volume trước khi nâng phiên bản và thử khôi phục định kỳ.
 
+Rate limit production dùng bảng PostgreSQL chia sẻ giữa các instance. Cấu hình
+`RATE_LIMIT_HMAC_KEY` bằng secret ngẫu nhiên dài tối thiểu 32 byte; không ghi
+giá trị này vào blueprint, log hoặc repository. Bucket chỉ lưu HMAC, không lưu
+IP hay email gốc. Server production từ chối khởi động nếu thiếu secret này; khóa
+fallback chỉ dùng cho môi trường không production.
+`RATE_LIMIT_TRUSTED_PROXY_HOPS` mặc định là `0`, tức chỉ dùng
+địa chỉ socket và bỏ qua `X-Forwarded-For`. Chỉ đặt số hop sau khi xác minh
+chuỗi proxy thực tế; khi đặt lớn hơn `0`, khai báo các địa chỉ IP peer chính xác
+của proxy trong `RATE_LIMIT_TRUSTED_PROXY_IPS`. Server chỉ đọc
+`X-Forwarded-For` nếu peer socket nằm trong allowlist này; proxy biên vẫn phải
+loại bỏ header forwarding do client tự gửi. Khi PostgreSQL rate-limit không khả dụng, endpoint được bảo vệ trả
+`503` thay vì bỏ qua giới hạn; khi vượt hạn trả `429` cùng `Retry-After`.
+
 Quy trình backup, restore và ứng phó sự cố chi tiết nằm trong
 [runbook backup/restore](./backup-restore-incident-runbook.md). Dùng
 `node scripts/backup.js verify` sau mỗi lần tạo backup và trước khi restore.
@@ -198,6 +211,39 @@ dashboard và một luồng mua hàng trong môi trường staging. Theo dõi lo
 latency và dung lượng volume; không dùng tài khoản hoặc dữ liệu khách hàng thật
 cho smoke test. Quy trình giám sát, rollback và thời gian quan sát sau deploy
 phụ thuộc nền tảng vận hành.
+
+## Kiểm thử tải không phá hủy
+
+`npm run load-test` mặc định chỉ kết nối `http://127.0.0.1:8000`; chạy backend
+local trước khi gọi. Kịch bản chỉ gọi `GET /health`, `GET /api/books` có phân
+trang và `POST /api/orders/quote` (chỉ tính toán, không tạo đơn). Mặc định chạy
+20 request, concurrency 4, timeout 5 giây. Kết quả JSON ghi p50/p95/p99 latency,
+error rate, số lượng theo status và lỗi; script không đặt ngưỡng pass/fail về
+hiệu năng. Kết quả local không đại diện cho capacity của Render/PostgreSQL.
+
+Có thể giới hạn rõ request và thời gian bằng biến môi trường:
+
+```powershell
+$env:LOAD_TEST_REQUESTS = "20"
+$env:LOAD_TEST_CONCURRENCY = "4"
+$env:LOAD_TEST_TIMEOUT_MS = "5000"
+npm.cmd run load-test
+```
+
+Chỉ cho phép host staging đã chỉ định chính xác, không dùng hostname production:
+
+```powershell
+$env:LOAD_TEST_BASE_URL = "https://staging.example.test"
+$env:LOAD_TEST_ALLOW_STAGING = "true"
+$env:LOAD_TEST_STAGING_HOSTS = "staging.example.test"
+npm.cmd run load-test
+```
+
+Mọi host từ xa đều bị từ chối nếu không bật opt-in staging và khớp chính xác
+danh sách trên. Giới hạn tối đa là 500 request, concurrency 20 và timeout
+60 giây. Không chạy load test trên production. Đo CPU, RAM, PostgreSQL, capacity
+thực tế, dashboard/cảnh báo và rollback drill cần staging riêng và bằng chứng
+do operator xác nhận.
 
 ## Build và kiểm tra trước phát hành
 

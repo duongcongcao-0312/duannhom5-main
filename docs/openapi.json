@@ -15,7 +15,8 @@
     { "name": "Auth" },
     { "name": "Store" },
     { "name": "Customers" },
-    { "name": "Admin" }
+    { "name": "Admin" },
+    { "name": "Privacy" }
   ],
   "paths": {
     "/api/coupons/{code}": {
@@ -129,8 +130,11 @@
     "/api/orders/{id}/status": {
       "get": {
         "tags": ["Store"],
-        "summary": "Tra cứu riêng trạng thái đơn hàng và thanh toán",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "summary": "Tra cứu trạng thái đơn hàng; khách cần mã truy cập, chủ tài khoản cần đăng nhập",
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/OrderAccessCode" }
+        ],
         "responses": {
           "200": { "description": "Trạng thái hiện tại", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderStatus" } } } },
           "404": { "$ref": "#/components/responses/Error" }
@@ -140,8 +144,11 @@
     "/api/orders/{id}": {
       "get": {
         "tags": ["Store"],
-        "summary": "Tra cứu trạng thái đơn hàng; không trả thông tin giao nhận",
-        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "summary": "Tra cứu đơn hàng; khách cần mã truy cập, chủ tài khoản cần đăng nhập",
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/OrderAccessCode" }
+        ],
         "responses": {
           "200": { "description": "Thông tin công khai của đơn", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
           "404": { "$ref": "#/components/responses/Error" }
@@ -499,13 +506,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "required": ["purpose", "policyVersion", "consent", "retentionDays"],
                 "properties": {
                   "purpose": { "type": "string", "enum": ["order", "service", "marketing"] },
                   "policyVersion": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$" },
                   "consent": { "type": "boolean" },
                   "dataSource": { "type": "string", "enum": ["web", "admin", "api"], "default": "web" },
-                  "retentionDays": { "type": "integer", "minimum": 0, "maximum": 3650, "description": "Giá trị được ghi nhận; không tự kích hoạt xóa dữ liệu theo lịch." }
+                  "retentionDays": { "type": "integer", "minimum": 0, "maximum": 3650, "description": "Chỉ consent có giá trị > 0 đủ điều kiện được công cụ vận hành xóa sau khi hết hạn; chế độ xem trước là mặc định." }
                 }
               }
             }
@@ -522,6 +530,72 @@
         "parameters": [{ "name": "purpose", "in": "path", "required": true, "schema": { "type": "string", "enum": ["order", "service", "marketing"] } }, { "name": "policyVersion", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$" } }],
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
       }
+    },
+    "/api/privacy/data-requests": {
+      "get": {
+        "tags": ["Privacy"],
+        "summary": "Xem yêu cầu dữ liệu của tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Privacy"],
+        "summary": "Tạo yêu cầu truy cập, cập nhật hoặc xóa dữ liệu",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PrivacyDataRequestCreate" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/privacy/data-requests": {
+      "get": {
+        "tags": ["Admin", "Privacy"],
+        "summary": "Quản trị xem danh sách yêu cầu dữ liệu (quyền read:privacy)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/privacy/data-requests/{id}": {
+      "patch": {
+        "tags": ["Admin", "Privacy"],
+        "summary": "Cập nhật trạng thái yêu cầu (quyền write:privacy)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Id" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PrivacyDataRequestUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -532,6 +606,7 @@
       "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\\\w\\\\-:.]+$" } },
+      "OrderAccessCode": { "name": "X-Order-Access-Code", "in": "header", "required": false, "description": "Bắt buộc với đơn khách. Mã 256-bit chỉ hiển thị sau khi tạo đơn; đơn cũ không có verifier không tra cứu công khai được. Chủ tài khoản và admin dùng quyền hiện có.", "schema": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" } },
       "Page": { "name": "page", "in": "query", "description": "Trang từ 1 đến 10000.", "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1 } },
       "Limit": { "name": "limit", "in": "query", "description": "Số bản ghi, tối đa 100.", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
       "OrderDirection": { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } },
@@ -558,6 +633,8 @@
       "StaffUpdate": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "name": { "type": "string", "maxLength": 120 }, "email": { "type": "string", "format": "email", "maxLength": 254 }, "role": { "type": "string", "enum": ["sales", "support"] }, "isActive": { "type": "boolean" } } },
       "AdminCouponCreate": { "type": "object", "additionalProperties": false, "required": ["code", "label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"], "properties": { "code": { "type": "string", "minLength": 3, "maxLength": 32 }, "label": { "type": "string" }, "rate": { "type": "number", "minimum": 0, "maximum": 0.3 }, "minSubtotal": { "type": "number", "minimum": 0 }, "maxUses": { "type": "integer", "minimum": 0 }, "startsAt": { "type": "string" }, "expiresAt": { "type": "string" }, "enabled": { "type": "boolean" } } },
       "AdminCouponUpdate": { "type": "object", "additionalProperties": false, "required": ["label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"], "properties": { "label": { "type": "string" }, "rate": { "type": "number", "minimum": 0, "maximum": 0.3 }, "minSubtotal": { "type": "number", "minimum": 0 }, "maxUses": { "type": "integer", "minimum": 0 }, "startsAt": { "type": "string" }, "expiresAt": { "type": "string" }, "enabled": { "type": "boolean" } } },
+      "PrivacyDataRequestCreate": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "type": "string", "enum": ["access", "update", "delete"] } } },
+      "PrivacyDataRequestUpdate": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "rejected"] } } },
       "Error": { "type": "object", "properties": { "error": { "type": "string" } }, "required": ["error"] },
       "Coupon": { "type": "object", "properties": { "rate": { "type": "number" }, "label": { "type": "string" } }, "required": ["rate", "label"] },
       "Book": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "author": { "type": "string" }, "price": { "type": "number" }, "category": { "type": "string" }, "image": { "type": "string" }, "stock": { "type": "integer" } }, "required": ["title", "author", "price"] },
@@ -569,7 +646,7 @@
       "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
       "SocialAccountLink": { "type": "object", "additionalProperties": false, "required": ["idToken", "password"], "properties": { "idToken": { "type": "string", "description": "Firebase ID token của tài khoản social đã xác minh." }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
       "SocialAccountUnlink": { "type": "object", "additionalProperties": false, "required": ["provider", "password"], "properties": { "provider": { "type": "string", "enum": ["google.com", "facebook.com"] }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
-      "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
+      "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "accessCode": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "Bắt buộc với đơn khách; 256-bit hex do trình duyệt tạo bằng Web Crypto. Máy chủ chỉ lưu hash và không trả lại mã." }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
       "PaymentWebhookEvent": { "type": "object", "additionalProperties": false, "required": ["id", "orderId", "status", "amount", "currency", "occurredAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }, "orderId": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["succeeded", "failed", "pending", "cancelled"] }, "amount": { "type": "integer", "minimum": 0 }, "currency": { "type": "string", "const": "VND" }, "occurredAt": { "type": "string", "format": "date-time" } } },
       "OrderQuoteRequest": { "type": "object", "additionalProperties": false, "required": ["items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
       "OrderUpdateRequest": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"] }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "description": "Backend dùng catalog để tính lại giá, chiết khấu, tổng tiền và kiểm tra tồn kho.", "items": { "type": "object", "additionalProperties": false, "required": ["title", "quantity"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 200 }, "quantity": { "type": "integer", "minimum": 1 } } } } } },

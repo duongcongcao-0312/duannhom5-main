@@ -14,6 +14,11 @@ thời lượng.
   giới hạn kết nối/dung lượng và chính sách retention hiện tại của gói.
 - [ ] `CORS_ORIGINS` chỉ chứa các origin frontend cần thiết, phân tách bằng dấu
   phẩy, không chứa path, wildcard hoặc credential.
+- [ ] `RATE_LIMIT_HMAC_KEY` được cấu hình như secret dài tối thiểu 32 byte và
+  không xuất hiện trong blueprint, log hay repository.
+- [ ] `RATE_LIMIT_TRUSTED_PROXY_HOPS` khớp với proxy chain đã xác minh và
+  `RATE_LIMIT_TRUSTED_PROXY_IPS` chỉ chứa IP peer của các proxy tin cậy; nếu chưa
+  xác minh, giữ mặc định `0` và chấp nhận giới hạn theo socket peer.
 - [ ] Ghi lại `deploy_id`, thời điểm UTC và kết quả `GET /health`, `GET /ready`.
 
 ## 2. Migration và deploy
@@ -46,6 +51,8 @@ Không chạy migration bằng tay đồng thời với deploy. Không đánh d�
   công và bị từ chối, không dùng dữ liệu thật.
 - [ ] Response lỗi có mã HTTP đúng và `X-Request-Id`; body không chứa stack,
   secret hoặc connection string.
+- [ ] Staging qua hai web instance dùng chung bucket PostgreSQL; vượt hạn trả
+  `429`/`Retry-After`, còn lỗi store trả `503` tổng quát và không ghi IP/email.
 
 ## 4. Backup định kỳ và cảnh báo
 
@@ -78,6 +85,23 @@ Ghi bằng chứng cho mỗi lần diễn tập:
 File storage dùng `node scripts/backup.js restore <backup> <isolated-data> --confirm`.
 PostgreSQL dùng `node scripts/backup.js restore-postgres <backup> --confirm` với
 database đích cô lập. Không restore trực tiếp vào production trong diễn tập.
+
+## 6. Staging, tải và rollback
+
+- [ ] Đã provision staging tách biệt khỏi production, credentials và dữ liệu
+  thật.
+- [ ] Đã chạy `npm run load-test` chỉ trên local hoặc staging được allow-list;
+  ghi p50/p95/p99, error rate, thời điểm và request/concurrency đã dùng.
+- [ ] Đã đo capacity và xác định ngưỡng cảnh báo trên staging; không suy ra
+  ngưỡng từ kết quả local hoặc đặt SLO khi chưa có số đo.
+- [ ] Dashboard/alert đã được kiểm tra và có bằng chứng nhận cảnh báo thử ở
+  staging.
+- [ ] Đã diễn tập rollback ứng dụng và xác nhận tính tương thích migration với
+  snapshot/database cô lập.
+- [ ] Đã kiểm tra thanh toán SePay bằng tài khoản/provider staging và ghi
+  provider event ID, kết quả, không ghi credential.
+
+Các mục trên vẫn pending cho đến khi operator đính kèm bằng chứng vận hành.
 
 ## Versioning và rollback
 

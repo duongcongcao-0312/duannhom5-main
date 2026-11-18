@@ -20,15 +20,16 @@ thực tế sau mỗi lần diễn tập và cập nhật bảng này khi có th
 
 1. File storage: chạy `npm run backup:schedule`; mặc định chạy ngay khi khởi
    động, sau đó mỗi 24 giờ. Mặc định giữ 30 ngày và luôn giữ ít nhất hai bản.
-   Sao chép bản backup đã verify sang storage ngoài máy chủ.
+   Sao chép bản backup đã verify sang storage ngoài máy chủ bằng kết nối mã hóa.
 2. PostgreSQL: khi `DATABASE_URL` được cấu hình, cùng scheduler tự chạy
    `pg_dump` theo lịch và verify archive bằng `pg_restore --list`. Cần cài
    PostgreSQL client tương thích trên host/container, đồng thời bật thêm
    backup/PITR của nhà cung cấp database cho production.
-3. Mỗi backup file có manifest SHA-256, được verify ngay sau khi tạo; kết quả
-   được ghi JSON Lines vào `BACKUP_LOG_FILE` (mặc định
-   `<BACKUP_DIR>/backup.log`). Lỗi được ghi ra stderr và log; cấu hình webhook
-   HTTPS để gửi cảnh báo.
+3. Mỗi backup có manifest SHA-256, được verify ngay sau khi tạo; nếu cấu hình
+   `BACKUP_ENCRYPTION_KEY`, nội dung file/database archive được mã hóa
+   AES-256-GCM trước khi được giữ trong thư mục backup. Kết quả được ghi JSON
+   Lines vào `BACKUP_LOG_FILE` (mặc định `<BACKUP_DIR>/backup.log`). Lỗi được
+   ghi ra stderr và log; cấu hình webhook HTTPS để gửi cảnh báo.
 4. Hàng tháng restore vào môi trường cô lập, chạy smoke test và ghi thời điểm,
    backup ID, RPO đạt được cùng thời gian restore vào ticket incident.
 
@@ -46,6 +47,22 @@ Các biến cấu hình:
 | `DATABASE_URL` | Không cấu hình | Nếu có, scheduler backup PostgreSQL thay vì file JSON/JSONL. Không log hoặc truyền URL trong đối số tiến trình. |
 | `DATABASE_BACKUP_TIMEOUT_MS` | `1800000` | Timeout cho `pg_dump`/`pg_restore`; từ 1 đến 86400000 ms. |
 | `PG_DUMP_PATH` / `PG_RESTORE_PATH` | Tên executable trong `PATH` | Đường dẫn client PostgreSQL nếu không nằm trong `PATH`. |
+| `BACKUP_ENCRYPTION_KEY` | Không cấu hình | Khóa AES-256-GCM dạng base64 của đúng 32 byte; chỉ đặt trong secret manager. Khi có khóa, backup mới được mã hóa. |
+| `BACKUP_ENCRYPTION_REQUIRED` | `false` | Đặt `true` để từ chối tạo/verify/restore backup plaintext hoặc chạy khi thiếu khóa hợp lệ. |
+
+Tạo khóa ngẫu nhiên một lần và lưu trực tiếp vào secret manager, không ghi vào
+repository, file log hay tham số command line:
+
+```sh
+node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64') + '\n')"
+```
+
+Khi `BACKUP_ENCRYPTION_REQUIRED=true`, scheduler/CLI dừng với lỗi cấu hình nếu
+không có khóa đúng định dạng. Mất khóa đồng nghĩa không thể verify hoặc restore
+backup đã mã hóa; duy trì bản sao khóa theo quy trình quản lý secret độc lập.
+Các envelope dùng AES-256-GCM để phát hiện sai khóa và dữ liệu bị sửa. Manifest
+được xác thực bằng HMAC khi mã hóa được bật; manifest không chứa dữ liệu backup
+hoặc khóa nhưng vẫn để lộ tên file, thời gian, kích thước và checksum.
 
 `DATA_DIR` được đọc bởi script backup, không đổi đường dẫn lưu trữ của backend.
 Runtime file adapter dùng `data/` trong repository/container (Docker image dùng
@@ -59,8 +76,12 @@ JSON/JSONL đang hoạt động, chuyển backend sang maintenance hoặc dừng
 thời gian sao lưu. Script kiểm tra dữ liệu không đổi trong lúc copy và từ chối
 backup nếu phát hiện file bị cập nhật giữa chừng. PostgreSQL client nhận URL
 qua biến môi trường tiến trình, không đưa credential vào command arguments hoặc
-log. File backup có quyền truy cập giới hạn và không được mã hóa; đặt thư mục
-trên volume mã hóa, hạn chế ACL và sao chép ra storage mã hóa ngoài máy chủ.
+log; khóa mã hóa cũng không được truyền vào child-process arguments hoặc
+`pg_dump`/`pg_restore` environment. Khi bật mã hóa, file backup được mã hóa
+trước khi lưu trong thư mục đích; file tạm trong quá trình `pg_dump` chỉ có
+quyền truy cập giới hạn. Khi không bật, hành vi plaintext cũ được giữ nguyên.
+Giới hạn ACL/volume của backup và chỉ truyền bản sao ra storage độc lập qua
+kết nối TLS; repository không tự tích hợp hoặc cấp storage off-site.
 
 Giữ bộ lập lịch chạy bằng service manager để tự khởi động lại sau reboot/crash.
 Ví dụ Linux systemd:
@@ -132,6 +153,15 @@ giả, xác nhận webhook nhận event đúng một lần trong thời gian coo
 kiểm thử backup bằng `node --test tests/backup-runbook.test.js` với webhook
 mock. Không cố ý làm lỗi hoặc gửi webhook giả trong production.
 
+Load test đo thời gian phản hồi của health, catalog phân trang và order quote
+trên local hoặc staging được allow-list; chạy bằng `npm run load-test` theo
+hướng dẫn tại `docs/deployment.md`. Ghi p50/p95/p99 và error rate cùng thời
+điểm, request count, concurrency, phiên bản deploy và environment. Không áp
+ngưỡng hiệu năng từ local, không gửi tải vào production; CPU/RAM/database
+metrics, ngưỡng cảnh báo và capacity phải được đo/duyệt trên staging. Hiện
+chưa có bằng chứng provisioning staging, dashboard/alert verification, rollback
+drill hoặc provider payment test; operator cần hoàn tất và đính kèm bằng chứng.
+
 ## File storage: backup và restore
 
 Các file JSON được ghi qua file tạm rồi thay thế nguyên tử; các thao tác append
@@ -189,9 +219,11 @@ Kiểm tra thủ công một bản đã tạo:
 node scripts/backup.js verify ./backups/booknest-YYYYMMDDTHHMMSSmmmZ
 ```
 
-Giữ PostgreSQL provider backup/PITR làm lớp bảo vệ độc lập. Archive PostgreSQL
-chứa dữ liệu nhạy cảm; chỉ lưu trên volume mã hóa, giới hạn quyền đọc và kiểm
-tra định kỳ bản sao ngoài máy chủ.
+Giữ PostgreSQL provider backup/PITR làm lớp bảo vệ độc lập. Khi bật mã hóa,
+`database.dump` được mã hóa bằng AES-256-GCM và chỉ giải mã trong thư mục tạm
+giới hạn quyền truy cập cho bước verify/restore. Repository không tự tạo worker
+Render độc lập, remote storage, lịch backup ngoài tiến trình hoặc biên bản
+restore drill; các bước đó cần operator cấu hình và xác minh riêng.
 
 ### Restore
 

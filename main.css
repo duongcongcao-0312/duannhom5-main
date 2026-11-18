@@ -120,6 +120,7 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
 .payment-total { align-items: center; border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: flex; justify-content: space-between; margin: 22px 0; padding: 16px 0; }
 .payment-total strong { color: var(--green); font-size: 1.15rem; }
 .qr-payment { border-bottom: 1px solid var(--line); padding-bottom: 18px; text-align: center; }.qr-payment img { background: white; display: block; height: 220px; margin: 0 auto 10px; max-width: 100%; object-fit: contain; width: 220px; }.qr-payment p { color: var(--muted); font-size: .85rem; margin: 0; }
+.payment-qr-fallback { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); margin: 0 auto 12px; max-width: 320px; padding: 12px; text-align: left; overflow-wrap: anywhere; }.payment-qr-fallback > strong { color: var(--green); }.payment-qr-fallback p { margin: 7px 0; }.payment-qr-fallback code { font-weight: 700; }
 .payment-methods { border: 0; display: grid; gap: 10px; margin: 0 0 18px; padding: 0; }
 .payment-methods legend { font-weight: 700; margin-bottom: 10px; }
 .payment-methods label { align-items: center; border: 1px solid var(--line); cursor: pointer; display: flex; gap: 9px; padding: 11px 12px; }

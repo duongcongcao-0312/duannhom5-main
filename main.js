@@ -309,8 +309,13 @@ function createFallbackCover(title, author) {
 function clearPaymentQr() {
 	const paymentQr = document.querySelector('#paymentQr');
 	if (!paymentQr) return;
+	paymentQr.onload = null;
+	paymentQr.onerror = null;
+	paymentQr.style.visibility = '';
 	paymentQr.removeAttribute('src');
 	paymentQr.hidden = true;
+	const fallback = document.querySelector('#paymentQrFallback');
+	if (fallback) fallback.hidden = true;
 }
 
 function updatePaymentBankDetails() {
@@ -325,9 +330,14 @@ function updatePaymentBankDetails() {
 function updatePaymentQr(order) {
 	const paymentQr = document.querySelector('#paymentQr');
 	if (!paymentQr || !paymentConfig) throw new Error('Chưa có cấu hình để tạo mã QR thanh toán.');
+	const fallback = document.querySelector('#paymentQrFallback');
 	const imageUrl = window.BookNestVietQr.buildPaymentQrUrl(paymentConfig, order);
-	paymentQr.src = imageUrl;
+	const fallbackImageUrl = window.BookNestVietQr.buildPaymentQrUrl(paymentConfig, order, 'svg');
+	window.BookNestVietQr.bindPaymentQrFallback(paymentQr, fallback, order, fallbackImageUrl);
+	if (fallback) fallback.hidden = true;
 	paymentQr.hidden = false;
+	paymentQr.style.visibility = 'hidden';
+	paymentQr.src = imageUrl;
 }
 
 async function loadPaymentConfig() {

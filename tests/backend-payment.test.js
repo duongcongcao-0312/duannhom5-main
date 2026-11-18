@@ -6,7 +6,11 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 const { CustomerError } = require("../backend/db");
-const { bindPaymentQrFallback, buildPaymentQrUrl } = require("../assets/vietqr");
+const {
+  bindPaymentQrFallback,
+  buildPaymentQrUrl,
+  showPaymentQrWaiting,
+} = require("../assets/vietqr");
 
 const webhookSecret = "test-payment-webhook-secret-with-32-bytes-min";
 
@@ -374,6 +378,28 @@ test("VietQR builder encodes only the payment code and rejects invalid payment d
   assert.throws(() => buildPaymentQrUrl({ ...config, accountNumber: "bad-account" }, order), /Số tài khoản/);
 });
 
+test("VietQR stays hidden while waiting and CSS honors the hidden attribute", async () => {
+  const image = {
+    hidden: false,
+    style: { visibility: "hidden" },
+    removed: false,
+    removeAttribute(name) { if (name === "src") this.removed = true; },
+  };
+  const fallback = { hidden: false };
+  const status = { hidden: true, textContent: "" };
+
+  showPaymentQrWaiting(image, fallback, status, "QR chưa có vì đơn chưa được lưu.");
+  assert.equal(image.hidden, true);
+  assert.equal(image.style.visibility, "");
+  assert.equal(image.removed, true);
+  assert.equal(fallback.hidden, true);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, "QR chưa có vì đơn chưa được lưu.");
+
+  const css = await fsPromises.readFile(path.join(__dirname, "..", "main.css"), "utf8");
+  assert.match(css, /\.qr-payment img\[hidden\]\s*\{\s*display:\s*none\s*;/);
+});
+
 test("VietQR image failure retries SVG then shows safe manual transfer details", () => {
   const order = {
     orderId: "order-test",
@@ -396,8 +422,9 @@ test("VietQR image failure retries SVG then shows safe manual transfer details",
     removed: false,
     removeAttribute(name) { if (name === "src") this.removed = true; },
   };
+  const status = { hidden: false, textContent: "Đang tải QR" };
 
-  bindPaymentQrFallback(image, fallback, order, "https://img.vietqr.io/fallback.svg");
+  bindPaymentQrFallback(image, fallback, status, order, "https://img.vietqr.io/fallback.svg");
   image.onerror();
   assert.equal(image.src, "https://img.vietqr.io/fallback.svg");
   assert.equal(image.hidden, true);
@@ -407,6 +434,7 @@ test("VietQR image failure retries SVG then shows safe manual transfer details",
   assert.equal(image.hidden, true);
   assert.equal(image.removed, true);
   assert.equal(fallback.hidden, false);
+  assert.equal(status.hidden, true);
   assert.equal(fields["[data-payment-qr-amount]"].textContent, "245.000");
   assert.equal(fields["[data-payment-qr-code]"].textContent, order.paymentCode);
 });

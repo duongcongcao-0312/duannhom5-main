@@ -44,13 +44,29 @@
 		return `https://img.vietqr.io/image/${imagePath}?${query}`;
 	}
 
-	function bindPaymentQrFallback(image, fallback, order, fallbackImageUrl) {
-		if (!image || !fallback || !order) return;
+	function showPaymentQrWaiting(image, fallback, status, message) {
+		if (image) {
+			image.onload = null;
+			image.onerror = null;
+			image.style.visibility = '';
+			image.removeAttribute('src');
+			image.hidden = true;
+		}
+		if (fallback) fallback.hidden = true;
+		if (status) {
+			status.textContent = message;
+			status.hidden = false;
+		}
+	}
+
+	function bindPaymentQrFallback(image, fallback, status, order, fallbackImageUrl) {
+		if (!image || !fallback || !status || !order) return;
 		let attemptedFallback = false;
 		image.onload = () => {
 			image.hidden = false;
 			image.style.visibility = '';
 			fallback.hidden = true;
+			status.hidden = true;
 		};
 		image.onerror = () => {
 			image.style.visibility = 'hidden';
@@ -65,8 +81,9 @@
 			fallback.querySelector('[data-payment-qr-amount]').textContent = new Intl.NumberFormat('vi-VN').format(order.total);
 			fallback.querySelector('[data-payment-qr-code]').textContent = order.paymentCode;
 			fallback.hidden = false;
+			status.hidden = true;
 		};
 	}
 
-	return Object.freeze({ bindPaymentQrFallback, buildPaymentQrUrl, normalizePaymentConfig });
+	return Object.freeze({ bindPaymentQrFallback, buildPaymentQrUrl, normalizePaymentConfig, showPaymentQrWaiting });
 });

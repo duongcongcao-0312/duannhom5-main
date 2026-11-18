@@ -308,14 +308,14 @@ function createFallbackCover(title, author) {
 
 function clearPaymentQr() {
 	const paymentQr = document.querySelector('#paymentQr');
-	if (!paymentQr) return;
-	paymentQr.onload = null;
-	paymentQr.onerror = null;
-	paymentQr.style.visibility = '';
-	paymentQr.removeAttribute('src');
-	paymentQr.hidden = true;
 	const fallback = document.querySelector('#paymentQrFallback');
-	if (fallback) fallback.hidden = true;
+	const status = document.querySelector('#paymentQrStatus');
+	window.BookNestVietQr.showPaymentQrWaiting(
+		paymentQr,
+		fallback,
+		status,
+		'QR chỉ được tạo sau khi đơn chuyển khoản được lưu thành công.'
+	);
 }
 
 function updatePaymentBankDetails() {
@@ -331,10 +331,13 @@ function updatePaymentQr(order) {
 	const paymentQr = document.querySelector('#paymentQr');
 	if (!paymentQr || !paymentConfig) throw new Error('Chưa có cấu hình để tạo mã QR thanh toán.');
 	const fallback = document.querySelector('#paymentQrFallback');
+	const status = document.querySelector('#paymentQrStatus');
+	window.BookNestVietQr.showPaymentQrWaiting(paymentQr, fallback, status, 'Đang tải mã QR thanh toán…');
 	const imageUrl = window.BookNestVietQr.buildPaymentQrUrl(paymentConfig, order);
 	const fallbackImageUrl = window.BookNestVietQr.buildPaymentQrUrl(paymentConfig, order, 'svg');
-	window.BookNestVietQr.bindPaymentQrFallback(paymentQr, fallback, order, fallbackImageUrl);
+	window.BookNestVietQr.bindPaymentQrFallback(paymentQr, fallback, status, order, fallbackImageUrl);
 	if (fallback) fallback.hidden = true;
+	if (status) status.hidden = false;
 	paymentQr.hidden = false;
 	paymentQr.style.visibility = 'hidden';
 	paymentQr.src = imageUrl;
@@ -726,6 +729,14 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 		const originalButtonText = submitButton.textContent;
 		submitButton.disabled = true;
 		submitButton.textContent = 'Đang lưu đơn hàng...';
+		if (method === 'transfer') {
+			window.BookNestVietQr.showPaymentQrWaiting(
+				document.querySelector('#paymentQr'),
+				document.querySelector('#paymentQrFallback'),
+				document.querySelector('#paymentQrStatus'),
+				'Đang lưu đơn hàng trước khi tạo mã QR thanh toán…'
+			);
+		}
 		const items = [...state.cart.reduce((quantities, book) => {
 			quantities.set(book.title, (quantities.get(book.title) || 0) + 1);
 			return quantities;
@@ -814,6 +825,12 @@ document.querySelector('#paymentForm').addEventListener('submit', async (event) 
 			document.querySelector('#paymentDialog').close();
 		}
 	} catch (error) {
+		window.BookNestVietQr.showPaymentQrWaiting(
+			document.querySelector('#paymentQr'),
+			document.querySelector('#paymentQrFallback'),
+			document.querySelector('#paymentQrStatus'),
+			'Chưa có mã QR. Mã chỉ xuất hiện sau khi backend xác nhận đơn chuyển khoản.'
+		);
 		showPaymentError(error instanceof Error ? error.message : 'Không thể xử lý đơn hàng. Vui lòng thử lại.');
 	}
 });

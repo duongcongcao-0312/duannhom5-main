@@ -379,7 +379,8 @@
             </fieldset>
             <div id="transferDetails">
                 <div class="qr-payment">
-                    <img id="paymentQr" src="" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async" hidden>
+                    <img id="paymentQr" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="eager" decoding="async" hidden>
+                    <div class="payment-qr-status" id="paymentQrStatus" role="status" aria-live="polite">QR chỉ được tạo sau khi đơn chuyển khoản được lưu thành công.</div>
                     <div class="payment-qr-fallback" id="paymentQrFallback" role="status" aria-live="polite" hidden>
                         <strong>Ảnh QR chưa tải được.</strong>
                         <p>Bạn vẫn có thể chuyển khoản thủ công theo thông tin bên dưới. Nhập đúng số tiền và mã thanh toán này:</p>

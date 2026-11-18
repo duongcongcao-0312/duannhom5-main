@@ -2,9 +2,18 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { hashPassword } = require("./auth");
-const { verifyPasswordResetToken, secureHashPasswordResetToken } = require("./security");
+const {
+  checkRateLimit,
+  clearRateLimit,
+  verifyPasswordResetToken,
+  secureHashPasswordResetToken,
+} = require("./security");
 const { appendAuditEntry, readAuditEntries, sanitizeAuditValue } = require("./audit");
 const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
+const {
+  PRIVACY_DATA_REQUEST_TYPES,
+  isPrivacyDataRequestTransitionAllowed,
+} = require("./privacy-data-requests");
 const {
   CUSTOMER_STATUSES,
   customerInteractionTypeValues,
@@ -221,12 +230,37 @@ class Database {
       path.join(dataDir, "customer-interactions.json");
     this.consentRecordsPath = options.consentRecordsPath ||
       path.join(dataDir, "consent-records.json");
+    this.privacyDataRequestsPath = options.privacyDataRequestsPath ||
+      path.join(dataDir, "privacy-data-requests.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.auditLogPath = options.auditLogPath || path.join(dataDir, "admin-audit.jsonl");
+    this.rateLimitDir = options.rateLimitDir ||
+      path.join(path.dirname(path.resolve(this.usersPath)), "rate-limit");
+    this.rateLimitNamespace = crypto
+      .createHash("sha256")
+      .update(path.resolve(this.usersPath))
+      .digest("hex");
     this.initialized = false;
     this.initializationPromise = null;
     this.userWriteQueue = Promise.resolve();
     this.fileWriteQueues = new Map();
+  }
+
+  async consumeRateLimit(bucketKey, limit, windowMs, now = Date.now()) {
+    return checkRateLimit(
+      `${this.rateLimitNamespace}:${bucketKey}`,
+      limit,
+      windowMs,
+      now,
+      this.rateLimitDir,
+    );
+  }
+
+  async clearRateLimit(bucketKey) {
+    return clearRateLimit(
+      `${this.rateLimitNamespace}:${bucketKey}`,
+      this.rateLimitDir,
+    );
   }
 
   enqueueFileWrite(filePath, operation) {
@@ -1630,6 +1664,112 @@ class Database {
       policyVersion,
       dataSource,
       retentionDays: 0,
+    });
+  }
+
+  async getExpiredConsentRecordCount(asOf = new Date()) {
+    const asOfTime = asOf instanceof Date ? asOf.getTime() : Date.parse(asOf);
+    if (!Number.isFinite(asOfTime)) throw new TypeError("asOf must be a valid date.");
+    const records = await readJsonCollection(this.consentRecordsPath, []);
+    return records.filter((record) => {
+      const createdAt = Date.parse(record.createdAt);
+      const retentionDays = Number(record.retentionDays);
+      return Number.isInteger(retentionDays) &&
+        retentionDays > 0 &&
+        Number.isFinite(createdAt) &&
+        createdAt + retentionDays * 24 * 60 * 60 * 1000 <= asOfTime;
+    }).length;
+  }
+
+  async pruneExpiredConsentRecords(asOf = new Date()) {
+    const asOfTime = asOf instanceof Date ? asOf.getTime() : Date.parse(asOf);
+    if (!Number.isFinite(asOfTime)) throw new TypeError("asOf must be a valid date.");
+    return this.enqueueFileWrite(this.consentRecordsPath, async () => {
+      const records = await readJsonCollection(this.consentRecordsPath, []);
+      const retained = records.filter((record) => {
+        const createdAt = Date.parse(record.createdAt);
+        const retentionDays = Number(record.retentionDays);
+        return !(
+          Number.isInteger(retentionDays) &&
+          retentionDays > 0 &&
+          Number.isFinite(createdAt) &&
+          createdAt + retentionDays * 24 * 60 * 60 * 1000 <= asOfTime
+        );
+      });
+      const pruned = records.length - retained.length;
+      if (pruned > 0) {
+        await atomicWriteFile(this.consentRecordsPath, JSON.stringify(retained, null, 2));
+      }
+      return pruned;
+    });
+  }
+
+  async getPrivacyDataRequests(subjectId) {
+    const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
+    return requests
+      .filter((request) => request.subjectId === subjectId)
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  }
+
+  async getAllPrivacyDataRequests() {
+    const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
+    return requests.sort(
+      (left, right) => String(right.createdAt).localeCompare(String(left.createdAt)),
+    );
+  }
+
+  async createPrivacyDataRequest(subjectId, requestType) {
+    if (!PRIVACY_DATA_REQUEST_TYPES.includes(requestType)) {
+      throw new CustomerError(400, "Loại yêu cầu dữ liệu cá nhân không hợp lệ.");
+    }
+    return this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
+      const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
+      if (requests.some((request) =>
+        request.subjectId === subjectId &&
+        request.type === requestType &&
+        ["pending", "processing"].includes(request.status)
+      )) {
+        return null;
+      }
+      const now = new Date().toISOString();
+      const request = {
+        id: crypto.randomUUID(),
+        subjectId,
+        type: requestType,
+        status: "pending",
+        createdBy: subjectId,
+        updatedBy: null,
+        createdAt: now,
+        updatedAt: now,
+        resolvedAt: null,
+      };
+      requests.push(request);
+      await atomicWriteFile(
+        this.privacyDataRequestsPath,
+        JSON.stringify(requests, null, 2),
+      );
+      return request;
+    });
+  }
+
+  async updatePrivacyDataRequest(id, status, updatedBy) {
+    return this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
+      const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
+      const request = requests.find((entry) => entry.id === id);
+      if (!request) return null;
+      if (!isPrivacyDataRequestTransitionAllowed(request.status, status)) {
+        return { conflict: true };
+      }
+      const now = new Date().toISOString();
+      request.status = status;
+      request.updatedBy = updatedBy;
+      request.updatedAt = now;
+      request.resolvedAt = ["completed", "rejected"].includes(status) ? now : null;
+      await atomicWriteFile(
+        this.privacyDataRequestsPath,
+        JSON.stringify(requests, null, 2),
+      );
+      return request;
     });
   }
 

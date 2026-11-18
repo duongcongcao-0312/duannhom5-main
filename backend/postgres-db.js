@@ -17,6 +17,11 @@ const { verifyPasswordResetToken, secureHashPasswordResetToken } = require("./se
 const { hashOrderRequest } = require("./order-idempotency");
 const { getCouponUnavailableReason } = require("./coupons");
 const {
+  PRIVACY_DATA_REQUEST_TYPES,
+  isPrivacyDataRequestTransitionAllowed,
+  mapPrivacyDataRequestRow,
+} = require("./privacy-data-requests");
+const {
   CUSTOMER_STATUSES,
   ORDER_STATUSES,
   PAYMENT_STATUSES,
@@ -88,8 +93,10 @@ function rowToRecord(collection, row) {
     };
   }
   if (collection === "orders") {
+    const accessCodeHash = row.access_code_hash || record.accessCodeHash;
     return {
       ...record,
+      ...(typeof accessCodeHash === "string" ? { accessCodeHash } : {}),
       orderId: row.order_id,
       ...(row.user_id ? { userId: row.user_id } : {}),
       customerName: row.customer_name,
@@ -255,6 +262,82 @@ class PostgresDatabase {
     });
     this.auditLogPath = auditLogPath || path.join(process.cwd(), "data", "admin-audit.jsonl");
     this.initialization = null;
+    this.lastRateLimitCleanupAt = Date.now();
+  }
+
+  async consumeRateLimit(bucketKey, limit, windowMs, now = Date.now()) {
+    if (
+      typeof bucketKey !== "string" ||
+      !/^[a-f0-9]{64}$/i.test(bucketKey) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      !Number.isSafeInteger(windowMs) ||
+      windowMs < 1 ||
+      !Number.isSafeInteger(now)
+    ) {
+      throw new TypeError("Rate-limit bucket parameters are invalid.");
+    }
+
+    if (Date.now() - this.lastRateLimitCleanupAt >= 10 * 60 * 1000) {
+      await this.pool.query(`
+        WITH expired_buckets AS (
+          SELECT bucket_key
+          FROM shared_rate_limits
+          WHERE expires_at <= NOW()
+          ORDER BY expires_at
+          LIMIT 500
+        )
+        DELETE FROM shared_rate_limits AS buckets
+        USING expired_buckets
+        WHERE buckets.bucket_key = expired_buckets.bucket_key
+      `);
+      this.lastRateLimitCleanupAt = Date.now();
+    }
+
+    const { rows } = await this.pool.query(
+      `INSERT INTO shared_rate_limits (bucket_key, count, expires_at)
+       VALUES ($1, 1, to_timestamp(($4::double precision + $3::double precision) / 1000.0))
+       ON CONFLICT (bucket_key) DO UPDATE
+       SET count = CASE
+             WHEN shared_rate_limits.expires_at <= to_timestamp($4::double precision / 1000.0) THEN 1
+             ELSE shared_rate_limits.count + 1
+           END,
+           expires_at = CASE
+             WHEN shared_rate_limits.expires_at <= to_timestamp($4::double precision / 1000.0)
+               THEN to_timestamp(($4::double precision + $3::double precision) / 1000.0)
+             ELSE shared_rate_limits.expires_at
+           END,
+           updated_at = NOW()
+       RETURNING count, count <= $2 AS allowed,
+                 floor(extract(epoch FROM expires_at) * 1000)::bigint AS reset_at_ms`,
+      [bucketKey, limit, windowMs, now],
+    );
+    const record = rows[0];
+    if (
+      !record ||
+      !Number.isSafeInteger(Number(record.count)) ||
+      !Number.isFinite(Number(record.reset_at_ms))
+    ) {
+      throw new Error("PostgreSQL returned an invalid rate-limit record.");
+    }
+    const count = Number(record.count);
+    return {
+      allowed: Boolean(record.allowed),
+      count,
+      remaining: Math.max(0, limit - count),
+      resetAt: Number(record.reset_at_ms),
+    };
+  }
+
+  async clearRateLimit(bucketKey) {
+    if (typeof bucketKey !== "string" || !/^[a-f0-9]{64}$/i.test(bucketKey)) {
+      throw new TypeError("Rate-limit bucket key is invalid.");
+    }
+    const result = await this.pool.query(
+      "DELETE FROM shared_rate_limits WHERE bucket_key = $1",
+      [bucketKey],
+    );
+    return result.rowCount;
   }
 
   async init() {
@@ -919,8 +1002,8 @@ class PostgresDatabase {
           `INSERT INTO store_orders (
             order_id, user_id, customer_name, phone, address, payment_method, status, payment_status,
             coupon_code, discount_rate, subtotal, discount, total, idempotency_key, idempotency_hash,
-            created_at, updated_at, legacy_record
-          ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
+            access_code_hash, created_at, updated_at, legacy_record
+          ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
           ON CONFLICT (order_id) DO UPDATE SET
             user_id = EXCLUDED.user_id, customer_name = EXCLUDED.customer_name,
             phone = EXCLUDED.phone, address = EXCLUDED.address,
@@ -929,13 +1012,14 @@ class PostgresDatabase {
             discount_rate = EXCLUDED.discount_rate, subtotal = EXCLUDED.subtotal,
             discount = EXCLUDED.discount, total = EXCLUDED.total,
             idempotency_key = EXCLUDED.idempotency_key, idempotency_hash = EXCLUDED.idempotency_hash,
+            access_code_hash = EXCLUDED.access_code_hash,
             updated_at = EXCLUDED.updated_at, legacy_record = EXCLUDED.legacy_record`,
           [
             id, record.userId || null, record.customerName || "", record.phone || "",
             record.address || "", record.paymentMethod || "cod", record.status || "received",
             record.paymentStatus || "cod_pending", record.couponCode || null,
             record.discountRate || 0, record.subtotal || 0, record.discount || 0, record.total || 0,
-            record.idempotencyKey || null, record.idempotencyHash || null,
+            record.idempotencyKey || null, record.idempotencyHash || null, record.accessCodeHash || null,
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString(),
             JSON.stringify(record),
           ],
@@ -2182,6 +2266,106 @@ class PostgresDatabase {
       dataSource,
       retentionDays: 0,
     });
+  }
+
+  async getExpiredConsentRecordCount(asOf = new Date()) {
+    const { rows } = await this.pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM privacy_consents
+       WHERE retention_days > 0
+         AND created_at + (retention_days * INTERVAL '1 day') <= $1`,
+      [asOf],
+    );
+    return rows[0].count;
+  }
+
+  async pruneExpiredConsentRecords(asOf = new Date()) {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM privacy_consents
+       WHERE retention_days > 0
+         AND created_at + (retention_days * INTERVAL '1 day') <= $1`,
+      [asOf],
+    );
+    return rowCount;
+  }
+
+  async getPrivacyDataRequests(subjectId) {
+    const { rows } = await this.pool.query(
+      `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
+              created_at, updated_at, resolved_at
+       FROM privacy_data_requests
+       WHERE subject_id = $1::uuid
+       ORDER BY created_at DESC`,
+      [subjectId],
+    );
+    return rows.map(mapPrivacyDataRequestRow);
+  }
+
+  async getAllPrivacyDataRequests() {
+    const { rows } = await this.pool.query(
+      `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
+              created_at, updated_at, resolved_at
+       FROM privacy_data_requests
+       ORDER BY created_at DESC`,
+    );
+    return rows.map(mapPrivacyDataRequestRow);
+  }
+
+  async createPrivacyDataRequest(subjectId, requestType) {
+    if (!PRIVACY_DATA_REQUEST_TYPES.includes(requestType)) {
+      throw new CustomerError(400, "Loại yêu cầu dữ liệu cá nhân không hợp lệ.");
+    }
+    const { rows } = await this.pool.query(
+      `INSERT INTO privacy_data_requests (subject_id, request_type, created_by)
+       VALUES ($1::uuid, $2, $1::uuid)
+       ON CONFLICT (subject_id, request_type)
+         WHERE status IN ('pending', 'processing')
+       DO NOTHING
+       RETURNING request_id, subject_id, request_type, status, created_by, updated_by,
+                 created_at, updated_at, resolved_at`,
+      [subjectId, requestType],
+    );
+    return rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+  }
+
+  async updatePrivacyDataRequest(id, status, updatedBy) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: currentRows } = await client.query(
+        `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
+                created_at, updated_at, resolved_at
+         FROM privacy_data_requests
+         WHERE request_id = $1::uuid
+         FOR UPDATE`,
+        [id],
+      );
+      const [current] = currentRows;
+      if (!current) {
+        await client.query("COMMIT");
+        return null;
+      }
+      if (!isPrivacyDataRequestTransitionAllowed(current.status, status)) {
+        await client.query("ROLLBACK");
+        return { conflict: true };
+      }
+      const { rows } = await client.query(
+        `UPDATE privacy_data_requests
+         SET status = $2, updated_by = $3, updated_at = NOW(),
+             resolved_at = CASE WHEN $2 IN ('completed', 'rejected') THEN NOW() ELSE NULL END
+         WHERE request_id = $1::uuid
+         RETURNING request_id, subject_id, request_type, status, created_by, updated_by,
+                   created_at, updated_at, resolved_at`,
+        [id, status, updatedBy],
+      );
+      await client.query("COMMIT");
+      return rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getStats(_ordersPathOverride, totalBaseBooks = 80) {

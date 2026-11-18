@@ -32,8 +32,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://booknest:booknest-test-password@localhost:5432/booknest_test
-      ADMIN_EMAIL: integration-admin@example.com
-      ADMIN_PASSWORD: integration-password-123
+      ADMIN_EMAIL: integration-1gration-password-123
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,10 +53,14 @@ jobs:
         run: npm run check
       - name: Pre-deploy safety checks
         run: npm run predeploy:check
-      - name: Validate API contract JSON
-        run: node -e "JSON.parse(require('fs').readFileSync('docs/openapi.json','utf8')); console.log('OpenAPI contract is valid JSON')"
+      - name: Migrate disposable CI database
+        run: npm run migrate
+      - name: Validate API contract
+        run: npm run openapi:check
       - name: Tests and coverage thresholds (lines 70%, branches 65%, functions 60%)
         run: npm run test:coverage
+      - name: Business module coverage threshold (80% lines)
+        run: npm run test:coverage:business
       - name: Upload test and coverage reports
         if: always()
         uses: actions/upload-artifact@v4

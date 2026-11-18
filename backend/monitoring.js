@@ -190,6 +190,7 @@ function redactLogText(value, env = process.env) {
     "MONITORING_ALERT_WEBHOOK_URL",
     "SMOKE_ALERT_WEBHOOK_URL",
     "BACKUP_ALERT_WEBHOOK_URL",
+    "BACKUP_ENCRYPTION_KEY",
   ]) {
     const secret = env[name];
     if (typeof secret === "string" && secret.length >= 6) {

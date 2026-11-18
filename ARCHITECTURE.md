@@ -126,3 +126,9 @@ personal data.
 Useful checks are `npm run check`, `npm test`, `npm run build:pages`,
 `npm run predeploy:check`, and `npm run smoke`. Test coverage, required runtime
 versions and CI gates are described in [docs/ci-gates.md](docs/ci-gates.md).
+
+`npm run load-test` is an opt-in, bounded check for local or explicitly
+allow-listed staging only. It samples `/health`, paginated `/api/books`, and the
+non-persisting `/api/orders/quote`, then reports p50/p95/p99 and error rate.
+It does not define capacity thresholds; see [docs/deployment.md](docs/deployment.md)
+for safe configuration and operator evidence requirements.

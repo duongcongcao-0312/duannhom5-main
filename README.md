@@ -44,7 +44,7 @@ BookNest là ứng dụng bán sách trực tuyến gồm storefront cho khách 
 - **Backend:** Node.js HTTP server trong `server.js`, cung cấp static files và REST API.
 - **Xác thực:** logic phiên và băm mật khẩu trong `backend/auth.js`.
 - **Lưu trữ local/demo:** JSON và JSONL trong thư mục `data/`.
-- **Lưu trữ cloud tùy chọn:** PostgreSQL/Supabase khi cấu hình `DATABASE_URL`.
+- **Lưu trữ:** JSON/JSONL cho local/demo; PostgreSQL/Supabase khi cấu hình `DATABASE_URL` (production nên dùng PostgreSQL).
 - **Kiểm thử:** `node:test`.
 - **Triển khai:** GitHub Pages cho frontend; Render hoặc máy chủ Node.js riêng cho backend.
 
@@ -54,63 +54,49 @@ Frontend không tự chạy API trên GitHub Pages. Khi deploy tách frontend v�
 
 - Node.js 20 trở lên.
 - npm đi kèm Node.js.
-- PostgreSQL chỉ bắt buộc cho các luồng migration/seed hoặc khi muốn dùng database cloud.
+- PostgreSQL dùng cho các luồng migration/seed; production nên dùng PostgreSQL để có lưu trữ bền vững và dùng chung giữa các instance.
+
+Trong Windows PowerShell, nếu chính sách máy chặn `npm.ps1`, dùng `npm.cmd`
+thay cho `npm` trong các lệnh bên dưới; không cần thay đổi execution policy.
 
 ## Cài đặt và chạy local
 
-Từ thư mục gốc của repository:
+Yêu cầu Node.js 20 trở lên. Từ thư mục gốc của repository:
 
 ```sh
-npm install
-npm start
+npm ci
 ```
 
-Mở storefront tại <http://127.0.0.1:8000>. Cổng quản trị nằm tại <http://127.0.0.1:8000/admin.html>.
-
-### 2.1 Cấu hình môi trường
-
-Sao chép file mẫu và chỉnh sửa nếu cần:
-
-```sh
-copy .env.example .env
-```
-
-Để dùng tài khoản quản trị của riêng bạn, đặt `ADMIN_EMAIL` và
-`ADMIN_PASSWORD` (ít nhất 12 ký tự không phải khoảng trắng) trong `.env`. Backend sẽ tạo hoặc khôi phục
-quyền/mật khẩu cho đúng tài khoản đó mỗi lần khởi động. Không có tài khoản quản
-trị hoặc mật khẩu mặc định; nếu chưa cấu hình thông tin này, bạn chỉ có thể dùng
-các tính năng không yêu cầu quyền quản trị.
-
-```env
-PORT=8000
-HOST=127.0.0.1
-ADMIN_EMAIL=<your-admin-email>
-ADMIN_PASSWORD=<set-a-unique-password-at-least-12-characters>
-```
-
-Nếu bạn chạy trên Windows PowerShell và bị chặn bởi chính sách script, chạy trước:
+Tạo file môi trường local (PowerShell):
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
+Copy-Item .env.example .env
+```
+
+Mở `.env`, đặt `ADMIN_EMAIL` và một `ADMIN_PASSWORD` riêng, tối thiểu 12 ký tự.
+Không dùng lại mật khẩu của dịch vụ khác. Ứng dụng nạp `.env` bằng `dotenv`;
+file này chỉ dành cho local và không được commit.
+
+```sh
 npm start
 ```
+
+Mở storefront tại <http://127.0.0.1:8000>, cổng quản trị tại
+<http://127.0.0.1:8000/admin.html>. Không có mật khẩu quản trị mặc định.
+Không cấu hình `DATABASE_URL` thì local dùng file JSON/JSONL và phiên lưu trong
+bộ nhớ của tiến trình.
 
 ## Cấu hình môi trường
 
-Máy chủ đọc trực tiếp `HOST` và `PORT` từ môi trường; Node.js không tự nạp
-`.env`. Mẫu cấu hình local nằm trong `.env.example`.
-
-Tạo `.env` local từ file mẫu. Trên Windows Command Prompt:
-
-```bat
-copy .env.example .env
-```
-
-Trên macOS/Linux hoặc PowerShell:
+`server.js` nạp `.env` qua `dotenv`. Trên macOS/Linux, tạo file local bằng:
 
 ```sh
 cp .env.example .env
 ```
+
+`API_BASE_URL` là biến build-time của `npm run build:pages`, không phải biến
+runtime của backend; đặt trong environment của build/GitHub Actions nếu cần
+đổi origin API.
 
 Các biến thường dùng:
 
@@ -125,11 +111,13 @@ Các biến thường dùng:
 | `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự không phải khoảng trắng và không dùng lại mật khẩu dịch vụ database. |
 | `CORS_ORIGINS` | Danh sách origin frontend được phép, phân tách bằng dấu phẩy. Không thêm path hoặc dấu `/` cuối origin. |
 | `FIREBASE_API_KEY` | Firebase Web API key để backend xác minh ID Token social qua Firebase Identity Toolkit. |
-| `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
-| `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày và phải lớn hơn 0. |
-| `SESSION_REFRESH_TTL_MS` | Thời hạn refresh token tính bằng mili giây; mặc định là 30 ngày và phải lớn hơn 0. Refresh token được lưu dưới dạng hash SHA-256, không ghi token thô ra dữ liệu hoặc log. |
-| `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh chữ ký webhook thanh toán; chỉ lưu trong secret manager. |
-| `BACKUP_DIR` / `DATA_DIR` | Thư mục backup và thư mục dữ liệu file; không đặt hai thư mục trùng hoặc lồng nhau. |
+| `SEPAY_API_KEY` | API key nhận webhook SePay; tối thiểu 16 ký tự và chỉ đặt trong secret manager. |
+| `SEPAY_BANK_CODE` / `SEPAY_BANK_NAME` | Mã ngân hàng và tên hiển thị trong cấu hình thanh toán QR. Giá trị rỗng hiện dùng fallback demo từ `server.js`. |
+| `SEPAY_ACCOUNT_NUMBER` / `SEPAY_ACCOUNT_NAME` | Tài khoản nhận chuyển khoản và tên hiển thị; endpoint cấu hình công khai các giá trị này. Phải đặt tài khoản đúng và kiểm tra `/api/payments/config` trước deploy. |
+| `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh webhook HMAC của BookNest; chỉ lưu trong secret manager. |
+| `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định 8 giờ và phải lớn hơn 0. |
+| `SESSION_REFRESH_TTL_MS` | Cửa sổ gia hạn phiên tính bằng mili giây; mặc định 30 ngày và phải lớn hơn 0. |
+| `BACKUP_DIR` / `DATA_DIR` | Thư mục backup và nguồn file JSON/JSONL cho scripts backup. Runtime file storage mặc định dùng `data/` (Docker: `/app/data`); đặt `DATA_DIR` đúng đường dẫn khi backup, không để hai thư mục trùng hoặc lồng nhau. |
 | `BACKUP_INTERVAL_HOURS` | Chu kỳ backup; mặc định 24 giờ, từ 1 đến 8760. |
 | `BACKUP_RETENTION_DAYS` | Thời gian lưu backup; mặc định 30 ngày. Luôn giữ ít nhất hai bản gần nhất. |
 | `BACKUP_LOG_FILE` | File log JSON Lines cho các lần backup, retention và lỗi. |
@@ -155,14 +143,16 @@ vẫn xác minh TLS như bình thường. Nếu database chưa có tài khoản,
 | Lệnh | Mô tả |
 | --- | --- |
 | `npm start` | Khởi động Node.js server. |
+| `npm run check` | Kiểm tra cú pháp JavaScript của server, client, scripts và tests. |
 | `npm test` | Chạy toàn bộ test storefront và backend. |
 | `npm run test:coverage` | Chạy test kèm báo cáo coverage của Node.js. |
 | `npm run backup:schedule` | Tạo backup file hoặc PostgreSQL tùy `DATABASE_URL` ngay khi khởi động rồi lặp theo cấu hình. |
 | `npm run smoke` | Kiểm tra health/readiness và các endpoint thiết yếu; trả mã lỗi khác 0 khi có check thất bại. |
 | `npm run build:pages` | Tạo thư mục `dist/` cho frontend tĩnh. |
 | `npm run migrate` | Chạy migration PostgreSQL khi có `DATABASE_URL`. |
+| `npm run predeploy:check` | Kiểm tra điều kiện cấu hình và sẵn sàng trước deploy. |
 | `npm run seed:customers` | Seed dữ liệu CRM mẫu cho development; không chạy trên production có dữ liệu thật. |
-| `npm run audit` | Kiểm tra lỗ hổng trong toàn bộ dependency, gồm cả công cụ phát triển. |
+| `npm run audit` | Chạy `npm audit --omit=dev` cho dependency production. |
 
 ## API
 
@@ -172,15 +162,27 @@ Các endpoint chính hiện có:
 | --- | --- | --- | --- |
 | `GET` | `/api/books` | Công khai | Lấy danh mục sách. |
 | `GET` | `/api/coupons/:code` | Công khai | Kiểm tra mã ưu đãi. |
-| `POST` | `/api/orders` | Công khai | Xác thực và lưu đơn hàng. |
+| `POST` | `/api/orders/quote` | Công khai | Tính báo giá theo catalog và ưu đãi do backend xác thực. |
+| `POST` | `/api/orders` | Công khai | Tính lại giá, xác thực và lưu đơn; hỗ trợ `Idempotency-Key`. |
 | `GET` | `/api/orders` | Người dùng | Tra cứu các đơn thuộc tài khoản đang đăng nhập. |
-| `GET` | `/api/orders/:id` | Công khai/Chủ đơn | Tra cứu trạng thái và thông tin cơ bản của đơn. |
+| `GET` | `/api/orders/:id/status` | Công khai | Tra cứu trạng thái đơn và thanh toán. |
+| `GET` | `/api/orders/:id` | Chủ đơn/Quản trị | Tra cứu thông tin đơn theo quyền; dữ liệu công khai bị giới hạn. |
 | `POST` | `/api/services` | Công khai | Gửi yêu cầu thuê, thu mua hoặc trao đổi sách. |
 | `POST` | `/api/auth/register` | Công khai | Đăng ký tài khoản. |
 | `POST` | `/api/auth/login` | Công khai | Đăng nhập và nhận phiên xác thực. |
+| `POST` | `/api/auth/password-reset` | Công khai | Yêu cầu email đặt lại mật khẩu nếu backend đã cấu hình email. |
+| `POST` | `/api/auth/password-reset/confirm` | Công khai | Đặt mật khẩu mới bằng token dùng một lần. |
+| `POST` | `/api/auth/social` | Firebase ID token | Đăng nhập Google/Facebook khi Firebase được cấu hình. |
 | `GET` | `/api/auth/me` | Người dùng | Lấy thông tin tài khoản hiện tại. |
 | `PATCH` | `/api/auth/customer-info` | Người dùng | Cập nhật thông tin liên hệ. |
 | `POST` | `/api/auth/logout` | Người dùng | Đăng xuất. |
+| `GET` | `/api/payments/config` | Công khai | Trả thông tin tài khoản ngân hàng hiển thị cho chuyển khoản QR. |
+| `POST` | `/api/payments/sepay-webhook` | SePay API key | Nhận giao dịch đến và đối chiếu mã thanh toán, số tiền, tài khoản. |
+| `POST` | `/api/payments/webhook` | HMAC signature | Nhận sự kiện theo hợp đồng webhook của BookNest. |
+| `GET` / `POST` | `/api/customers` và `/api/admin/customers` | Quyền CRM | Tìm kiếm/phân trang hoặc tạo hồ sơ CRM; `/api/admin` là alias tương thích. |
+| `GET` / `PUT` / `PATCH` / `DELETE` | `/api/customers/:id` và `/api/admin/customers/:id` | Quyền CRM | Xem, sửa, chuyển trạng thái hoặc xóa mềm hồ sơ. |
+| `GET` / `POST` | `/api/customers/:id/interactions` và alias `/api/admin/...` | Quyền CRM | Xem hoặc ghi nhận lịch sử chăm sóc. |
+| `PUT` / `PATCH` / `DELETE` | `/api/customers/:id/interactions/:interactionId` và alias `/api/admin/...` | Quyền CRM | Cập nhật hoặc xóa tương tác; chỉ admin được xóa. |
 | `GET` | `/api/admin/stats` | Quản trị | Lấy thống kê. |
 | `GET` | `/api/admin/orders` | Quản trị | Liệt kê đơn hàng. |
 | `PATCH` | `/api/admin/orders/:id` | Quản trị | Cập nhật trạng thái đơn/thanh toán. |
@@ -190,18 +192,23 @@ Các endpoint chính hiện có:
 | `DELETE` | `/api/admin/books/:id` | Quản trị | Xóa sách. |
 | `GET` | `/api/admin/coupons` | `read:coupons` | Liệt kê coupon và lượt sử dụng. |
 | `POST` | `/api/admin/coupons` | `write:coupons` | Tạo coupon. |
-| `PUT` / `PATCH` | `/api/admin/coupons/:code` | `write:coupons` | Cập nhật điều kiện hoặc bật/tắt coupon. |
-| `GET` / `POST` | `/api/admin/customers/:id/interactions` | Quyền CRM | Xem lịch sử có phân trang hoặc ghi nhận tương tác chăm sóc. |
-| `PUT` / `PATCH` / `DELETE` | `/api/admin/customers/:id/interactions/:interactionId` | Quyền CRM | Cập nhật hoặc xoá tương tác; chỉ admin được xoá. |
-| `GET` | `/api/coupons/:code` | Công khai | Kiểm tra coupon còn hiệu lực. |
+| `PUT` / `PATCH` | `/api/admin/coupons/:code` | `write:coupons` | Cập nhật điều kiện hoặc bật/tắt coupon; bắt buộc gửi `If-Match` với `updatedAt` hiện tại. |
 | `GET` | `/api/admin/services` | Quản trị | Liệt kê yêu cầu dịch vụ. |
-
-Danh sách hỗ trợ phân trang, sắp xếp có whitelist và header `X-Pagination`; xem [tài liệu phân trang API](docs/api-pagination.md) và [OpenAPI](docs/openapi.json).
 | `PATCH` | `/api/admin/services/:id` | Quản trị | Cập nhật yêu cầu dịch vụ. |
 | `GET` | `/api/admin/users` | Quản trị | Liệt kê người dùng. |
+| `PATCH` | `/api/admin/users/:id` | `write:users` | Cập nhật trạng thái xác minh sinh viên. |
 | `GET` | `/api/admin/staff` | `read:staff` | Liệt kê nhân viên và các quyền hiệu lực theo vai trò. |
 | `POST` | `/api/admin/staff` | `write:staff` | Tạo tài khoản nhân viên với vai trò `sales` hoặc `support` và mật khẩu tối thiểu 12 ký tự. |
 | `PATCH` | `/api/admin/staff/:id` | `write:staff` | Cập nhật tên/email/vai trò hoặc kích hoạt/vô hiệu hóa nhân viên; phiên hiện có bị thu hồi. |
+| `GET` | `/api/admin/audit` | `read:users` | Đọc nhật ký kiểm toán quản trị, hỗ trợ `limit` và `offset`. |
+| `GET` / `POST` | `/api/privacy/consents` | Người dùng | Đọc lịch sử hoặc ghi nhận bản ghi consent qua API. |
+| `DELETE` | `/api/privacy/consents/:purpose` | Người dùng | Ghi nhận việc rút lại consent cho `order`, `service` hoặc `marketing`. |
+
+Danh sách hỗ trợ phân trang và sắp xếp có whitelist; metadata nằm trong header
+`X-Pagination`. Xem [tài liệu phân trang API](docs/api-pagination.md) và
+[đặc tả OpenAPI](docs/openapi.json). Bản ghi consent hiện chưa được tích hợp
+thành luồng xin phép tự động trong các form đặt hàng/dịch vụ; không xem API này
+là bằng chứng các luồng đó đang cưỡng chế consent.
 
 ## Cổng quản trị
 
@@ -221,7 +228,9 @@ Thông tin quản trị phải được cung cấp qua `ADMIN_EMAIL` và `ADMIN_
 
 ### Local/demo
 
-- `localStorage` của trình duyệt lưu trạng thái giao diện như giỏ hàng, yêu thích và một số thông tin phiên.
+- `localStorage` lưu giỏ hàng, yêu thích, coupon và yêu cầu dịch vụ nháp trên thiết bị.
+- `sessionStorage` lưu bearer token, hồ sơ hiển thị và thông tin liên hệ tạm trên thiết bị; đây không phải kho sao lưu.
+- Không có `DATABASE_URL`, backend local lưu dữ liệu trong các file JSON/JSONL dưới `data/` và giữ phiên trong bộ nhớ của tiến trình.
 - `data/orders.jsonl` lưu mỗi đơn hàng trên một dòng JSON.
 - `data/users.json`, `data/books.json` và các file dữ liệu liên quan lưu dữ liệu backend dạng file nếu không có database.
 - Danh mục mặc định nằm trong `books-data.js`.
@@ -232,7 +241,7 @@ Các file trong `data/` có thể chứa thông tin giao nhận hoặc dữ li�
 
 ### PostgreSQL/Supabase
 
-`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
+`npm run migrate` áp dụng các migration PostgreSQL có thứ tự và ghi lịch sử trong `schema_migrations`; cần đặt `DATABASE_URL`. Migration 005 chuyển dữ liệu trong các collection JSONB cũ sang các bảng quan hệ cho người dùng, khách hàng, sản phẩm, đơn hàng, dòng đơn và yêu cầu dịch vụ; migration 006 tạo bảng coupon và giữ hai mã mẫu `BOOKNEST10`, `WELCOME5`; migration 007 bổ sung audit người cập nhật cho lịch sử tương tác CRM; migration 008 tạo bảng `privacy_consents` để ghi nhận và rút lại consent theo tài khoản, mục đích và phiên bản chính sách. Các collection cũ được giữ lại làm bản lưu trong giai đoạn chuyển đổi; runtime PostgreSQL đọc/ghi các bảng quan hệ. Sao lưu database trước khi nâng cấp; seed chỉ dành cho development. Xem [hướng dẫn CRM](docs/customer-crm.md) để biết cách kiểm tra và khôi phục.
 
 Coupon được xác thực và tính giảm ở backend khi báo giá và tạo đơn. Mức giảm coupon cộng với ưu đãi tài khoản bị giới hạn tổng cộng 30%; đơn hàng phải đạt mức tối thiểu, coupon phải đang bật/trong thời hạn và chưa vượt giới hạn lượt. Lượt chỉ được ghi nhận khi đơn được tạo thành công. Local lưu coupon trong `data/coupons.json`; PostgreSQL cần chạy `npm run migrate` để áp dụng migration 006.
 
@@ -242,7 +251,12 @@ Health endpoint `/health` xác nhận tiến trình đang chạy; `/ready` kiể
 
 Với PostgreSQL, endpoint tạo đơn lưu khóa `Idempotency-Key` và giữ tồn kho trong database dùng chung; đơn hàng và lượng tồn kho được cập nhật nguyên tử. Retry cùng nội dung trả lại đơn đã tạo, còn tái sử dụng khóa với payload khác trả HTTP 409. Cần chạy `npm run migrate` để cài các migration trước khi triển khai các instance mới.
 
-Phiên đăng nhập hết hạn sau thời gian cấu hình bởi `SESSION_TTL_MS` (mặc định 7 ngày); cấu hình này phải lớn hơn 0. Refresh token dùng `SESSION_REFRESH_TTL_MS` (mặc định 30 ngày) để duy trì luồng gia hạn an toàn và được lưu dưới dạng hash SHA-256; token thô không được ghi vào PostgreSQL hay log. Khi có `DATABASE_URL`, phiên được lưu trong bảng PostgreSQL dùng chung `auth_sessions`, nên nhiều instance có thể xác thực cùng token và phiên vẫn còn sau khi backend khởi động lại. Chỉ hash SHA-256 của bearer token được dùng làm khóa lưu trữ; token thô không được ghi vào PostgreSQL. Đăng xuất và đặt lại mật khẩu thu hồi phiên trong kho dùng chung; phiên hết hạn bị từ chối ngay và được dọn định kỳ. Production yêu cầu PostgreSQL để không khởi động với session store chỉ trong bộ nhớ; local development không có `DATABASE_URL` tiếp tục dùng bộ nhớ. Client gửi bearer token qua HTTPS và giữ token ở `sessionStorage`; ứng dụng không dùng cookie xác thực.
+Phiên đăng nhập có thời hạn mặc định 8 giờ (`SESSION_TTL_MS`); cửa sổ gia hạn
+mặc định 30 ngày (`SESSION_REFRESH_TTL_MS`). Khi có `DATABASE_URL`, phiên được
+lưu trong bảng PostgreSQL dùng chung `auth_sessions`, nên nhiều instance có
+thể xác thực cùng phiên và phiên không mất khi backend khởi động lại. Token
+bearer được lưu trong `sessionStorage`; ứng dụng không dùng cookie xác thực.
+Production cần PostgreSQL để dùng session store bền vững.
 
 Webhook thanh toán `POST /api/payments/webhook` chấp nhận JSON sự kiện có `id`, `orderId`, `status` (`succeeded`, `failed`, `pending`, `cancelled`), `amount`, `currency: "VND"` và `occurredAt`. Gửi `X-BookNest-Signature: sha256=<hex>` là HMAC-SHA256 của **raw request body**, dùng `PAYMENT_WEBHOOK_SECRET`; secret phải dài ít nhất 32 byte. Sự kiện chỉ áp dụng cho đơn chuyển khoản có đúng tổng tiền. PostgreSQL ghi nhận event ID và cập nhật trạng thái đơn trong cùng transaction; retry trùng được xác nhận mà không cập nhật lần hai, ID trùng payload khác bị từ chối, và event cũ hơn không ghi đè trạng thái mới. Trạng thái `paid` không bị sự kiện thất bại/hủy đến sau đảo ngược. Cổng thanh toán cần ánh xạ chữ ký và trạng thái nhà cung cấp vào hợp đồng này; endpoint chưa thực hiện gọi thu tiền tới một nhà cung cấp cụ thể.
 
@@ -254,19 +268,14 @@ Webhook thanh toán `POST /api/payments/webhook` chấp nhận JSON sự kiện 
 npm test
 ```
 
-Chạy trực tiếp hai file test:
-
-```sh
-node --test tests/site.test.js tests/backend.test.js
-```
-
 Trước khi phát hành nên chạy:
 
 ```sh
 npm ci
+npm run check
 npm test
 npm run build:pages
-npm audit --omit=dev
+npm run audit
 ```
 
 ## Triển khai
@@ -275,8 +284,9 @@ npm audit --omit=dev
 
 1. Chạy `npm run build:pages`.
 2. Workflow GitHub Actions deploy thư mục `dist/`.
-3. GitHub Pages mặc định gọi backend `https://duannhom5-main.onrender.com`;
-   đặt `API_BASE_URL` trong GitHub Actions Variables nếu backend dùng URL khác.
+3. Build script dùng `API_BASE_URL` (mặc định là URL backend trong
+   `assets/api-config.js`); đặt biến này trong GitHub Actions nếu backend dùng
+   URL khác.
 4. Đảm bảo frontend gọi backend qua HTTPS.
 5. Để bật khôi phục mật khẩu, cấu hình `PUBLIC_APP_URL` theo đúng URL storefront
    (bao gồm đường dẫn GitHub Pages nếu có) và thông tin nhà cung cấp email trên
@@ -301,19 +311,38 @@ chỉ quy trình cấp quyền đáng tin cậy mới được gán vai trò `ad
 ### CRM khách hàng
 
 Hướng dẫn schema PostgreSQL, migration/seed, ví dụ request/response API và
-quyền riêng tư nằm trong [docs/customer-crm.md](docs/customer-crm.md). API
-hiện tại tiếp tục dùng JSON; migration SQL là schema đích độc lập và không tự
-chuyển backend sang PostgreSQL.
+quyền riêng tư nằm trong [docs/customer-crm.md](docs/customer-crm.md). Runtime
+dùng adapter PostgreSQL khi có `DATABASE_URL`; nếu không, local/demo dùng file
+JSON/JSONL. Migration chỉ áp dụng schema, không tự chuyển dữ liệu file sang
+PostgreSQL.
 
 ### Backend trên Render
 
-File `render.yaml` định nghĩa service Node.js, chạy `npm ci`, khởi động bằng `npm start` và health check readiness tại `/ready`. Liveness dùng `/health`; smoke test sau deploy chạy bằng `npm run smoke`. Cấu hình các giá trị nhạy cảm trong Render Environment/Secret Variables:
+File `render.yaml` định nghĩa service Node.js, chạy `npm ci`, sau đó
+`npm run predeploy:check && npm run migrate && npm start`; health check readiness
+là `/ready`. Liveness dùng `/health`; smoke test sau deploy chạy bằng
+`npm run smoke`. Cấu hình các giá trị nhạy cảm trong Render Environment/Secret Variables:
 
 - `DATABASE_URL`
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
+- `FIREBASE_API_KEY` nếu bật đăng nhập social.
+- `SEPAY_API_KEY` nếu nhận webhook SePay.
+- `PAYMENT_WEBHOOK_SECRET` nếu nhận webhook HMAC của BookNest.
 
 Đặt `HOST=0.0.0.0` trên Render và cấu hình `CORS_ORIGINS` đúng origin của GitHub Pages hoặc domain frontend. Không dùng mật khẩu Supabase làm mật khẩu quản trị BookNest.
+
+Để cấu hình QR chuyển khoản, đặt `SEPAY_BANK_CODE`, `SEPAY_BANK_NAME`,
+`SEPAY_ACCOUNT_NUMBER` và `SEPAY_ACCOUNT_NAME`. Lưu ý server hiện có giá trị
+fallback demo nên biến rỗng không tắt QR; phải thay bằng tài khoản nhận tiền
+đúng và kiểm tra kết quả trước khi deploy. Endpoint công khai
+`GET /api/payments/config` trả thông tin tài khoản để frontend hiển thị QR
+qua VietQR; đây không phải bộ xử lý thanh toán độc lập. Với webhook, cấu hình
+`SEPAY_API_KEY` trong cổng SePay và gửi `Authorization: Apikey <key>` tới
+`POST /api/payments/sepay-webhook`. Handler đối chiếu mã `BN` của đơn, tài
+khoản nhận và số tiền chính xác; PostgreSQL bắt buộc. Không đặt API key trong
+frontend. Webhook HMAC `POST /api/payments/webhook` là hợp đồng riêng của
+BookNest, không tự động tương thích với payload/chữ ký của SePay.
 
 Sau khi deploy, kiểm tra tối thiểu:
 
@@ -358,7 +387,13 @@ header IP do client tự gửi.
 
 ### Đăng ký Google/Facebook
 
-Nếu bật Firebase Authentication, cấu hình provider trong Firebase Console và chỉ đặt các giá trị web public trong `assets/firebase-config.js`. Không đặt provider client secret, Facebook App Secret hoặc private credential trong frontend. Domain sử dụng phải được thêm vào danh sách Authorized domains và website phải chạy qua HTTPS, hoặc localhost khi development.
+Nếu bật Firebase Authentication, cấu hình Google/Facebook provider và
+Authorized domains trong Firebase Console. Frontend dùng các giá trị Web app
+công khai trong `assets/firebase-config.js`; backend cần `FIREBASE_API_KEY` để
+xác minh Firebase ID token. Giới hạn key theo API/referrer phù hợp trong Google
+Cloud Console. Không đặt service-account private key, Facebook App Secret
+hoặc credential riêng tư trong frontend. Website production phải dùng HTTPS;
+localhost chỉ dành cho development.
 
 Social login chỉ chấp nhận email đã được Firebase xác minh và provider Google/Facebook. Email trùng với tài khoản mật khẩu không tự động liên kết: người dùng cần đăng nhập bằng tài khoản hiện tại rồi gọi `POST /api/auth/social/link` với session bearer token, Firebase `idToken` và mật khẩu để xác thực lại. Gọi `POST /api/auth/social/unlink` với session token, `provider` (`google.com` hoặc `facebook.com`) và mật khẩu để tách provider. Tài khoản social-only cần đặt mật khẩu qua quy trình khôi phục email trước khi liên kết hoặc tách provider.
 
@@ -373,6 +408,7 @@ Các tài khoản social cũ vẫn giữ provider ID đã lưu và có thể đ�
 │   ├── auth.js
 │   └── db.js
 ├── data/                   # Dữ liệu local; không commit dữ liệu thật
+├── docs/                   # API, kiến trúc, triển khai và runbook
 ├── scripts/                # Build Pages, migration và seed
 ├── tests/                  # Test storefront và backend
 ├── .github/workflows/      # CI/CD
@@ -387,6 +423,7 @@ Các tài khoản social cũ vẫn giữ provider ID đã lưu và có thể đ�
 ├── main.js
 ├── server.js               # Static server và REST API
 ├── render.yaml             # Cấu hình Render
+├── privacy.html            # Thông tin xử lý dữ liệu
 ├── package.json
 └── README.md
 ```
@@ -394,8 +431,14 @@ Các tài khoản social cũ vẫn giữ provider ID đã lưu và có thể đ�
 ## Tài liệu tham khảo
 
 - [Kiến trúc hệ thống](ARCHITECTURE.md)
-- [Quản lý khách hàng](docs/CUSTOMER_MANAGEMENT.md)
+- [Hướng dẫn CRM hiện hành](docs/customer-crm.md)
 - [Thiết kế CRM](docs/crm-design.md)
+- [Triển khai](docs/deployment.md)
+- [Checklist production](docs/production-readiness-checklist.md)
+- [Runbook backup, restore và sự cố](docs/backup-restore-incident-runbook.md)
+- [OpenAPI](docs/openapi.json)
+- [CI gates](docs/ci-gates.md)
+- [Chính sách quyền riêng tư](privacy.html)
 - [Lịch sử thay đổi](CHANGELOG.md)
 
 ## Đóng góp

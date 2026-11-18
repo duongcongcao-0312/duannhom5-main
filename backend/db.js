@@ -30,11 +30,24 @@ async function atomicWriteFile(filePath, contents) {
       if (process.platform !== "win32" || !["EPERM", "EEXIST"].includes(error.code)) {
         throw error;
       }
+
       await fs.rm(filePath, { force: true });
       await fs.rename(temporaryPath, filePath);
     }
+
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function readJsonCollection(filePath, fallback) {
+  try {
+    const contents = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(contents);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback;
     throw error;
   }
 }
@@ -206,6 +219,8 @@ class Database {
     this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
     this.customerInteractionsPath = options.customerInteractionsPath ||
       path.join(dataDir, "customer-interactions.json");
+    this.consentRecordsPath = options.consentRecordsPath ||
+      path.join(dataDir, "consent-records.json");
     this.ordersPath = options.ordersPath || path.join(dataDir, "orders.jsonl");
     this.auditLogPath = options.auditLogPath || path.join(dataDir, "admin-audit.jsonl");
     this.initialized = false;
@@ -1543,6 +1558,44 @@ class Database {
   }
 
   // --- Statistics ---
+  async getConsentRecords(subjectId) {
+    const records = await readJsonCollection(this.consentRecordsPath, []);
+    return records
+      .filter((record) => record.subjectId === subjectId)
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  }
+
+  async recordConsent(subjectId, data) {
+    const records = await readJsonCollection(this.consentRecordsPath, []);
+    const now = new Date().toISOString();
+    const entry = {
+      id: crypto.randomUUID(),
+      subjectId,
+      purpose: data.purpose,
+      consent: data.consent,
+      policyVersion: data.policyVersion,
+      dataSource: data.dataSource,
+      retentionDays: data.retentionDays,
+      createdAt: now,
+      revokedAt: data.consent ? null : now,
+    };
+    records.push(entry);
+    await this.enqueueFileWrite(this.consentRecordsPath, async () => {
+      await atomicWriteFile(this.consentRecordsPath, JSON.stringify(records, null, 2));
+    });
+    return entry;
+  }
+
+  async revokeConsent(subjectId, purpose, policyVersion, dataSource) {
+    return this.recordConsent(subjectId, {
+      purpose,
+      consent: false,
+      policyVersion,
+      dataSource,
+      retentionDays: 0,
+    });
+  }
+
   async getStats(ordersPathOverride, totalBaseBooks = 80) {
     const orders = await this.getAllOrders(ordersPathOverride);
     const users = await this.getUsers();

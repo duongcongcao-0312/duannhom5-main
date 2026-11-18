@@ -22,6 +22,73 @@ test("staff management enforces admin access, role limits, and session revocatio
     await new Promise((resolve) => server.close(resolve));
     await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
   });
+
+  test("authenticated users can record, inspect, and withdraw privacy consent", async (t) => {
+    const temporaryDirectory = await fsPromises.mkdtemp(
+      path.join(os.tmpdir(), "booknest-consent-test-"),
+    );
+    const paths = {
+      ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+      usersPath: path.join(temporaryDirectory, "users.json"),
+      consentRecordsPath: path.join(temporaryDirectory, "consent-records.json"),
+    };
+    const database = new Database(paths);
+    const user = await database.createUser({
+      name: "Consent Demo",
+      email: "consent-demo@example.com",
+      password: "consent-test-password",
+      role: "user",
+    });
+    const server = createServer({ ...paths, database });
+    t.after(async () => {
+      await new Promise((resolve) => server.close(resolve));
+      await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user.email, password: "consent-test-password" }),
+    });
+    const login = await loginResponse.json();
+    const headers = {
+      Authorization: `Bearer ${login.token}`,
+      "Content-Type": "application/json",
+    };
+
+    const recordResponse = await fetch(`${baseUrl}/api/privacy/consents`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        purpose: "marketing",
+        consent: true,
+        policyVersion: "2026-01",
+        dataSource: "web",
+        retentionDays: 180,
+      }),
+    });
+    assert.equal(recordResponse.status, 201);
+    assert.equal((await recordResponse.json()).record.consent, true);
+
+    const revokeResponse = await fetch(
+      `${baseUrl}/api/privacy/consents/marketing?policyVersion=2026-01`,
+      { method: "DELETE", headers },
+    );
+    assert.equal(revokeResponse.status, 200);
+    assert.equal((await revokeResponse.json()).record.consent, false);
+
+    const listResponse = await fetch(`${baseUrl}/api/privacy/consents`, {
+      headers,
+    });
+    const listed = await listResponse.json();
+    assert.equal(listResponse.status, 200);
+    assert.equal(listed.current.marketing.consent, false);
+    assert.equal(listed.records.length, 2);
+  });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);

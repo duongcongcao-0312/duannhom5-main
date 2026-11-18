@@ -11,6 +11,11 @@ const { Database } = require('../backend/db');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
+test('server entrypoint exports the HTTP server factory', () => {
+	assert.match(read('server.js'), /function createServer/);
+	assert.match(read('server.js'), /module\.exports/);
+});
+
 function configureTestAdmin(t) {
 	const previous = {
 		ADMIN_EMAIL: process.env.ADMIN_EMAIL,
@@ -26,14 +31,39 @@ function configureTestAdmin(t) {
 	});
 }
 
-test('payment UI contains COD and delivery fields', () => {
+test('payment UI contains COD and loads bank details from the backend', () => {
 	const html = read('index.html');
+	const script = read('main.js');
 	assert.match(html, /value="cod"/);
 	assert.match(html, /name="customerName"/);
 	assert.match(html, /name="phone"/);
 	assert.match(html, /name="address"/);
 	assert.match(html, /id="paymentQr"/);
-	assert.match(html, /TCB-88803122007888/);
+	assert.doesNotMatch(html, /TCB-88803122007888/);
+	assert.doesNotMatch(script, /TCB-88803122007888/);
+	assert.match(script, /api\/payments\/config/);
+	assert.match(script, /bankCode/);
+	assert.match(html, /assets\/vietqr\.js[\s\S]*main\.js/);
+	assert.match(script, /updatePaymentQr\(result\)/);
+	assert.doesNotMatch(script, /updatePaymentQr\(quote\.total\)/);
+	assert.match(script, /paymentCode/);
+});
+
+test('order toast separates COD success from pending and confirmed transfer payments', () => {
+	const script = read('main.js');
+	assert.match(script, /title: method === 'cod' \? 'Đặt hàng thành công!' : 'Đã tạo đơn, đang chờ thanh toán'/);
+	assert.match(script, /\{ label: 'Mã đơn', value: result\.orderId \}/);
+	assert.match(script, /sessionStorage\.setItem\(LAST_ORDER_ID_STORAGE_KEY, result\.orderId\)/);
+	assert.match(script, /sessionStorage\.getItem\(LAST_ORDER_ID_STORAGE_KEY\)/);
+	assert.match(script, /const paymentConfirmed = order\.paymentStatus === 'paid'/);
+	assert.match(script, /paymentConfirmed \? 'Đã xác nhận thanh toán thành công' : 'Đang chờ thanh toán'/);
+});
+
+test('public quick-login profiles use synthetic demo identities', () => {
+	const html = read('index.html');
+	assert.doesNotMatch(html, /bit250048@|nguyenvanan|tranminhduc|lethao|Dương Công Cao|Nguyễn Văn An|Trần Minh Đức|Lê Phương Thảo/i);
+	assert.match(html, /demo-user-01@example\.com/);
+	assert.match(html, /dữ liệu giả lập/i);
 });
 
 test('images use lazy loading and async decoding', () => {
@@ -58,7 +88,7 @@ test('cart persists safely between page loads', () => {
 	assert.match(script, /books\.find\(\(book\) => book\.title === title\)/);
 });
 
-test('customer contact information persists for purchases and book services after logout', () => {
+test('customer contact information is session-scoped and cleared on logout', () => {
 	const script = read('main.js');
 	assert.match(script, /const CUSTOMER_INFO_STORAGE_KEY = 'booknest-customer-info'/);
 	assert.match(script, /function loadCustomerInfo/);
@@ -67,7 +97,9 @@ test('customer contact information persists for purchases and book services afte
 	assert.match(script, /const customerInfo = \{ \.\.\.loadCustomerInfo\(\), name: request\.name, phone: request\.phone \}/);
 	assert.match(script, /function fillSavedCustomerInfo/);
 	assert.match(script, /fillSavedCustomerInfo\(\);/);
-	assert.doesNotMatch(script, /localStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
+	assert.match(script, /sessionStorage\.getItem\(CUSTOMER_INFO_STORAGE_KEY/);
+	assert.match(script, /sessionStorage\.setItem\(CUSTOMER_INFO_STORAGE_KEY/);
+	assert.match(script, /sessionStorage\.removeItem\(CUSTOMER_INFO_STORAGE_KEY\)/);
 	assert.match(script, /saveCustomerInfoToAccount/);
 	assert.match(script, /api\/auth\/customer-info/);
 	assert.match(script, /hydrateAuthenticatedUser/);
@@ -237,6 +269,30 @@ test('SEO, legal and deployment assets exist', () => {
 	assert.match(read('index.html'), /class="skip-link"/);
 });
 
+test('toast notifications share an accessible frontend renderer on store and admin pages', () => {
+	const html = read('index.html');
+	const adminHtml = read('admin.html');
+	const script = read('assets/toast.js');
+	const styles = read('assets/toast.css');
+	assert.match(html, /assets\/toast\.css/);
+	assert.match(html, /assets\/toast\.js[\s\S]*main\.js/);
+	assert.match(adminHtml, /assets\/toast\.css/);
+	assert.match(adminHtml, /assets\/toast\.js[\s\S]*admin\.js/);
+	assert.match(script, /aria-live/);
+	assert.match(script, /aria-label/);
+	assert.match(script, /copy\.textContent = messageText/);
+	assert.match(script, /maxVisibleToasts = 3/);
+	assert.match(script, /duration: 5000/);
+	assert.match(script, /duration: 6000/);
+	assert.match(script, /event\.key !== 'Escape'/);
+	assert.match(styles, /prefers-reduced-motion: reduce/);
+	assert.match(styles, /@media \(max-width: 600px\)/);
+	assert.doesNotMatch(read('main.js'), /\balert\s*\(/);
+	assert.match(read('admin.js'), /window\.booknestToast/);
+	assert.doesNotMatch(read('book-detail.js'), /window\.alert\s*\(/);
+	assert.match(read('scripts/build-pages.js'), /'toast\.css'.*'toast\.js'/);
+});
+
 test('frontend API client targets the configured backend origin', () => {
 	const context = { window: { BOOKNEST_API_BASE_URL: 'https://api.example.com/' } };
 	vm.runInNewContext(read('assets/api-client.js'), context);
@@ -259,6 +315,70 @@ test('frontend API client targets the configured backend origin', () => {
 	assert.equal(customBackendPortConfig.window.BOOKNEST_API_BASE_URL, '');
 	assert.match(read('index.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*main\.js/);
 	assert.match(read('admin.html'), /assets\/api-config\.js[\s\S]*assets\/api-client\.js[\s\S]*admin\.js/);
+});
+
+test('API client stays quiet when the storefront runs without a configured backend', async () => {
+	let notice;
+	const document = {
+		body: { appendChild(element) { notice = element; } },
+		getElementById(id) { return id === 'apiConnectionNotice' ? notice : null; },
+		createElement() {
+			return {
+				children: [],
+				setAttribute() {},
+				addEventListener() {},
+				append(...children) { this.children.push(...children); },
+				appendChild(child) { this.children.push(child); },
+				querySelector(selector) {
+					return this.children.find((child) => child.className === selector.slice(1));
+				},
+				remove() {}
+			};
+		}
+	};
+	const context = {
+		window: {
+			BOOKNEST_API_BASE_URL: '',
+			location: { protocol: 'file:', hostname: 'localhost' }
+		},
+		document,
+		fetch: () => { throw new Error('fetch should not be announced in local demo mode'); },
+		setTimeout,
+		clearTimeout,
+		AbortController,
+		Headers
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+	await assert.rejects(
+		context.window.booknestApiFetch('/api/books'),
+		/Không thể kết nối tới máy chủ BookNest/i,
+	);
+	assert.equal(notice, undefined);
+});
+
+test('API client retries safe cold-start requests without replaying writes', async () => {
+	let attempts = 0;
+	const context = {
+		window: { BOOKNEST_API_BASE_URL: 'https://api.example.com' },
+		document: { body: null },
+		AbortController,
+		fetch: async (_url, options) => {
+			attempts += 1;
+			assert.ok(options.signal);
+			if (attempts < 3) return { status: 503 };
+			return { status: 200 };
+		},
+		setTimeout(callback) { callback(); return 1; },
+		clearTimeout() {}
+	};
+	vm.runInNewContext(read('assets/api-client.js'), context);
+
+	await context.window.booknestApiFetch('/health');
+	assert.equal(attempts, 3);
+
+	attempts = 0;
+	await context.window.booknestApiFetch('/api/orders', { method: 'POST', body: '{}' });
+	assert.equal(attempts, 1);
 });
 
 test('API client reports timeouts and unavailable server responses with actionable notices', async () => {
@@ -727,10 +847,25 @@ test('OpenAPI documents the current core API routes and CRM statuses', () => {
 	assert.ok(spec.paths['/api/auth/password-reset/confirm']);
 	assert.ok(spec.paths['/api/orders']);
 	assert.ok(spec.paths['/api/orders/{id}'].patch.security);
+	assert.ok(spec.paths['/api/orders/{id}/status'].get);
+	assert.ok(spec.paths['/api/payments/config'].get);
+	assert.ok(spec.paths['/api/payments/sepay-webhook'].post);
+	assert.ok(spec.paths['/api/admin/staff'].get);
+	assert.ok(spec.paths['/api/admin/staff'].post);
+	assert.ok(spec.paths['/api/admin/staff/{id}'].patch);
+	assert.ok(spec.paths['/api/admin/audit'].get);
+	assert.ok(spec.paths['/api/admin/users/{id}'].patch);
+	assert.ok(spec.paths['/api/admin/coupons/{code}'].put);
+	assert.ok(spec.paths['/api/admin/coupons/{code}'].patch);
 	assert.equal(
 		spec.paths['/api/orders/{id}'].patch.requestBody.content['application/json'].schema.$ref,
 		'#/components/schemas/OrderUpdateRequest'
 	);
+	assert.deepEqual(
+		spec.paths['/api/privacy/consents'].post.requestBody.content['application/json'].schema.required,
+		['purpose', 'policyVersion', 'consent', 'retentionDays']
+	);
+	assert.equal(spec.components.schemas.Register.properties.password.minLength, 12);
 	assert.equal(
 		spec.components.schemas.OrderUpdateRequest.properties.items.items.additionalProperties,
 		false

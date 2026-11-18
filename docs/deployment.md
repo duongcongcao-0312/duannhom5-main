@@ -3,8 +3,12 @@
 ## Yêu cầu
 
 - Node.js 20 trở lên hoặc Docker Engine hỗ trợ image Linux.
-- Một thư mục bền vững, có quyền ghi, để lưu dữ liệu trong `/app/data`.
+- Một volume `/app/data` có quyền ghi khi chạy file storage; triển khai
+  PostgreSQL dùng database quản lý và không cần volume này cho dữ liệu ứng dụng.
 - HTTPS tại reverse proxy khi phục vụ qua mạng công cộng.
+
+Trong Windows PowerShell, dùng `npm.cmd` nếu `npm.ps1` bị chặn bởi execution
+policy; không cần hạ policy của máy.
 
 ## Chạy trực tiếp bằng Node.js
 
@@ -26,11 +30,20 @@ Khi dùng Render Postgres, ưu tiên internal database URL của cùng region. B
 dùng TLS và chỉ bỏ xác thực chứng thư cho hostname nội bộ Render (không có dấu
 chấm); các hostname database bên ngoài vẫn xác thực chứng thư TLS.
 
-Render chạy `npm run migrate && npm start`, vì vậy migration hoàn tất trước khi
-web server nhận traffic. Hãy tạo backup/snapshot ở provider trước khi bấm
-deploy, sau đó kiểm tra `/ready` và chạy smoke test sau deploy. Checklist bằng
+Blueprint `render.yaml` chạy `npm run predeploy:check && npm run migrate &&
+npm start`, vì vậy kiểm tra cấu hình và migration hoàn tất trước khi web server
+nhận traffic. Hãy tạo backup/snapshot ở provider trước khi deploy, sau đó kiểm
+tra `/ready` và chạy smoke test sau deploy. Checklist bằng
 chứng không chứa secret nằm tại
 [production-readiness-checklist.md](./production-readiness-checklist.md).
+
+Nếu deploy lỗi, ghi lại deploy ID và giữ log; không xóa dữ liệu hay tự chạy
+migration ngược. Chỉ rollback ứng dụng về deploy trước nếu migration vừa áp
+dụng tương thích ngược với phiên bản đó. Nếu không chắc chắn, giữ backend ở
+maintenance và triển khai bản sửa tương thích tiến; chỉ khôi phục database từ
+snapshot sau khi xác nhận phạm vi mất dữ liệu và đích khôi phục. Thực hiện theo
+[runbook backup/restore](./backup-restore-incident-runbook.md), rồi chạy smoke
+test trước khi mở traffic.
 
 Để bật khôi phục mật khẩu, cấu hình các biến sau trên backend:
 
@@ -55,6 +68,57 @@ domain gửi thư với Resend, rồi redeploy. API HTTPS không phụ thuộc k
 SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP_*`. Không đưa
 API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
 log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
+
+## Firebase Authentication
+
+1. Tạo Firebase project/Web app và bật Google hoặc Facebook trong
+   **Authentication > Sign-in method**.
+2. Thêm chính xác domain frontend vào **Authorized domains**. Production phải
+   chạy qua HTTPS.
+3. Frontend configuration (`apiKey`, `authDomain`, `projectId`, `appId`) nằm
+   trong `assets/firebase-config.js` và được đóng gói vào static site; các giá
+   trị này là public. Hạn chế Web API key theo API/referrer trong Google Cloud
+   Console.
+4. Đặt `FIREBASE_API_KEY` trên backend để máy chủ xác minh Firebase ID token.
+   Không đặt service-account private key hoặc Facebook App Secret ở frontend
+   hay trong Git.
+5. Đăng nhập social dùng `POST /api/auth/social`; liên kết/tách provider yêu
+   cầu bearer session và xác thực lại theo hợp đồng trong `docs/openapi.json`.
+
+Nếu Firebase chưa cấu hình hoặc chưa được backend xác minh, không dùng luồng
+đăng nhập social. Backend hiện xác minh token bằng Firebase Identity Toolkit
+API key; không giả định service-account/Admin SDK đã được cài đặt.
+
+## Thanh toán QR và webhook SePay
+
+QR transfer hiển thị thông tin do `GET /api/payments/config` trả về:
+`SEPAY_BANK_CODE`, `SEPAY_BANK_NAME`, `SEPAY_ACCOUNT_NUMBER` và
+`SEPAY_ACCOUNT_NAME`. Frontend tạo ảnh QR qua dịch vụ VietQR bên ngoài; thông
+tin ngân hàng, số tiền và mã chuyển khoản đơn được gửi trong URL ảnh. Cấu hình
+đúng tài khoản nhận tiền trước khi deploy. Hiện server có fallback demo cho mã
+ngân hàng/số tài khoản, vì vậy để trống biến môi trường không tắt QR. Kiểm tra
+response `/api/payments/config` xác nhận đúng tài khoản trước khi public luồng
+chuyển khoản. QR và tạo đơn không tự xác nhận tiền đã vào tài khoản.
+
+Để nhận thông báo giao dịch:
+
+1. Đặt `SEPAY_API_KEY` (ít nhất 16 ký tự) trong Render Environment/secret
+   manager và cấu hình đúng endpoint webhook ở SePay:
+   `https://<api-origin>/api/payments/sepay-webhook`.
+2. SePay phải gửi JSON và header `Authorization: Apikey <SEPAY_API_KEY>`.
+3. Handler chỉ đánh dấu đơn chuyển khoản là đã trả khi tìm được mã `BN` theo
+   dạng `BN` cộng 12 ký tự hex trong nội dung giao dịch, phương thức đơn là
+   chuyển khoản, số tài khoản khớp và số tiền bằng chính xác tổng đơn. Giao
+   dịch khác sẽ được trả lời thành công nhưng bị bỏ qua; PostgreSQL bắt buộc
+   để chống xử lý lặp.
+4. Dùng đơn và tài khoản thử nghiệm để xác nhận callback, log, trạng thái đơn
+   và xử lý callback lặp trước khi bật cho người dùng.
+
+Không ghi API key vào URL, ticket hoặc log. `POST /api/payments/webhook` là
+endpoint HMAC riêng của BookNest, cần `PAYMENT_WEBHOOK_SECRET` tối thiểu 32
+byte và chữ ký trên raw body; đây không phải endpoint SePay và không gọi API
+để thu tiền. Chưa bật webhook hoặc chưa xác minh giao dịch thực tế thì không
+đưa ra thông báo rằng thanh toán đã được xử lý tự động.
 
 ## Chạy bằng Docker
 
@@ -94,10 +158,11 @@ Image xuất bản từ GitHub Actions có tên
 
 ## Dữ liệu và tài khoản
 
-BookNest lưu tài khoản, khách hàng CRM, sách quản trị, đơn hàng và yêu cầu dịch
-vụ trong `/app/data`. Gắn volume bền vững trước khi nhận dữ liệu thật. Sao lưu
-volume trước khi nâng phiên bản và thử khôi phục định kỳ. Bản phát hành hiện
-không có migration tự động.
+Khi dùng file storage, BookNest lưu tài khoản, khách hàng CRM, sách quản trị,
+đơn hàng và yêu cầu dịch vụ dưới `data/` (trong Docker là `/app/data`); gắn
+volume bền vững trước khi dùng chế độ này. Khi có `DATABASE_URL`, runtime dùng
+PostgreSQL và `render.yaml` chạy migration trước khi khởi động web server. Sao
+lưu database/volume trước khi nâng phiên bản và thử khôi phục định kỳ.
 
 Quy trình backup, restore và ứng phó sự cố chi tiết nằm trong
 [runbook backup/restore](./backup-restore-incident-runbook.md). Dùng

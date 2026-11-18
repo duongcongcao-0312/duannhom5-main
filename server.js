@@ -18,6 +18,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { normalizeSePayConfig } = require("./backend/sepay-config");
 const { readAuditEntries, withAuditRequestContext } = require("./backend/audit");
 const {
   MonitoringMetrics,
@@ -1259,6 +1260,17 @@ function createServer({
     }
   }
 
+  const sepayConfiguration = normalizeSePayConfig({
+    apiKey: sepayApiKey,
+    bankCode: sepayBankCode,
+    bankName: sepayBankName,
+    accountNumber: sepayAccountNumber,
+    accountName: sepayAccountName,
+  });
+  const invalidPaymentDisplaySettings = sepayConfiguration.invalid.filter(
+    (setting) => setting !== "SEPAY_API_KEY",
+  );
+
   if (process.env.RENDER && !database && !process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL phải được cấu hình trên Render trước khi chạy backend.");
   }
@@ -1762,20 +1774,14 @@ function createServer({
     }
 
     if (requestUrl.pathname === "/api/payments/config" && request.method === "GET") {
-      const accountNumber = String(sepayAccountNumber || "").trim();
-      const bankCode = String(sepayBankCode || "").trim();
-      const bankName = String(sepayBankName || "").trim();
-      const accountName = String(sepayAccountName || "").trim();
-      // VietQR Quick Link uses a bank BIN; do not guess a BIN from a bank alias.
-      if (!/^\d{6}$/.test(bankCode) || !/^\d{6,19}$/.test(accountNumber) ||
-          !bankName || !accountName) {
+      if (invalidPaymentDisplaySettings.length > 0) {
         throw new RequestError(503, "Thông tin tài khoản nhận thanh toán chưa được cấu hình.");
       }
       sendJson(response, 200, {
-        bankCode,
-        bankName,
-        accountNumber,
-        accountName,
+        bankCode: sepayConfiguration.config.bankCode,
+        bankName: sepayConfiguration.config.bankName,
+        accountNumber: sepayConfiguration.config.accountNumber,
+        accountName: sepayConfiguration.config.accountName,
       });
       return;
     }
@@ -1876,11 +1882,15 @@ function createServer({
       if (request.headers["content-type"]?.split(";")[0] !== "application/json") {
         throw new RequestError(415, "SePay webhook cần được gửi ở định dạng JSON.");
       }
-      if (typeof sepayApiKey !== "string" || sepayApiKey.length < 16) {
-        throw new RequestError(503, "SePay webhook chưa được cấu hình API Key.");
+      if (sepayConfiguration.invalid.includes("SEPAY_API_KEY") ||
+          sepayConfiguration.invalid.includes("SEPAY_ACCOUNT_NUMBER")) {
+        throw new RequestError(503, "SePay webhook chưa được cấu hình đầy đủ.");
       }
       const authorization = request.headers.authorization || "";
-      const expectedAuthorization = Buffer.from(`Apikey ${sepayApiKey}`, "utf8");
+      const expectedAuthorization = Buffer.from(
+        `Apikey ${sepayConfiguration.config.apiKey}`,
+        "utf8",
+      );
       const suppliedAuthorization = Buffer.from(String(authorization), "utf8");
       if (expectedAuthorization.length !== suppliedAuthorization.length ||
           !timingSafeEqual(expectedAuthorization, suppliedAuthorization)) {
@@ -1909,7 +1919,7 @@ function createServer({
         sendJson(response, 200, { success: true, ignored: true, reason: "not_incoming" });
         return;
       }
-      if (String(payload.accountNumber || "").trim() !== String(sepayAccountNumber || "").trim()) {
+      if (String(payload.accountNumber || "").trim() !== sepayConfiguration.config.accountNumber) {
         sendJson(response, 200, { success: true, ignored: true, reason: "bank_account_mismatch" });
         return;
       }

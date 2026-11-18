@@ -573,3 +573,64 @@ test("payment webhook events are idempotent and update relational orders", async
   ]]);
   assert.equal((await db.applyPaymentWebhookEvent(event)).duplicate, true);
 });
+
+test("PostgreSQL rolls back a payment event when its amount does not match the order", async (t) => {
+  withAdminConfig(t);
+  const statements = [];
+  const order = {
+    order_id: "11111111-1111-4111-8111-111111111111",
+    user_id: null,
+    customer_name: "Reader",
+    phone: "0901234567",
+    address: "Address",
+    payment_method: "transfer",
+    status: "received",
+    payment_status: "pending",
+    coupon_code: null,
+    discount_rate: 0,
+    subtotal: 25000,
+    discount: 0,
+    total: 25000,
+    idempotency_key: null,
+    idempotency_hash: null,
+    created_at: new Date("2025-01-01T00:00:00.000Z"),
+    updated_at: new Date("2025-01-01T00:00:00.000Z"),
+    legacy_record: {},
+    items: [],
+  };
+  const pool = createPool({
+    async connect() {
+      return {
+        async query(sql) {
+          statements.push(sql);
+          if (sql.includes("INSERT INTO payment_webhook_events")) {
+            return { rows: [{ event_id: "sepay:wrong-amount" }], rowCount: 1 };
+          }
+          if (sql.includes("FROM store_orders orders")) {
+            return { rows: [{ ...order }] };
+          }
+          return { rows: [], rowCount: 1 };
+        },
+        release() {},
+      };
+    },
+  });
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  await assert.rejects(
+    db.applyPaymentWebhookEvent({
+      eventId: "sepay:wrong-amount",
+      eventHash: "a".repeat(64),
+      orderId: order.order_id,
+      paymentStatus: "paid",
+      amount: 1,
+      occurredAt: "2026-01-01T00:00:00.000Z",
+    }),
+    /Số tiền thanh toán không khớp/,
+  );
+  assert.ok(statements.includes("ROLLBACK"));
+  assert.ok(!statements.some((sql) => sql.includes("UPDATE payment_webhook_events")));
+  assert.ok(!statements.some((sql) => sql.includes("INSERT INTO store_orders")));
+  assert.equal(order.payment_status, "pending");
+});

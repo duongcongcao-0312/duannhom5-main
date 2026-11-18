@@ -15,7 +15,7 @@ function normalizeSePayConfig(values = {}) {
   if (Buffer.byteLength(config.apiKey, "utf8") < 16 || /\s/.test(config.apiKey)) {
     invalid.push("SEPAY_API_KEY");
   }
-  if (!/^[A-Za-z0-9_-]{2,32}$/.test(config.bankCode)) {
+  if (!/^\d{6}$/.test(config.bankCode)) {
     invalid.push("SEPAY_BANK_CODE");
   }
   if (
@@ -25,7 +25,7 @@ function normalizeSePayConfig(values = {}) {
   ) {
     invalid.push("SEPAY_BANK_NAME");
   }
-  if (!/^\d{6,20}$/.test(config.accountNumber)) {
+  if (!/^\d{6,19}$/.test(config.accountNumber)) {
     invalid.push("SEPAY_ACCOUNT_NUMBER");
   }
   if (

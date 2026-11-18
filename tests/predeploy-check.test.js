@@ -4,7 +4,7 @@ const { assertProductionEnvironment } = require("../scripts/predeploy-check");
 
 const validSePayConfig = {
   SEPAY_API_KEY: "synthetic-sepay-api-key",
-  SEPAY_BANK_CODE: "TCB",
+  SEPAY_BANK_CODE: "970415",
   SEPAY_BANK_NAME: "Test Bank",
   SEPAY_ACCOUNT_NUMBER: "123456789012",
   SEPAY_ACCOUNT_NAME: "BookNest Test",
@@ -20,22 +20,25 @@ test("pre-deploy check accepts explicit CORS origins and ordered migrations", ()
     ...validSePayConfig,
   });
   assert.equal(result.corsOrigins, 2);
+  assert.equal(result.sepayPaymentConfigured, true);
   assert.ok(result.migrationCount >= 1);
 });
 
 test("pre-deploy check rejects missing SePay production settings", () => {
-  assert.throws(
-    () => assertProductionEnvironment({
-      NODE_ENV: "production",
-      ADMIN_EMAIL: "deploy@example.com",
-      ADMIN_PASSWORD: "password1234",
-      CORS_ORIGINS: "https://shop.example",
-      DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
-      ...validSePayConfig,
-      SEPAY_API_KEY: "",
-    }),
-    /SEPAY_API_KEY/,
-  );
+  const productionEnvironment = {
+    NODE_ENV: "production",
+    ADMIN_EMAIL: "deploy@example.com",
+    ADMIN_PASSWORD: "password1234",
+    CORS_ORIGINS: "https://shop.example",
+    DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    ...validSePayConfig,
+  };
+  for (const setting of Object.keys(validSePayConfig)) {
+    assert.throws(
+      () => assertProductionEnvironment({ ...productionEnvironment, [setting]: "" }),
+      new RegExp(setting),
+    );
+  }
 });
 
 test("pre-deploy check rejects malformed SePay values without exposing credentials", () => {
@@ -49,7 +52,7 @@ test("pre-deploy check rejects malformed SePay values without exposing credentia
       DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
       ...validSePayConfig,
       SEPAY_API_KEY: syntheticCredential,
-      SEPAY_BANK_CODE: "invalid bank code",
+      SEPAY_BANK_CODE: "TCB",
     }),
     (error) => {
       assert.match(error.message, /SEPAY_BANK_CODE/);

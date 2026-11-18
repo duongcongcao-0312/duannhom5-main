@@ -248,6 +248,25 @@ Phiên đăng nhập hết hạn sau thời gian cấu hình bởi `SESSION_TTL_
 
 Webhook thanh toán `POST /api/payments/webhook` chấp nhận JSON sự kiện có `id`, `orderId`, `status` (`succeeded`, `failed`, `pending`, `cancelled`), `amount`, `currency: "VND"` và `occurredAt`. Gửi `X-BookNest-Signature: sha256=<hex>` là HMAC-SHA256 của **raw request body**, dùng `PAYMENT_WEBHOOK_SECRET`; secret phải dài ít nhất 32 byte. Sự kiện chỉ áp dụng cho đơn chuyển khoản có đúng tổng tiền. PostgreSQL ghi nhận event ID và cập nhật trạng thái đơn trong cùng transaction; retry trùng được xác nhận mà không cập nhật lần hai, ID trùng payload khác bị từ chối, và event cũ hơn không ghi đè trạng thái mới. Trạng thái `paid` không bị sự kiện thất bại/hủy đến sau đảo ngược. Cổng thanh toán cần ánh xạ chữ ký và trạng thái nhà cung cấp vào hợp đồng này; endpoint chưa thực hiện gọi thu tiền tới một nhà cung cấp cụ thể.
 
+### Cấu hình chuyển khoản SePay
+
+Render blueprint khai báo `SEPAY_API_KEY`, `SEPAY_BANK_CODE`, `SEPAY_BANK_NAME`,
+`SEPAY_ACCOUNT_NUMBER` và `SEPAY_ACCOUNT_NAME` dưới dạng secret/environment
+không đồng bộ giá trị vào repository. Điền chúng trong Render Dashboard bằng
+thông tin tài khoản được phép dùng cho môi trường tương ứng; không commit API
+key hoặc thông tin tài khoản thật. `SEPAY_BANK_CODE` phải là BIN VietQR 6 chữ
+số, số tài khoản gồm 6–19 chữ số. `npm run predeploy:check` từ chối production
+nếu một trong các giá trị thiếu hoặc không hợp lệ.
+
+`GET /api/payments/config` chỉ trả dữ liệu hiển thị công khai cho QR, không trả
+API key. SePay gọi `POST /api/payments/sepay-webhook` bằng
+`Authorization: Apikey ...`; server chỉ áp dụng giao dịch vào đơn chuyển khoản
+khi tài khoản nhận, mã `BN...` và số tiền khớp. PostgreSQL là bắt buộc để áp
+dụng sự kiện idempotent giữa các instance. Quy trình staging và kết quả kiểm
+thử tổng hợp được ghi tại
+[báo cáo kiểm thử SePay](docs/payment-sepay-validation.md); chưa coi test giả
+lập là bằng chứng đã xử lý một giao dịch thật.
+
 Đăng nhập giới hạn 5 lần thử cho mỗi địa chỉ IP trong cửa sổ 15 phút; đăng nhập thành công sẽ xóa bộ đếm. Các thông tin đăng nhập sai và email không tồn tại cùng trả về HTTP 401 với thông báo chung. Khi vượt giới hạn, API trả về HTTP 429.
 
 ## Kiểm thử

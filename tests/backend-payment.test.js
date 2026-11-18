@@ -289,6 +289,36 @@ test("SePay config, webhook, and order status endpoints work together", async (t
     content: `Thanh toan ${order.paymentCode}`,
     transactionDate: "2026-01-01 10:00:00",
   };
+  const amountMismatchResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, transferAmount: 10001 }),
+  });
+  assert.deepEqual(await amountMismatchResponse.json(), {
+    success: true,
+    ignored: true,
+    reason: "payment_details_mismatch",
+  });
+  assert.equal(appliedEvent, undefined);
+
+  const unknownPaymentCodeResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: {
+      Authorization: "Apikey test-sepay-api-key-123456",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, content: "Thanh toan BNFFFFFFFFFFFF" }),
+  });
+  assert.deepEqual(await unknownPaymentCodeResponse.json(), {
+    success: true,
+    ignored: true,
+    reason: "order_not_found",
+  });
+  assert.equal(appliedEvent, undefined);
+
   const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
     method: "POST",
     headers: {
@@ -426,13 +456,14 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   assert.equal(appliedEvent.amount, order.total);
 });
 
-test("payment config rejects a non-BIN VietQR bank code without using fallback bank data", async (t) => {
+test("payment endpoints reject an invalid BIN and a missing SePay webhook key", async (t) => {
   const database = {
     async getCustomBooks() { return []; },
     async getCatalogBookOverrides() { return []; },
   };
   const server = createServer({
     database,
+    sepayApiKey: "",
     sepayBankCode: "TCB",
     sepayBankName: "Test Bank",
     sepayAccountNumber: "123456789",
@@ -444,7 +475,16 @@ test("payment config rejects a non-BIN VietQR bank code without using fallback b
     server.listen(0, "127.0.0.1", resolve);
   });
 
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payments/config`);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(`${baseUrl}/api/payments/config`);
   assert.equal(response.status, 503);
   assert.match((await response.json()).error, /chưa được cấu hình/i);
+
+  const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(webhookResponse.status, 503);
+  assert.match((await webhookResponse.json()).error, /chưa được cấu hình đầy đủ/i);
 });

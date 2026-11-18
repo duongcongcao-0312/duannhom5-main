@@ -32,7 +32,7 @@
 			throw new TypeError('Đơn hàng chuyển khoản chưa hợp lệ để tạo mã QR.');
 		}
 
-		const imagePath = `${encodeURIComponent(paymentConfig.bankCode)}-${encodeURIComponent(paymentConfig.accountNumber)}-compact2.png`;
+		const imagePath = `${encodeURIComponent(paymentConfig.bankCode)}-${encodeURIComponent(paymentConfig.accountNumber)}-compact2.svg`;
 		const query = [
 			`amount=${order.total}`,
 			`addInfo=${encodeURIComponent(order.paymentCode)}`,

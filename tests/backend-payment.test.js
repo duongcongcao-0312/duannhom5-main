@@ -323,7 +323,7 @@ test("VietQR builder encodes only the payment code and rejects invalid payment d
   assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
   assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
   assert.doesNotMatch(qrUrl.searchParams.get("addInfo"), /BOOKNEST/i);
-  assert.ok(qrUrl.pathname.endsWith("-compact2.png"));
+	assert.ok(qrUrl.pathname.endsWith("-compact2.svg"));
 
   assert.throws(() => buildPaymentQrUrl(config, null), /Đơn hàng chuyển khoản/);
   assert.throws(() => buildPaymentQrUrl(config, { ...order, paymentMethod: "cod" }), /Đơn hàng chuyển khoản/);
@@ -398,7 +398,7 @@ test("a created transfer order produces a QR whose payment code matches the SePa
   const qrUrl = new URL(buildPaymentQrUrl(config, order));
   assert.equal(qrUrl.searchParams.get("amount"), String(order.total));
   assert.equal(qrUrl.searchParams.get("addInfo"), order.paymentCode);
-  assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.png`);
+	assert.equal(qrUrl.pathname, `/image/${config.bankCode}-${config.accountNumber}-compact2.svg`);
 
   const webhookResponse = await fetch(`${baseUrl}/api/payments/sepay-webhook`, {
     method: "POST",

@@ -102,6 +102,7 @@
         } catch (e) {
             console.error('Lỗi kiểm tra phiên đăng nhập:', e);
         }
+        if (currentAdmin) return;
         showLoginOverlay();
     }
 

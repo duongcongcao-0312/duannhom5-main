@@ -380,6 +380,12 @@
             <div id="transferDetails">
                 <div class="qr-payment">
                     <img id="paymentQr" src="" alt="Mã QR thanh toán BookNest" width="280" height="280" loading="lazy" decoding="async" hidden>
+                    <div class="payment-qr-fallback" id="paymentQrFallback" role="status" aria-live="polite" hidden>
+                        <strong>Ảnh QR chưa tải được.</strong>
+                        <p>Bạn vẫn có thể chuyển khoản thủ công theo thông tin bên dưới. Nhập đúng số tiền và mã thanh toán này:</p>
+                        <div>Số tiền: <strong><span data-payment-qr-amount></span> ₫</strong></div>
+                        <div>Nội dung chuyển khoản: <code data-payment-qr-code></code></div>
+                    </div>
                     <p>Quét mã bằng ứng dụng ngân hàng để thanh toán nhanh.</p>
                 </div>
                 <dl class="payment-details" id="paymentBankDetails">

@@ -98,13 +98,16 @@ test("public order lookup does not disclose delivery or customer details", async
       address: "Secret delivery address",
       phone: "0901234567",
       paymentMethod: "cod",
+      accessCode: "a1".repeat(32),
       discountRate: 0,
       items: [{ title: "Nhà giả kim", quantity: 1 }],
     }),
   });
   assert.equal(response.status, 201);
   const order = await response.json();
-  const lookup = await fetch(`${baseUrl}/api/orders/${order.orderId}`);
+  const lookup = await fetch(`${baseUrl}/api/orders/${order.orderId}`, {
+    headers: { "X-Order-Access-Code": "a1".repeat(32) },
+  });
   assert.equal(lookup.status, 200);
   const body = await lookup.text();
   assert.doesNotMatch(body, /<script>|alert\(1\)|Secret delivery address|0901234567/i);

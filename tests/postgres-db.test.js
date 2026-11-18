@@ -49,6 +49,24 @@ test("PostgresDatabase rejects a missing DATABASE_URL", () => {
   );
 });
 
+test("PostgresDatabase prunes only consent records with an elapsed retention period", async (t) => {
+  const pool = createPool();
+  pool.query = async (sql, values = []) => {
+    pool.queries.push({ sql, values });
+    return { rows: [{ id: "expired-consent" }], rowCount: 1 };
+  };
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+  const now = new Date("2026-11-18T00:00:00.000Z");
+
+  const pruned = await db.pruneExpiredConsentRecords(now);
+
+  assert.equal(pruned, 1);
+  assert.match(pool.queries[0].sql, /DELETE FROM privacy_consents/);
+  assert.match(pool.queries[0].sql, /retention_days > 0/);
+  assert.deepEqual(pool.queries[0].values, [now]);
+});
+
 test("monitoring status probes database connectivity and reports pool counts only", async (t) => {
   const pool = createPool({
     totalCount: 6,
@@ -270,6 +288,7 @@ test("coupon redemption is committed atomically with a PostgreSQL order", async 
   const order = {
     orderId: "123e4567-e89b-12d3-a456-426614174000",
     idempotencyKey: "coupon-order-0001",
+    accessCodeHash: "a".repeat(64),
     subtotal: 100000,
     couponRate: 0.1,
     items: [],
@@ -290,6 +309,10 @@ test("coupon redemption is committed atomically with a PostgreSQL order", async 
   assert.equal(statements[redemptionIndex].values[1], 100000);
   assert.equal(statements[redemptionIndex].values[2], 0.1);
   assert.match(statements[redemptionIndex].sql, /AND rate = \$3/);
+  const savedOrder = statements.find(({ sql }) => sql.includes("INSERT INTO store_orders"));
+  assert.match(savedOrder.sql, /access_code_hash/);
+  assert.equal(savedOrder.values[15], order.accessCodeHash);
+  assert.doesNotMatch(JSON.stringify(savedOrder.values), /raw-access-code/);
 });
 
 test("customer interactions use CRM tables with pagination and actor audit fields", async (t) => {
@@ -454,6 +477,7 @@ test("PostgresDatabase updates an order status while preserving payment status",
     total: 25000,
     idempotency_key: null,
     idempotency_hash: null,
+    access_code_hash: "c".repeat(64),
     created_at: new Date("2025-01-01T00:00:00.000Z"),
     updated_at: new Date("2025-01-01T00:00:00.000Z"),
     legacy_record: {},
@@ -474,7 +498,8 @@ test("PostgresDatabase updates an order status while preserving payment status",
           if (sql.includes("INSERT INTO store_orders")) {
             orderRow.status = values[6];
             orderRow.payment_status = values[7];
-            orderRow.legacy_record = JSON.parse(values[17]);
+            orderRow.access_code_hash = values[15];
+            orderRow.legacy_record = JSON.parse(values[18]);
             return { rows: [], rowCount: 1 };
           }
           return { rows: [], rowCount: 0 };
@@ -495,6 +520,7 @@ test("PostgresDatabase updates an order status while preserving payment status",
 
   assert.equal(updated.orderId, orderId);
   assert.equal(updated.status, "processing");
+  assert.equal(updated.accessCodeHash, orderRow.access_code_hash);
   assert.equal(updated.paymentStatus, "pending");
   assert.ok(statements.includes("BEGIN"));
   assert.ok(statements.includes("COMMIT"));
@@ -529,6 +555,7 @@ test("payment webhook events are idempotent and update relational orders", async
     total: 25000,
     idempotency_key: null,
     idempotency_hash: null,
+    access_code_hash: null,
     created_at: new Date("2025-01-01T00:00:00.000Z"),
     updated_at: new Date("2025-01-01T00:00:00.000Z"),
     legacy_record: {},
@@ -556,7 +583,8 @@ test("payment webhook events are idempotent and update relational orders", async
           if (sql.includes("FROM store_orders orders")) return { rows: [{ ...order }] };
           if (sql.includes("INSERT INTO store_orders")) {
             order.payment_status = values[7];
-            order.legacy_record = JSON.parse(values[17]);
+            order.access_code_hash = values[15];
+            order.legacy_record = JSON.parse(values[18]);
             return { rows: [], rowCount: 1 };
           }
           return { rows: [], rowCount: 1 };
@@ -687,6 +715,7 @@ test("PostgresDatabase atomically reserves and releases inventory on order creat
                 total: o.total,
                 idempotency_key: o.idempotencyKey || null,
                 idempotency_hash: o.idempotencyHash || null,
+                access_code_hash: o.accessCodeHash || null,
                 created_at: new Date("2026-01-01T00:00:00.000Z"),
                 updated_at: new Date("2026-01-01T00:00:00.000Z"),
                 legacy_record: o,
@@ -713,7 +742,7 @@ test("PostgresDatabase atomically reserves and releases inventory on order creat
             return { rows: [], rowCount: 1 };
           }
           if (sql.includes("INSERT INTO store_orders")) {
-            const updatedRecord = JSON.parse(values[17]);
+            const updatedRecord = JSON.parse(values[18]);
             const existingIdx = storedOrders.findIndex((o) => o.orderId === values[0]);
             if (existingIdx >= 0) storedOrders[existingIdx] = updatedRecord;
             else storedOrders.push(updatedRecord);

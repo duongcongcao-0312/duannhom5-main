@@ -81,7 +81,7 @@ test("privacy data request migration enforces ownership, status, audit, and acti
     "migrations",
     "014_privacy_data_requests.sql",
   );
-  assert.ok(fs.existsSync(migrationPath));
+  await assert.doesNotReject(fs.access(migrationPath));
   const migration = await fs.readFile(migrationPath, "utf8");
   assert.match(migration, /CREATE TABLE IF NOT EXISTS privacy_data_requests/);
   assert.match(migration, /FOREIGN KEY \(subject_id\) REFERENCES app_users\(user_id\) ON DELETE RESTRICT/);
@@ -90,4 +90,25 @@ test("privacy data request migration enforces ownership, status, audit, and acti
   assert.match(migration, /created_by TEXT NOT NULL/);
   assert.match(migration, /updated_by TEXT/);
   assert.match(migration, /ON privacy_data_requests \(subject_id, request_type\)/);
+});
+
+test("shared rate-limit migration stores keyed bucket identifiers and indexes expiry", async () => {
+  const migration = await fs.readFile(
+    path.join(__dirname, "..", "data", "migrations", "015_shared_rate_limits.sql"),
+    "utf8",
+  );
+  assert.match(migration, /CREATE TABLE shared_rate_limits/);
+  assert.match(migration, /bucket_key TEXT PRIMARY KEY CHECK \(bucket_key ~ '\^\[a-f0-9\]\{64\}\$'\)/);
+  assert.match(migration, /count INTEGER NOT NULL CHECK \(count > 0\)/);
+  assert.match(migration, /CREATE INDEX idx_shared_rate_limits_expires_at/);
+});
+
+test("guest order migration stores only a validated access-code hash", async () => {
+  const migration = await fs.readFile(
+    path.join(__dirname, "..", "data", "migrations", "016_guest_order_access_codes.sql"),
+    "utf8",
+  );
+  assert.match(migration, /ALTER TABLE store_orders/);
+  assert.match(migration, /ADD COLUMN access_code_hash TEXT/);
+  assert.match(migration, /access_code_hash IS NULL OR access_code_hash ~ '\^\[a-f0-9\]\{64\}\$'/);
 });

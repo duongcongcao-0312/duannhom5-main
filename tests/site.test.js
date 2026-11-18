@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsPromises = require('node:fs/promises');
 const os = require('node:os');
@@ -6,14 +7,56 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { createServer } = require('../server');
+const { createServer: createAppServer } = require('../backend/app');
 const { Database } = require('../backend/db');
 
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('server entrypoint exports the HTTP server factory', () => {
+test('active server entrypoint uses the modular app composition root', () => {
+	assert.equal(createServer, createAppServer);
 	assert.match(read('server.js'), /function createServer/);
 	assert.match(read('server.js'), /module\.exports/);
+});
+
+test('guest checkout creates access codes with Web Crypto and only sends them in the lookup header', () => {
+	const script = read('main.js');
+	assert.match(script, /crypto\.getRandomValues/);
+	assert.match(script, /X-Order-Access-Code/);
+	assert.match(script, /lastCreatedOrderAccessCode/);
+	assert.doesNotMatch(script, /(?:sessionStorage|localStorage)\.setItem\([^,]*accessCode/i);
+});
+
+test('modular server preserves public, auth, admin, privacy, and payment route contracts', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-route-contract-'));
+	const server = createServer({
+		ordersPath: path.join(temporaryDirectory, 'orders.jsonl'),
+		usersPath: path.join(temporaryDirectory, 'users.json')
+	});
+	t.after(async () => {
+		if (server.listening) await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const cases = [
+		['/health', 'GET', 200],
+		['/api/auth/me', 'GET', 401],
+		['/api/admin/books', 'GET', 401],
+		['/api/privacy/data-requests', 'GET', 401],
+		['/api/payments/webhook', 'POST', 503]
+	];
+	for (const [pathname, method, expectedStatus] of cases) {
+		const response = await fetch(`${baseUrl}${pathname}`, {
+			method,
+			headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+			body: method === 'POST' ? '{}' : undefined
+		});
+		assert.equal(response.status, expectedStatus, `${method} ${pathname}`);
+	}
 });
 
 test('admin auth check does not reopen the login overlay after login succeeds', () => {
@@ -122,6 +165,8 @@ test('privacy page exposes account consent controls and uses the authenticated c
 	const html = read('privacy.html');
 	assert.match(html, /id="consentManagement"/);
 	assert.match(html, /id="consentStatus"[^>]*aria-live="polite"/);
+	assert.match(html, /id="privacyDataRequestForm"/);
+	assert.match(html, /id="privacyDataRequestStatus"[^>]*aria-live="polite"/);
 
 	const script = read('assets/privacy-consent.js');
 	const calls = [];
@@ -133,7 +178,9 @@ test('privacy page exposes account consent controls and uses the authenticated c
 				return {
 					ok: true,
 					status: 200,
-					json: async () => ({ records: [], current: {} })
+					json: async () => url.includes('/data-requests')
+						? { requests: [], request: { id: 'request-1', status: 'pending' } }
+						: { records: [], current: {} }
 				};
 			}
 		},
@@ -147,12 +194,17 @@ test('privacy page exposes account consent controls and uses the authenticated c
 	await context.window.booknestPrivacy.loadConsents();
 	await context.window.booknestPrivacy.saveConsent('marketing', true);
 	await context.window.booknestPrivacy.revokeConsent('marketing');
+	await context.window.booknestPrivacy.loadDataRequests();
+	await context.window.booknestPrivacy.createDataRequest('access');
 	assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
 		['/api/privacy/consents', 'GET'],
 		['/api/privacy/consents', 'POST'],
-		['/api/privacy/consents/marketing?policyVersion=2026-01', 'DELETE']
+		['/api/privacy/consents/marketing?policyVersion=2026-01', 'DELETE'],
+		['/api/privacy/data-requests', 'GET'],
+		['/api/privacy/data-requests', 'POST']
 	]);
 	assert.ok(calls.every(({ options }) => options.headers.Authorization === 'Bearer privacy-test-token'));
+	assert.deepEqual(JSON.parse(calls.at(-1).options.body), { type: 'access' });
 });
 
 test('service requests wait for API confirmation and surface connection failures', () => {
@@ -396,6 +448,9 @@ test('frontend API client targets the configured backend origin', () => {
 	const localConfig = { window: { location: { hostname: '127.0.0.1', port: '8000' } } };
 	vm.runInNewContext(read('assets/api-config.js'), localConfig);
 	assert.equal(localConfig.window.BOOKNEST_API_BASE_URL, '');
+	const fileConfig = { window: { location: { hostname: '', port: '', protocol: 'file:' } } };
+	vm.runInNewContext(read('assets/api-config.js'), fileConfig);
+	assert.equal(fileConfig.window.BOOKNEST_API_BASE_URL, 'http://127.0.0.1:8000');
 	const liveServerConfig = { window: { location: { hostname: 'localhost', port: '5500' } } };
 	vm.runInNewContext(read('assets/api-config.js'), liveServerConfig);
 	assert.equal(liveServerConfig.window.BOOKNEST_API_BASE_URL, 'http://localhost:8000');
@@ -694,6 +749,7 @@ test('orders are saved before confirmation and can be looked up without exposing
 		address: '12 Đường Sách, Quận 1',
 		phone: '0901234567',
 		paymentMethod: 'cod',
+		accessCode: 'a1'.repeat(32),
 		discountRate: 0.05,
 		items: [{ title: 'Nhà giả kim', quantity: 2 }]
 	};
@@ -712,7 +768,9 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(confirmation.items[0].quantity, 2);
 	assert.ok((await fsPromises.readFile(ordersPath, 'utf8')).includes(confirmation.orderId));
 
-	const lookupResponse = await fetch(`${baseUrl}/api/orders/${confirmation.orderId}`);
+	const lookupResponse = await fetch(`${baseUrl}/api/orders/${confirmation.orderId}`, {
+		headers: { 'X-Order-Access-Code': payload.accessCode }
+	});
 	assert.equal(lookupResponse.status, 200);
 	const order = await lookupResponse.json();
 	assert.equal(order.orderId, confirmation.orderId);
@@ -721,11 +779,183 @@ test('orders are saved before confirmation and can be looked up without exposing
 	assert.equal(order.discount, 0);
 	assert.equal(Object.hasOwn(order, 'phone'), false);
 	assert.equal(Object.hasOwn(order, 'address'), false);
+	assert.equal(Object.hasOwn(order, 'accessCodeHash'), false);
 
 	const privateDataResponse = await fetch(`${baseUrl}/data/orders.jsonl`);
 	assert.equal(privateDataResponse.status, 404);
 	const serverSourceResponse = await fetch(`${baseUrl}/server.js`);
 	assert.equal(serverSourceResponse.status, 404);
+});
+
+test('guest order lookups require the access code and never expose its verifier', async (t) => {
+	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-guest-order-code-'));
+	const ordersPath = path.join(temporaryDirectory, 'orders.jsonl');
+	const usersPath = path.join(temporaryDirectory, 'users.json');
+	const database = new Database({ ordersPath, usersPath });
+	const adminPassword = 'guest-order-admin-test-password';
+	const admin = await database.createUser({
+		name: 'Guest Order Admin',
+		email: 'guest-order-admin@example.com',
+		password: adminPassword,
+		role: 'admin'
+	});
+	const visitorPassword = 'guest-order-visitor-test-password';
+	const visitor = await database.createUser({
+		name: 'Guest Order Visitor',
+		email: 'guest-order-visitor@example.com',
+		password: visitorPassword,
+		role: 'user'
+	});
+	const server = createServer({
+		ordersPath,
+		usersPath,
+		database
+	});
+	const originalConsole = Object.fromEntries(
+		['log', 'warn', 'error'].map((method) => [method, console[method]])
+	);
+	const loggedMessages = [];
+	for (const method of Object.keys(originalConsole)) {
+		console[method] = (...args) => loggedMessages.push(args.join(' '));
+	}
+	t.after(async () => {
+		for (const [method, original] of Object.entries(originalConsole)) {
+			console[method] = original;
+		}
+		if (server.listening) await new Promise((resolve) => server.close(resolve));
+		await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+	});
+	await new Promise((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const baseUrl = `http://127.0.0.1:${server.address().port}`;
+	const accessCode = 'b2'.repeat(32);
+	const payload = {
+		customerName: 'Guest Order Customer',
+		address: '12 Guest Order Street, District 1',
+		phone: '0901234567',
+		paymentMethod: 'cod',
+		accessCode,
+		items: [{ title: 'Nhà giả kim', quantity: 1 }]
+	};
+	const missingCodeCreation = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ ...payload, accessCode: undefined })
+	});
+	assert.equal(missingCodeCreation.status, 400);
+	const creationResponse = await fetch(`${baseUrl}/api/orders`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Idempotency-Key': 'guest-access-code-001'
+		},
+		body: JSON.stringify(payload)
+	});
+	assert.equal(creationResponse.status, 201);
+	assert.equal(creationResponse.headers.get('cache-control'), 'no-store');
+	const creationBody = await creationResponse.json();
+	assert.equal(Object.hasOwn(creationBody, 'accessCode'), false);
+	assert.equal(Object.hasOwn(creationBody, 'accessCodeHash'), false);
+	const storedOrder = JSON.parse((await fsPromises.readFile(ordersPath, 'utf8')).trim());
+	const accessCodeHash = crypto.createHash('sha256').update(accessCode).digest('hex');
+	assert.equal(storedOrder.accessCodeHash, accessCodeHash);
+	assert.equal(Object.hasOwn(storedOrder, 'accessCode'), false);
+
+	const missingOrder = await fetch(`${baseUrl}/api/orders/11111111-1111-4111-8111-111111111111`);
+	const missingCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`);
+	const wrongCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`, {
+		headers: { 'X-Order-Access-Code': 'c3'.repeat(32) }
+	});
+	assert.equal(missingOrder.status, 404);
+	assert.equal(missingCode.status, 404);
+	assert.equal(wrongCode.status, 404);
+	const missingOrderBody = await missingOrder.json();
+	const missingCodeBody = await missingCode.json();
+	const wrongCodeBody = await wrongCode.json();
+	assert.deepEqual(missingCodeBody, wrongCodeBody);
+	assert.deepEqual(missingOrderBody, wrongCodeBody);
+
+	const detailResponse = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`, {
+		headers: { 'X-Order-Access-Code': accessCode }
+	});
+	assert.equal(detailResponse.status, 200);
+	assert.equal(detailResponse.headers.get('cache-control'), 'no-store');
+	const detail = await detailResponse.json();
+	assert.equal(Object.hasOwn(detail, 'accessCodeHash'), false);
+	assert.equal(Object.hasOwn(detail, 'accessCode'), false);
+
+	const statusWithoutCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}/status`);
+	const statusWithCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}/status`, {
+		headers: { 'X-Order-Access-Code': accessCode }
+	});
+	assert.equal(statusWithoutCode.status, 404);
+	assert.equal(statusWithCode.status, 200);
+	assert.deepEqual(await statusWithCode.json(), {
+		paymentStatus: 'cod_pending',
+		orderStatus: 'received'
+	});
+	const visitorLogin = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: visitor.email, password: visitorPassword })
+	});
+	assert.equal(visitorLogin.status, 200);
+	const visitorToken = (await visitorLogin.json()).token;
+	const authenticatedWithoutCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`, {
+		headers: { Authorization: `Bearer ${visitorToken}` }
+	});
+	const authenticatedWithCode = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`, {
+		headers: {
+			Authorization: `Bearer ${visitorToken}`,
+			'X-Order-Access-Code': accessCode
+		}
+	});
+	assert.equal(authenticatedWithoutCode.status, 404);
+	assert.equal(authenticatedWithCode.status, 200);
+
+	const legacyOrderId = '44444444-4444-4444-8444-444444444444';
+	await fsPromises.appendFile(ordersPath, `${JSON.stringify({
+		orderId: legacyOrderId,
+		status: 'received',
+		paymentStatus: 'cod_pending',
+		items: []
+	})}\n`);
+	const legacyLookup = await fetch(`${baseUrl}/api/orders/${legacyOrderId}`);
+	assert.equal(legacyLookup.status, 404);
+
+	const invalidUuid = await fetch(`${baseUrl}/api/orders/not-a-uuid`);
+	assert.equal(invalidUuid.status, 404);
+	const adminLogin = await fetch(`${baseUrl}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email: admin.email, password: adminPassword })
+	});
+	assert.equal(adminLogin.status, 200);
+	const adminToken = (await adminLogin.json()).token;
+	const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+	const adminOrdersResponse = await fetch(`${baseUrl}/api/admin/orders`, {
+		headers: adminHeaders
+	});
+	assert.equal(adminOrdersResponse.status, 200);
+	const adminOrders = await adminOrdersResponse.json();
+	assert.equal(Object.hasOwn(adminOrders.find((entry) => entry.orderId === creationBody.orderId), 'accessCodeHash'), false);
+	const adminStatsResponse = await fetch(`${baseUrl}/api/admin/stats`, {
+		headers: adminHeaders
+	});
+	assert.equal(adminStatsResponse.status, 200);
+	const adminStats = await adminStatsResponse.json();
+	assert.equal(Object.hasOwn(adminStats.recentOrders.find((entry) => entry.orderId === creationBody.orderId), 'accessCodeHash'), false);
+	const adminUpdateResponse = await fetch(`${baseUrl}/api/admin/orders/${creationBody.orderId}`, {
+		method: 'PATCH',
+		headers: { ...adminHeaders, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ status: 'processing' })
+	});
+	assert.equal(adminUpdateResponse.status, 200);
+	assert.equal(Object.hasOwn(await adminUpdateResponse.json(), 'accessCodeHash'), false);
+	assert.doesNotMatch(loggedMessages.join('\n'), new RegExp(accessCode));
+	assert.doesNotMatch(loggedMessages.join('\n'), new RegExp(accessCodeHash));
 });
 
 test('retries with the same idempotency key return one saved order and reject changed payloads', async (t) => {
@@ -745,6 +975,7 @@ test('retries with the same idempotency key return one saved order and reject ch
 		address: '20 Đường Sách, Quận 1',
 		phone: '0901234567',
 		paymentMethod: 'cod',
+		accessCode: 'd4'.repeat(32),
 		discountRate: 0,
 		items: [{ title: 'Nhà giả kim', quantity: 1 }],
 	};
@@ -768,7 +999,7 @@ test('retries with the same idempotency key return one saved order and reject ch
 	const mismatched = await fetch(`http://127.0.0.1:${server.address().port}/api/orders`, {
 		method: 'POST',
 		headers,
-		body: JSON.stringify({ ...payload, customerName: 'Another Customer' }),
+		body: JSON.stringify({ ...payload, accessCode: 'e5'.repeat(32) }),
 	});
 	assert.equal(mismatched.status, 409);
 	assert.match((await mismatched.json()).error, /Idempotency-Key.*nội dung đơn hàng khác/i);
@@ -957,6 +1188,7 @@ test('invalid books are rejected without saving an order', async (t) => {
 			address: '12 Đường Sách, Quận 1',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items: [{ title: 'Tựa sách không có', quantity: 1 }]
 		})
@@ -991,6 +1223,7 @@ test('orders exceeding stock are rejected without changing existing orders', asy
 			address: '12 Đường Sách, Quận 1',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items,
 		}),
@@ -1031,6 +1264,7 @@ test('zero and negative quantities are rejected on create and update without per
 			address: '12 Đường Sách, Quận 1',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items: [{ title: 'Nhà giả kim', quantity }],
 		}),
@@ -1097,6 +1331,7 @@ test('order product updates recalculate totals and preserve order and stock on f
 			address: '1 Đường Sách',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items: [{ title: 'Nhà giả kim', quantity }],
 		}),
@@ -1179,6 +1414,7 @@ test('order update database failures return a sanitized error and do not alter s
 			address: '1 Đường Sách',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items: [{ title: 'Nhà giả kim', quantity: 1 }],
 		}),
@@ -1226,6 +1462,7 @@ test('concurrent orders are serialized and cannot reserve the same stock twice',
 			address: '12 Đường Sách, Quận 1',
 			phone: '0901234567',
 			paymentMethod: 'cod',
+			accessCode: 'a1'.repeat(32),
 			discountRate: 0,
 			items: [{ title: 'Nhà giả kim', quantity: 8 }],
 		}),

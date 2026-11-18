@@ -9,6 +9,7 @@ const validSePayConfig = {
   SEPAY_ACCOUNT_NUMBER: "123456789012",
   SEPAY_ACCOUNT_NAME: "BookNest Test",
 };
+const validRateLimitKey = "synthetic-rate-limit-hmac-secret-for-tests";
 
 test("pre-deploy check accepts explicit CORS origins and ordered migrations", () => {
   const result = assertProductionEnvironment({
@@ -17,6 +18,7 @@ test("pre-deploy check accepts explicit CORS origins and ordered migrations", ()
     ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example,https://admin.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   });
   assert.equal(result.corsOrigins, 2);
@@ -31,6 +33,7 @@ test("pre-deploy check rejects missing SePay production settings", () => {
     ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   };
   for (const setting of Object.keys(validSePayConfig)) {
@@ -50,6 +53,7 @@ test("pre-deploy check rejects malformed SePay values without exposing credentia
       ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example",
       DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+      RATE_LIMIT_HMAC_KEY: validRateLimitKey,
       ...validSePayConfig,
       SEPAY_API_KEY: syntheticCredential,
       SEPAY_BANK_CODE: "TCB",
@@ -70,6 +74,7 @@ test("pre-deploy check rejects unsafe CORS origins without exposing values", () 
       ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example/app",
       DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+      RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     }),
     /CORS_ORIGINS/,
   );
@@ -81,6 +86,7 @@ test("pre-deploy check requires at least 12 non-space admin password characters"
     ADMIN_EMAIL: "deploy@example.com",
     CORS_ORIGINS: "https://shop.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   };
   assert.throws(
@@ -99,7 +105,58 @@ test("pre-deploy check requires a PostgreSQL DATABASE_URL in production", () => 
       ADMIN_EMAIL: "deploy@example.com",
       ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example",
+      RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     }),
     /DATABASE_URL/,
   );
+});
+
+test("pre-deploy check requires a long rate-limit HMAC key and valid trusted proxy hops", () => {
+  const productionEnvironment = {
+    NODE_ENV: "production",
+    ADMIN_EMAIL: "deploy@example.com",
+    ADMIN_PASSWORD: "password1234",
+    CORS_ORIGINS: "https://shop.example",
+    DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    RATE_LIMIT_HMAC_KEY: validRateLimitKey,
+    ...validSePayConfig,
+  };
+  assert.throws(
+    () => assertProductionEnvironment({
+      ...productionEnvironment,
+      RATE_LIMIT_HMAC_KEY: undefined,
+    }),
+    /RATE_LIMIT_HMAC_KEY/,
+  );
+  assert.throws(
+    () => assertProductionEnvironment({ ...productionEnvironment, RATE_LIMIT_HMAC_KEY: "short" }),
+    /RATE_LIMIT_HMAC_KEY/,
+  );
+  assert.throws(
+    () => assertProductionEnvironment({
+      ...productionEnvironment,
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: "-1",
+    }),
+    /RATE_LIMIT_TRUSTED_PROXY_HOPS/,
+  );
+  assert.throws(
+    () => assertProductionEnvironment({
+      ...productionEnvironment,
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: "1",
+    }),
+    /RATE_LIMIT_TRUSTED_PROXY_IPS/,
+  );
+  assert.throws(
+    () => assertProductionEnvironment({
+      ...productionEnvironment,
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: "1",
+      RATE_LIMIT_TRUSTED_PROXY_IPS: "not-an-ip",
+    }),
+    /RATE_LIMIT_TRUSTED_PROXY_IPS/,
+  );
+  assert.doesNotThrow(() => assertProductionEnvironment({
+    ...productionEnvironment,
+    RATE_LIMIT_TRUSTED_PROXY_HOPS: "1",
+    RATE_LIMIT_TRUSTED_PROXY_IPS: "10.0.0.4,2001:db8::4",
+  }));
 });

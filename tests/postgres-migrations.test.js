@@ -172,7 +172,7 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     const history = await client.query("SELECT version FROM schema_migrations ORDER BY version");
     assert.deepEqual(
       history.rows.map((row) => row.version),
-      Array.from({ length: 13 }, (_, index) => String(index + 1).padStart(3, "0")),
+      Array.from({ length: 16 }, (_, index) => String(index + 1).padStart(3, "0")),
     );
 
     const idempotencyTable = await client.query(
@@ -183,6 +183,11 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
       "SELECT to_regclass('book_inventory') AS table_name",
     );
     assert.equal(inventoryTable.rows[0].table_name, "book_inventory");
+    const accessCodeColumn = await client.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'store_orders' AND column_name = 'access_code_hash'`,
+    );
+    assert.equal(accessCodeColumn.rowCount, 1);
     const inventory = await client.query(
       `INSERT INTO book_inventory (book_title, stock, reserved)
        VALUES ('Migrated Book', 5, 0) RETURNING book_title`,

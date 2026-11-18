@@ -3,8 +3,10 @@ const crypto = require("node:crypto");
 const test = require("node:test");
 const { PostgresDatabase } = require("../backend/postgres-db");
 const { hashOrderRequest } = require("../backend/order-idempotency");
+const { runMigrations } = require("../scripts/migrate");
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+const rateLimitTestDatabaseUrl = String(process.env.POSTGRES_TEST_DATABASE_URL || "").trim();
 
 test("PostgreSQL real service supports empty initialization, CRUD, rollback, and cleanup", {
   skip: !databaseUrl,
@@ -146,5 +148,44 @@ test("PostgreSQL real service supports empty initialization, CRUD, rollback, and
       if (index >= 0) users.splice(index, 1);
     }).catch(() => {});
     await db.close();
+  }
+});
+
+test("PostgreSQL atomically shares rate-limit buckets across adapter instances", {
+  skip: !rateLimitTestDatabaseUrl,
+}, async () => {
+  const databaseName = decodeURIComponent(new URL(rateLimitTestDatabaseUrl).pathname.replace(/^\/+/, ""));
+  assert.match(
+    databaseName,
+    /test/i,
+    "POSTGRES_TEST_DATABASE_URL must target a database named for testing",
+  );
+  const bucketKey = crypto
+    .createHmac("sha256", "synthetic-postgres-rate-limit-integration-secret")
+    .update(crypto.randomUUID())
+    .digest("hex");
+  const first = new PostgresDatabase({ connectionString: rateLimitTestDatabaseUrl });
+  const second = new PostgresDatabase({ connectionString: rateLimitTestDatabaseUrl });
+  let migrationClient;
+  try {
+    migrationClient = await first.pool.connect();
+    await runMigrations(migrationClient);
+    migrationClient.release();
+    migrationClient = null;
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, index) => (
+        (index % 2 ? first : second).consumeRateLimit(bucketKey, 5, 60_000)
+      )),
+    );
+    assert.equal(results.filter((result) => result.allowed).length, 5);
+    assert.equal(results.filter((result) => !result.allowed).length, 15);
+  } finally {
+    migrationClient?.release();
+    await first.pool.query(
+      "DELETE FROM shared_rate_limits WHERE bucket_key = $1",
+      [bucketKey],
+    ).catch(() => {});
+    await Promise.all([first.close(), second.close()]);
   }
 });

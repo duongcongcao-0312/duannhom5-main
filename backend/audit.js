@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { redactLogText } = require("./monitoring");
 const auditRequestContext = new AsyncLocalStorage();
+const auditWriteQueues = new Map();
 
 function sanitizeAuditValue(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
@@ -65,8 +66,7 @@ function computeAuditEntryHash(previousHash, entry) {
     .digest("hex");
 }
 
-async function appendAuditEntry(filePath, event) {
-  const absolutePath = path.resolve(filePath);
+async function writeAuditEntry(absolutePath, event) {
   const normalizedEvent = normalizeAuditEvent(event);
   let previousHash = null;
   try {
@@ -91,6 +91,21 @@ async function appendAuditEntry(filePath, event) {
   });
   await fs.chmod(absolutePath, 0o600);
   return entry;
+}
+
+async function appendAuditEntry(filePath, event) {
+  const absolutePath = path.resolve(filePath);
+  const previousWrite = auditWriteQueues.get(absolutePath) || Promise.resolve();
+  const performWrite = () => writeAuditEntry(absolutePath, event);
+  const write = previousWrite.then(performWrite, performWrite);
+  auditWriteQueues.set(absolutePath, write);
+  try {
+    return await write;
+  } finally {
+    if (auditWriteQueues.get(absolutePath) === write) {
+      auditWriteQueues.delete(absolutePath);
+    }
+  }
 }
 
 async function readAuditEntries(filePath) {

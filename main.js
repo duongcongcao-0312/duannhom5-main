@@ -1361,7 +1361,12 @@ document.querySelector('#trackOrderForm')?.addEventListener('submit', async (eve
 	if (!form.reportValidity()) return;
 	try {
 		const orderId = String(new FormData(form).get('orderId')).trim();
-		const response = await window.booknestApiFetch(`/api/orders/${encodeURIComponent(orderId)}`);
+		const token = window.booknestAuth.getToken();
+		const headers = token ? { Authorization: `Bearer ${token}` } : {};
+		const response = await window.booknestApiFetch(
+			`/api/orders/${encodeURIComponent(orderId)}`,
+			{ headers }
+		);
 		const order = await response.json();
 		if (!response.ok) throw new Error(order.error || 'Không tìm thấy đơn hàng.');
 		if (order.paymentMethod === 'transfer') {

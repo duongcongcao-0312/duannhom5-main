@@ -5,6 +5,7 @@ const path = require("node:path");
 const { after, test } = require("node:test");
 const { createServer } = require("../server");
 const { Database } = require("../backend/db");
+const { appendAuditEntry, readAuditEntries } = require("../backend/audit");
 
 const previousAdminEnvironment = {
   ADMIN_EMAIL: process.env.ADMIN_EMAIL,
@@ -560,6 +561,21 @@ test("admin audit log records staff actions with a hash chain", async (t) => {
   assert.ok(auditPayload.entries.every((entry) => entry.action !== ""));
   const auditContents = await fsPromises.readFile(auditLogPath, "utf8");
   assert.doesNotMatch(auditContents, /audit-staff@example\.com|audit-staff-password|Nhân viên audit/);
+
+  await Promise.all(Array.from({ length: 16 }, (_, index) => appendAuditEntry(
+    auditLogPath,
+    {
+      action: "test.concurrent",
+      actorId: `actor-${index}`,
+      actorRole: "admin",
+      entityType: "test",
+    },
+  )));
+  const entriesAfterConcurrentWrites = await readAuditEntries(auditLogPath);
+  assert.equal(
+    entriesAfterConcurrentWrites.filter((entry) => entry.action === "test.concurrent").length,
+    16,
+  );
 
   const monitoringRes = await fetch(`${baseUrl}/api/admin/monitoring`, {
     headers: adminHeaders,

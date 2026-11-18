@@ -19,7 +19,11 @@ const {
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
 const { normalizeSePayConfig } = require("./backend/sepay-config");
-const { readAuditEntries, withAuditRequestContext } = require("./backend/audit");
+const {
+  appendAuditEntry,
+  readAuditEntries,
+  withAuditRequestContext,
+} = require("./backend/audit");
 const {
   MonitoringMetrics,
   normalizeRequestRoute,
@@ -1628,6 +1632,32 @@ function createServer({
     return await sessionStore.getSession(token);
   }
 
+  async function auditSensitiveRequest(request, response, requestUrl) {
+    const pathname = requestUrl.pathname;
+    const isAdminRequest = pathname.startsWith("/api/admin/");
+    const isSensitiveRequest = isAdminRequest ||
+      pathname === "/api/orders" ||
+      /^\/api\/orders\/[0-9a-f-]{36}(?:\/status)?$/i.test(pathname) ||
+      pathname === "/api/auth/customer-info" ||
+      pathname.startsWith("/api/privacy/consents") ||
+      /^\/api\/auth\/social\/(?:link|unlink)$/.test(pathname);
+    if (!isSensitiveRequest) return;
+
+    const actor = await getAuthUser(request);
+    await appendAuditEntry(auditLogPath, {
+      action: isAdminRequest ? "admin.api.request" : "sensitive.api.request",
+      actorId: actor?.userId || null,
+      actorRole: actor?.role || "anonymous",
+      entityType: isAdminRequest ? "admin_api" : "sensitive_api",
+      entityId: pathname,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: {
+        method: request.method,
+        route: pathname,
+      },
+    });
+  }
+
   async function requireCustomerPermission(request, permission) {
     return requireCustomerPermissionMiddleware(
       request,
@@ -1751,6 +1781,8 @@ function createServer({
       response.end();
       return;
     }
+
+    await auditSensitiveRequest(request, response, requestUrl);
 
     if (requestUrl.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
       sendJson(response, 200, { status: "ok", service: "booknest" }, request.method);
@@ -2399,7 +2431,8 @@ function createServer({
       const updatedUser = await db.updateCustomerInfo(
         session.userId,
         customerInfo,
-        session.email || session.name || "self-service",
+        session.userId,
+        session.role,
       );
       if (!updatedUser)
         throw new RequestError(404, "Không tìm thấy tài khoản.");
@@ -2528,6 +2561,7 @@ function createServer({
       const customer = await db.createCustomer(
         validateCustomerData(payload),
         user.userId,
+        user.role,
       );
       sendJson(response, 201, customer);
       return;
@@ -2564,6 +2598,7 @@ function createServer({
       const customer = await db.createCustomer(
         validateCustomerData(payload),
         user.userId,
+        user.role,
       );
       sendJson(response, 201, customer);
       return;
@@ -2601,6 +2636,7 @@ function createServer({
           customerId,
           validateCustomerInteractionData(payload),
           user.userId,
+          user.role,
         );
         if (!interaction) throw new RequestError(404, "Không tìm thấy khách hàng.");
         sendJson(response, 201, interaction);
@@ -2622,6 +2658,7 @@ function createServer({
           interactionId,
           validateCustomerInteractionData(payload, { partial: true }),
           user.userId,
+          user.role,
         );
         if (!interaction) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, interaction);
@@ -2630,7 +2667,12 @@ function createServer({
 
       if (interactionId && request.method === "DELETE") {
         const user = await requireCustomerPermission(request, "interaction:delete");
-        const deleted = await db.deleteCustomerInteraction(customerId, interactionId, user.userId);
+        const deleted = await db.deleteCustomerInteraction(
+          customerId,
+          interactionId,
+          user.userId,
+          user.role,
+        );
         if (!deleted) throw new RequestError(404, "Không tìm thấy tương tác.");
         sendJson(response, 200, { success: true });
         return;
@@ -2659,7 +2701,11 @@ function createServer({
 
       if (request.method === "DELETE") {
         const user = await requireCustomerPermission(request, "delete");
-        const deleted = await db.softDeleteCustomer(customerMatch[1], user.userId);
+        const deleted = await db.softDeleteCustomer(
+          customerMatch[1],
+          user.userId,
+          user.role,
+        );
         if (!deleted) {
           throw new RequestError(404, "Không tìm thấy khách hàng.");
         }
@@ -2675,8 +2721,18 @@ function createServer({
       );
       const updated =
         payload && payload.status !== undefined
-          ? await db.updateCustomerStatus(customerMatch[1], payload.status, user.userId)
-          : await db.updateCustomer(customerMatch[1], payload, user.userId);
+          ? await db.updateCustomerStatus(
+            customerMatch[1],
+            payload.status,
+            user.userId,
+            user.role,
+          )
+          : await db.updateCustomer(
+            customerMatch[1],
+            payload,
+            user.userId,
+            user.role,
+          );
 
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy khách hàng.");
@@ -2799,6 +2855,21 @@ function createServer({
       if (!order) {
         sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
         return;
+      }
+      const requester = await getAuthUser(request);
+      if (order.userId) {
+        if (!requester) {
+          throw new RequestError(
+            401,
+            "Vui lòng đăng nhập để tra cứu trạng thái đơn hàng này.",
+          );
+        }
+        if (requester.role !== ROLES.ADMIN && order.userId !== requester.userId) {
+          throw new RequestError(
+            403,
+            "Bạn không có quyền xem trạng thái đơn hàng của người dùng khác.",
+          );
+        }
       }
       sendJson(response, 200, {
         paymentStatus: order.paymentStatus,
@@ -3125,6 +3196,12 @@ function createServer({
       const safePayload = {
         ...payload,
       };
+      if (requester.role !== ROLES.ADMIN && safePayload.paymentStatus !== undefined) {
+        throw new RequestError(
+          403,
+          "Chỉ quản trị viên hoặc hệ thống thanh toán mới được xác nhận thanh toán.",
+        );
+      }
       if (safePayload.status !== undefined) {
         safePayload.status = sanitizePlainText(
           typeof safePayload.status === "string" ? safePayload.status : String(safePayload.status || ""),
@@ -3147,7 +3224,7 @@ function createServer({
         adminOrderMatch[1],
         safePayload,
         ordersPath,
-        { actorRole: requester.role },
+        { actorRole: requester.role, actorId: requester.userId },
       );
       if (!updated) {
         throw new RequestError(404, "Không tìm thấy đơn hàng.");

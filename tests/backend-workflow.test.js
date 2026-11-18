@@ -28,10 +28,12 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const ordersPath = path.join(temporaryDirectory, "orders.jsonl");
   const usersPath = path.join(temporaryDirectory, "users.json");
   const servicesPath = path.join(temporaryDirectory, "services.jsonl");
+  const auditLogPath = path.join(temporaryDirectory, "admin-audit.jsonl");
   const server = createServer({
     ordersPath,
     usersPath,
     servicesPath,
+    auditLogPath,
     corsOrigins: "https://shop.example",
   });
 
@@ -144,6 +146,24 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
     }),
   });
   assert.equal(customerInfoRes.status, 200);
+  const profileAuditEntries = (await fsPromises.readFile(auditLogPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const profileAudit = profileAuditEntries.find(
+    (entry) => entry.action === "user.customer_info.update",
+  );
+  assert.equal(profileAudit.actorId, regData.user.id);
+  assert.equal(profileAudit.actorRole, "user");
+  assert.deepEqual(profileAudit.metadata.changedFields, [
+    "customerName",
+    "phone",
+    "address",
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(profileAudit),
+    /tranminh@example\.com|0912345678|123 Phố Sách Hà Nội|Trần Minh/,
+  );
 
   // 6. Place an order
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
@@ -167,6 +187,43 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   assert.equal(orderData.discount, 4450);
   assert.equal(orderData.total, 84550);
 
+  const salesStaffRes = await fetch(`${baseUrl}/api/admin/staff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({
+      name: "Sales test",
+      email: "sales-test@example.com",
+      password: "sales-test-password-123",
+      role: "sales",
+    }),
+  });
+  assert.equal(salesStaffRes.status, 201);
+  const salesLoginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "sales-test@example.com",
+      password: "sales-test-password-123",
+    }),
+  });
+  assert.equal(salesLoginRes.status, 200);
+  const salesToken = (await salesLoginRes.json()).token;
+  const salesPaymentUpdate = await fetch(
+    `${baseUrl}/api/admin/orders/${orderData.orderId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${salesToken}`,
+      },
+      body: JSON.stringify({ paymentStatus: "paid" }),
+    },
+  );
+  assert.equal(salesPaymentUpdate.status, 403);
+
   // 7. Profile includes saved customer information
   const updatedMeRes = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { Authorization: `Bearer ${regData.token}` },
@@ -182,6 +239,17 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const adminOrders = await adminOrdersRes.json();
   assert.ok(adminOrders.length >= 1);
   assert.equal(adminOrders[0].orderId, orderData.orderId);
+  const adminAccessEntries = (await fsPromises.readFile(auditLogPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const adminOrdersAccess = adminAccessEntries.find(
+    (entry) => entry.action === "admin.api.request" &&
+      entry.entityId === "/api/admin/orders",
+  );
+  assert.equal(adminOrdersAccess.actorId, adminData.user.id);
+  assert.equal(adminOrdersAccess.actorRole, "admin");
+  assert.equal(adminOrdersAccess.metadata.method, "GET");
 
   // 9. Admin: Update order status to 'processing'
   const patchOrderRes = await fetch(
@@ -199,6 +267,15 @@ test("backend APIs - coupons, auth, orders and admin workflow", async (t) => {
   const patchedOrder = await patchOrderRes.json();
   assert.equal(patchedOrder.status, "processing");
   assert.equal(patchedOrder.paymentStatus, "paid");
+  const orderAuditEntries = (await fsPromises.readFile(auditLogPath, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const orderAudit = orderAuditEntries.find(
+    (entry) => entry.action === "order.status.update",
+  );
+  assert.equal(orderAudit.actorId, adminData.user.id);
+  assert.equal(orderAudit.actorRole, "admin");
 
   // 10. Service request API
   const serviceRes = await fetch(`${baseUrl}/api/services`, {
@@ -280,12 +357,42 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     }),
   });
   assert.equal(bobRegister.status, 201);
-  const bobToken = (await bobRegister.json()).token;
+  const bobUser = await bobRegister.json();
+  const bobToken = bobUser.token;
 
   const bobAdminAccess = await fetch(`${baseUrl}/api/admin/orders`, {
     headers: { Authorization: `Bearer ${bobToken}` },
   });
   assert.equal(bobAdminAccess.status, 403);
+  const bobRoleEscalation = await fetch(
+    `${baseUrl}/api/admin/users/${bobUser.user.id}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bobToken}`,
+      },
+      body: JSON.stringify({ role: "admin" }),
+    },
+  );
+  assert.equal(bobRoleEscalation.status, 403);
+
+  const forgedOwnerOrder = await fetch(`${baseUrl}/api/orders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aliceToken}`,
+    },
+    body: JSON.stringify({
+      customerName: "Alice",
+      address: "123 Đường Sách Hà Nội",
+      phone: "0912345678",
+      paymentMethod: "transfer",
+      items: [{ title: "Nhà giả kim", quantity: 1 }],
+      userId: bobUser.user.id,
+    }),
+  });
+  assert.equal(forgedOwnerOrder.status, 400);
 
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: "POST",
@@ -324,6 +431,21 @@ test("authenticated users cannot read or modify other users' orders", async (t) 
     headers: { Authorization: `Bearer ${bobToken}` },
   });
   assert.equal(bobView.status, 403);
+
+  const anonymousStatus = await fetch(`${baseUrl}/api/orders/${orderId}/status`);
+  assert.equal(anonymousStatus.status, 401);
+  const bobStatus = await fetch(`${baseUrl}/api/orders/${orderId}/status`, {
+    headers: { Authorization: `Bearer ${bobToken}` },
+  });
+  assert.equal(bobStatus.status, 403);
+  const aliceStatus = await fetch(`${baseUrl}/api/orders/${orderId}/status`, {
+    headers: { Authorization: `Bearer ${aliceToken}` },
+  });
+  assert.equal(aliceStatus.status, 200);
+  assert.deepEqual(await aliceStatus.json(), {
+    paymentStatus: "pending",
+    orderStatus: "received",
+  });
 
   const bobPatch = await fetch(`${baseUrl}/api/orders/${orderId}`, {
     method: "PATCH",

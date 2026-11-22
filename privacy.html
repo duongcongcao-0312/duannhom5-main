@@ -61,6 +61,15 @@
       <li>Mỗi tài khoản chỉ có một bản xuất đang còn hiệu lực tại một thời điểm để tránh tạo trùng lặp. Nhật ký chỉ ghi thời điểm tạo/tải, dung lượng và số lượng bản ghi; không ghi nội dung dữ liệu cá nhân hay mã tải xuống.</li>
     </ul>
 
+    <h2 id="privacyRequestProcedure">7. Quy trình xử lý yêu cầu dữ liệu cá nhân &amp; liên hệ</h2>
+    <ul>
+      <li><strong>Kênh tiếp nhận:</strong> gửi trực tuyến tại mục “Yêu cầu dữ liệu cá nhân” bên dưới (sau khi đăng nhập), hoặc gửi qua kênh hỗ trợ/email đầu mối bảo vệ dữ liệu do đơn vị vận hành công bố khi triển khai chính thức.</li>
+      <li><strong>Xác minh danh tính:</strong> yêu cầu gửi từ tài khoản đang đăng nhập được xác minh qua phiên đăng nhập; các thay đổi quan trọng hoặc xuất tệp dữ liệu yêu cầu xác nhận lại mật khẩu (hoặc đăng nhập lại trong 10 phút với tài khoản social). Yêu cầu gửi qua email/trực tiếp cần đối chiếu chủ sở hữu tài khoản trước khi xử lý.</li>
+      <li><strong>Phân loại &amp; thời hạn phản hồi nội bộ:</strong> yêu cầu <em>truy cập</em>, <em>cập nhật</em> và <em>xuất dữ liệu</em> có mục tiêu xử lý trong <strong>48 giờ</strong>; yêu cầu <em>xóa/ẩn danh</em> có mục tiêu xử lý trong <strong>72 giờ</strong> (đơn hàng/chứng từ giao dịch có thể được lưu giữ phục vụ đối soát theo quy định áp dụng).</li>
+      <li><strong>Phân công, chuyển cấp &amp; ghi nhận kết quả:</strong> mỗi yêu cầu được theo dõi trạng thái (<code>pending</code> → <code>processing</code> → <code>completed</code>/<code>rejected</code>), phân công người phụ trách (Hỗ trợ L1 → Phụ trách dữ liệu L2 → Quản trị pháp lý L3 khi quá hạn hoặc có vướng mắc pháp lý) và ghi nhận mã kết quả không chứa dữ liệu nhạy cảm.</li>
+      <li><strong>Bảo vệ dữ liệu khi xử lý:</strong> chỉ quản trị viên có quyền chuyên trách mới được tiếp cận hàng đợi yêu cầu; nhật ký hệ thống không lưu thông tin cá nhân tự do. Khi hoàn tất yêu cầu xóa/ẩn danh, toàn bộ phiên đăng nhập của tài khoản bị thu hồi ngay lập tức.</li>
+    </ul>
+
     <section id="consentManagement" aria-labelledby="consentHeading">
       <h2 id="consentHeading">Quản lý consent của tài khoản</h2>
       <p id="consentStatus" aria-live="polite">Đăng nhập để xem và quản lý consent.</p>
@@ -91,7 +100,8 @@
         <select id="privacyDataRequestType" name="type" required>
           <option value="access">Truy cập dữ liệu</option>
           <option value="update">Cập nhật dữ liệu</option>
-          <option value="delete">Xóa dữ liệu</option>
+          <option value="export">Xuất dữ liệu</option>
+          <option value="delete">Xóa / ẩn danh dữ liệu</option>
         </select>
         <button type="submit">Gửi yêu cầu</button>
       </form>
@@ -112,7 +122,7 @@
       <ul id="privacyExportList"></ul>
     </section>
 
-    <h2>7. Bảo vệ thông tin</h2>
+    <h2>8. Bảo vệ thông tin</h2>
     <p>Mật khẩu tài khoản được băm ở backend. Không có cam kết rằng toàn bộ dữ liệu khác được mã hóa ở cấp ứng dụng khi lưu trữ; biện pháp bảo vệ còn phụ thuộc cấu hình hosting, database, quyền truy cập, HTTPS, backup và quản lý secret của môi trường triển khai. Không coi ứng dụng mẫu là hệ thống đã được chứng nhận hoặc sẵn sàng xử lý dữ liệu nhạy cảm.</p>
 
     <p><a href="index.html">Về trang chủ</a></p>

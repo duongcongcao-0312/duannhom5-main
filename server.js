@@ -2172,7 +2172,10 @@ function createServer({
     if (await handleOrderRoute(request, response, requestUrl)) return;
     if (await handleAdminRoute(request, response, requestUrl)) return;
 
-    if (requestUrl.pathname.startsWith("/api/admin/")) {
+    if (
+      requestUrl.pathname === "/api/admin" ||
+      requestUrl.pathname.startsWith("/api/admin/")
+    ) {
       const requester = await getAuthUser(request);
       if (!requester) {
         throw new RequestError(401, "Vui lòng đăng nhập để truy cập API quản trị.");

@@ -3,7 +3,60 @@
   "info": {
     "title": "BookNest API",
     "version": "0.1.0",
-    "description": "REST API cho cửa hàng sách BookNest. Payload và lỗi được trả về dưới dạng JSON; các endpoint quản trị yêu cầu Bearer token và role phù hợp."
+    "description": "REST API cho cửa hàng sách BookNest.\n\n## Xác thực & Phân quyền\n- Phiên người dùng/quản trị dùng `Authorization: Bearer <token>` (`bearerAuth`, opaque session token).\n- Đăng nhập social dùng Firebase ID token (`firebaseIdToken`).\n- Webhook thanh toán nội bộ dùng `X-BookNest-Signature: sha256=<64-hex>` (`webhookHmacSignature`).\n- SePay webhook dùng `Authorization: Apikey <key>` (`sepayApiKey`).\n- Tra cứu đơn khách dùng `X-Order-Access-Code` (`orderAccessCode`).\n- Tải bản xuất dữ liệu cá nhân dùng `X-Export-Token` (`exportDownloadToken`).\n- Quyền từng route được khai báo bằng `x-required-permission` và `x-allowed-roles` khớp với `backend/authorization.js`.\n\n## Lỗi chuẩn\nMọi lỗi API trả JSON theo schema `Error` (`{ error, code?, maxBytes? }`) kèm header `X-Request-Id`:\n- `400`: Dữ liệu hoặc tham số không hợp lệ (`INVALID_CONTENT_LENGTH`, `INVALID_UPLOAD_FILENAME`, `INVALID_UPLOAD_CONTENT`, ...)\n- `401`: Chưa xác thực hoặc token/chữ ký không hợp lệ\n- `403`: Không đủ quyền hoặc yêu cầu xác minh bổ sung (`VERIFICATION_REQUIRED`)\n- `404`: Không tìm thấy tài nguyên\n- `405`: Phương thức HTTP không được phép (ví dụ ghi/xóa trên `/api/admin/audit`)\n- `409`: Xung đột dữ liệu hoặc Idempotency-Key (`PHONE_IN_USE`, `EXPORT_ALREADY_ACTIVE`)\n- `410`: Tài nguyên đã hết hạn (`EXPORT_EXPIRED`)\n- `413`: Request/tệp vượt giới hạn dung lượng (`PAYLOAD_TOO_LARGE`, kèm `maxBytes`)\n- `414`: URL vượt quá 2048 ký tự (`URI_TOO_LONG`)\n- `415`: `Content-Type` không được hỗ trợ (`UNSUPPORTED_MEDIA_TYPE`)\n- `428`: Yêu cầu xác thực lại hoặc `If-Match` (`REAUTH_REQUIRED`, `RECENT_LOGIN_REQUIRED`)\n- `429`: Vượt giới hạn tần suất (kèm `Retry-After`)\n- `500` / `503`: Lỗi nội bộ hoặc dịch vụ phụ thuộc chưa cấu hình/sẵn sàng\n\n## Giới hạn kích thước & tần suất\n- Request body: `auth` 16 KiB, `webhooks`/`services`/`privacy` 32 KiB, `orders`/`customers`/mặc định 64 KiB, `admin` 128 KiB, `upload` 2 MiB (+64 KiB overhead multipart). URL tối đa 2048 ký tự.\n- Rate limiting áp dụng theo IP/tài khoản cho đăng nhập, đăng ký, khôi phục mật khẩu, tạo đơn hàng và xuất dữ liệu cá nhân.\n\n## Versioning\n- Tuân theo Semantic Versioning (`MAJOR.MINOR.PATCH`), hiện hành `0.1.0` trên prefix `/api/*`.\n- Thay đổi tương thích ngược (thêm trường/endpoint mới) tăng `MINOR`; thay đổi phá vỡ hợp đồng (breaking change) sẽ phát hành version mới (`/api/v2/*`) kèm thông báo deprecation tối thiểu 30 ngày.",
+    "contact": {
+      "name": "BookNest Engineering",
+      "email": "support@booknest.example.com"
+    }
+  },
+  "x-api-versioning": {
+    "currentVersion": "0.1.0",
+    "scheme": "semver",
+    "basePrefix": "/api",
+    "backwardCompatibility": "Additive fields and new endpoints are non-breaking; breaking changes require a new major version prefix.",
+    "deprecationNoticeDays": 30
+  },
+  "x-request-body-limits": {
+    "maxUrlLength": 2048,
+    "endpointBodyLimitsBytes": {
+      "auth": 16384,
+      "webhooks": 32768,
+      "services": 32768,
+      "privacy": 32768,
+      "orders": 65536,
+      "customers": 65536,
+      "admin": 131072,
+      "upload": 2097152,
+      "default": 65536
+    },
+    "uploadPolicy": {
+      "maxFileBytes": 2097152,
+      "multipartOverheadBytes": 65536,
+      "allowedMimeTypes": ["image/jpeg", "image/png", "image/webp"]
+    }
+  },
+  "x-rate-limits": {
+    "login": { "scope": "ip+email", "windowMinutes": 15 },
+    "register": { "scope": "ip", "windowMinutes": 15 },
+    "passwordReset": { "scope": "ip+email", "windowMinutes": 15 },
+    "orderCreate": { "scope": "ip", "windowMinutes": 15 },
+    "privacyExport": { "scope": "user", "limit": 5, "windowMinutes": 15 }
+  },
+  "x-error-catalog": {
+    "400": "Dữ liệu đầu vào, query, header hoặc nội dung tệp không hợp lệ.",
+    "401": "Thiếu hoặc sai Bearer token, Firebase ID token, chữ ký webhook hoặc API key.",
+    "403": "Tài khoản không có quyền cần thiết cho thao tác.",
+    "404": "Tài nguyên không tồn tại.",
+    "405": "Phương thức HTTP không được hỗ trợ trên endpoint.",
+    "409": "Xung đột trạng thái, dữ liệu trùng lặp hoặc Idempotency-Key khác payload.",
+    "410": "Liên kết tải xuống đã hết hạn.",
+    "413": "Request body hoặc tệp tải lên vượt quá giới hạn dung lượng.",
+    "414": "Đường dẫn request vượt quá 2048 ký tự.",
+    "415": "Content-Type không được hỗ trợ.",
+    "428": "Thiếu điều kiện tiền kiểm (`If-Match`, `currentPassword` hoặc đăng nhập lại gần đây).",
+    "429": "Vượt quá giới hạn tần suất yêu cầu.",
+    "500": "Lỗi máy chủ nội bộ.",
+    "503": "Dịch vụ phụ thuộc chưa sẵn sàng hoặc chưa được cấu hình."
   },
   "servers": [
     {
@@ -12,13 +65,44 @@
     }
   ],
   "tags": [
-    { "name": "Auth" },
-    { "name": "Store" },
-    { "name": "Customers" },
-    { "name": "Admin" },
-    { "name": "Privacy" }
+    { "name": "System", "description": "Kiểm tra sức khỏe và độ sẵn sàng của dịch vụ" },
+    { "name": "Public", "description": "Chính sách công khai" },
+    { "name": "Catalog", "description": "Danh mục sách, thể loại, tác giả, nhà xuất bản và ảnh bìa" },
+    { "name": "Store", "description": "Báo giá, đơn hàng, thanh toán, mã ưu đãi và dịch vụ sách" },
+    { "name": "Auth", "description": "Đăng ký, đăng nhập, phiên, khôi phục mật khẩu và hồ sơ cá nhân" },
+    { "name": "Customers", "description": "Quản trị khách hàng (CRM) và lịch sử tương tác" },
+    { "name": "Admin", "description": "Quản trị hệ thống, tồn kho, nhân sự, giám sát và audit log" },
+    { "name": "Privacy", "description": "Quản lý consent, yêu cầu dữ liệu (DSAR) và xuất dữ liệu cá nhân" }
   ],
   "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Kiểm tra tiến trình dịch vụ đang hoạt động",
+        "responses": {
+          "200": {
+            "description": "Dịch vụ hoạt động bình thường",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthStatus" } } }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Kiểm tra độ sẵn sàng kết nối kho dữ liệu",
+        "responses": {
+          "200": {
+            "description": "Dịch vụ sẵn sàng phục vụ",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadinessStatus" } } }
+          },
+          "503": {
+            "description": "Kho dữ liệu chưa sẵn sàng",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadinessStatus" } } }
+          }
+        }
+      }
+    },
     "/api/coupons/{code}": {
       "get": {
         "tags": ["Store"],
@@ -34,58 +118,119 @@
       "get": {
         "tags": ["Public"],
         "summary": "Công khai chính sách quyền riêng tư (kiểm kê dữ liệu, cookie/analytics, bên nhận, thời hạn lưu, quyền chủ thể dữ liệu và kênh liên hệ)",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": { "200": { "description": "Tài liệu chính sách quyền riêng tư", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyDocument" } } } } }
       }
     },
     "/api/policies/terms": {
       "get": {
         "tags": ["Public"],
         "summary": "Công khai điều khoản sử dụng (tài khoản, đặt hàng, bản quyền, thay đổi điều khoản và khiếu nại)",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": { "200": { "description": "Tài liệu điều khoản sử dụng", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyDocument" } } } } }
       }
     },
     "/api/policies/shipping": {
       "get": {
         "tags": ["Public"],
         "summary": "Công khai chính sách vận chuyển (khu vực, biểu phí, thời gian dự kiến, tra cứu và xử lý sự cố)",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": { "200": { "description": "Tài liệu chính sách vận chuyển", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyDocument" } } } } }
       }
     },
     "/api/policies/return": {
       "get": {
         "tags": ["Public"],
         "summary": "Công khai chính sách đổi trả hàng (điều kiện, thời hạn 7 ngày, bằng chứng, phí vận chuyển và quy trình)",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": { "200": { "description": "Tài liệu chính sách đổi trả", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyDocument" } } } } }
       }
     },
     "/api/policies/refund": {
       "get": {
         "tags": ["Public"],
         "summary": "Công khai chính sách đổi trả và hoàn tiền (điều kiện, mức hoàn, thời hạn, phương thức và quy trình)",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "responses": { "200": { "description": "Tài liệu chính sách hoàn tiền", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyDocument" } } } } }
       }
     },
     "/api/books": {
       "get": {
-        "tags": ["Store"],
+        "tags": ["Catalog", "Store"],
         "summary": "Danh sách sách mặc định và sách do quản trị thêm, có phân trang",
         "parameters": [
-          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
-          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["title", "price", "category"], "default": "title" } },
-          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" } }
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/BookSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/PaginatedBooks" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedBooks" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/categories": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Danh sách danh mục sách đang hoạt động",
+        "responses": {
+          "200": {
+            "description": "Danh sách danh mục sách",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } }
+          }
+        }
+      }
+    },
+    "/api/authors": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Danh sách tác giả đang hoạt động",
+        "responses": {
+          "200": {
+            "description": "Danh sách tác giả",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Author" } } } }
+          }
+        }
+      }
+    },
+    "/api/publishers": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Danh sách nhà xuất bản đang hoạt động",
+        "responses": {
+          "200": {
+            "description": "Danh sách nhà xuất bản",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Publisher" } } } }
+          }
+        }
+      }
+    },
+    "/api/uploads/book-covers/{filename}": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Tải ảnh bìa sách đã được kiểm tra và lưu trữ an toàn",
+        "parameters": [
+          { "name": "filename", "in": "path", "required": true, "description": "Tên tệp dạng UUID kèm phần mở rộng .jpg, .png hoặc .webp.", "schema": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp)$" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nội dung ảnh bìa sách (gắn X-Content-Type-Options: nosniff và Content-Security-Policy: default-src 'none'; sandbox)",
+            "content": {
+              "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+              "image/png": { "schema": { "type": "string", "format": "binary" } },
+              "image/webp": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/orders/quote": {
       "post": {
         "tags": ["Store"],
         "summary": "Tính báo giá từ catalog, mã ưu đãi và tài khoản hiện tại",
+        "security": [{}, { "bearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderQuoteRequest" } } } },
         "responses": {
           "200": { "description": "Báo giá do máy chủ tính", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderQuote" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
           "415": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -95,6 +240,7 @@
         "tags": ["Store"],
         "summary": "Danh sách đơn hàng thuộc tài khoản hiện tại",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "parameters": [
           { "$ref": "#/components/parameters/Page" },
           { "$ref": "#/components/parameters/Limit" },
@@ -103,12 +249,14 @@
         ],
         "responses": {
           "200": { "$ref": "#/components/responses/PaginatedOrders" },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
       },
       "post": {
         "tags": ["Store"],
         "summary": "Tạo đơn hàng",
+        "security": [{}, { "bearerAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrder" } } } },
         "responses": {
@@ -116,7 +264,9 @@
           "200": { "description": "Trả lại đơn hàng đã tạo cho request lặp lại", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublicOrder" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "409": { "description": "Idempotency-Key đã được dùng với nội dung đơn hàng khác", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-          "415": { "$ref": "#/components/responses/Error" }
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -134,13 +284,14 @@
       "post": {
         "tags": ["Store"],
         "summary": "Nhận sự kiện thanh toán đã ký HMAC-SHA256",
-        "parameters": [{ "name": "X-BookNest-Signature", "in": "header", "required": true, "description": "HMAC-SHA256 của raw request body bằng PAYMENT_WEBHOOK_SECRET.", "schema": { "type": "string", "pattern": "^sha256=[a-f0-9]{64}$" } }],
+        "security": [{ "webhookHmacSignature": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentWebhookEvent" } } } },
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
           "415": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
         }
@@ -150,13 +301,14 @@
       "post": {
         "tags": ["Store"],
         "summary": "Nhận giao dịch đến từ SePay",
-        "parameters": [{ "name": "Authorization", "in": "header", "required": true, "description": "SePay API key; không dùng Bearer token.", "schema": { "type": "string", "pattern": "^Apikey .+$" } }],
+        "security": [{ "sepayApiKey": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SepayWebhookEvent" } } } },
         "responses": {
           "200": { "description": "Đã nhận sự kiện hoặc bỏ qua do không khớp giao dịch", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
           "415": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
         }
@@ -166,6 +318,7 @@
       "get": {
         "tags": ["Store"],
         "summary": "Tra cứu trạng thái đơn hàng; khách cần mã truy cập, chủ tài khoản cần đăng nhập",
+        "security": [{ "bearerAuth": [] }, { "orderAccessCode": [] }],
         "parameters": [
           { "$ref": "#/components/parameters/Id" },
           { "$ref": "#/components/parameters/OrderAccessCode" }
@@ -180,6 +333,7 @@
       "get": {
         "tags": ["Store"],
         "summary": "Tra cứu đơn hàng; khách cần mã truy cập, chủ tài khoản cần đăng nhập",
+        "security": [{ "bearerAuth": [] }, { "orderAccessCode": [] }],
         "parameters": [
           { "$ref": "#/components/parameters/Id" },
           { "$ref": "#/components/parameters/OrderAccessCode" }
@@ -193,6 +347,7 @@
         "tags": ["Store"],
         "summary": "Cập nhật trạng thái hoặc sản phẩm của đơn hàng thuộc tài khoản",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "parameters": [{ "$ref": "#/components/parameters/Id" }],
         "requestBody": {
           "required": true,
@@ -204,7 +359,9 @@
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -212,8 +369,14 @@
       "post": {
         "tags": ["Store"],
         "summary": "Gửi yêu cầu thuê, thu mua hoặc trao đổi sách",
+        "security": [{}, { "bearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ServiceRequest" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/password-reset": {
@@ -224,6 +387,8 @@
         "responses": {
           "200": { "description": "Phản hồi chung để không tiết lộ email có đăng ký hay không", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } },
           "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
           "429": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
         }
@@ -236,7 +401,9 @@
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordResetConfirm" } } } },
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
-          "400": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -245,7 +412,14 @@
         "tags": ["Auth"],
         "summary": "Đăng ký tài khoản user",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Register" } } } },
-        "responses": { "201": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } }, "400": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/login": {
@@ -253,16 +427,30 @@
         "tags": ["Auth"],
         "summary": "Đăng nhập",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Login" } } } },
-        "responses": { "200": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } }, "401": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "description": "Tài khoản và Bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthResult" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/social": {
       "post": {
         "tags": ["Auth"],
         "summary": "Đăng nhập social bằng Firebase ID token đã xác minh",
-        "parameters": [{ "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string", "pattern": "^Bearer .+$" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email", "description": "Tương thích client; backend dùng email trong token đã xác minh." } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "description": "Email đã thuộc tài khoản khác; không tự động liên kết.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } } }
+        "security": [{ "firebaseIdToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email", "example": "reader@example.com", "description": "Tương thích client; backend dùng email trong token đã xác minh." } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "description": "Email đã thuộc tài khoản khác; không tự động liên kết.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/social/link": {
@@ -270,8 +458,16 @@
         "tags": ["Auth"],
         "summary": "Liên kết social provider sau khi xác thực lại bằng mật khẩu",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SocialAccountLink" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/social/unlink": {
@@ -279,8 +475,16 @@
         "tags": ["Auth"],
         "summary": "Tách social provider sau khi xác thực lại bằng mật khẩu",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SocialAccountUnlink" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/me": {
@@ -288,7 +492,11 @@
         "tags": ["Auth"],
         "summary": "Lấy tài khoản hiện tại",
         "security": [{ "bearerAuth": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/customer-info": {
@@ -297,8 +505,36 @@
         "summary": "Cập nhật thông tin liên hệ của tài khoản hiện tại",
         "description": "Chỉ cập nhật tài khoản của phiên hiện tại. Trường tự cập nhật: customerName, name, phone, address. Thay số điện thoại đã lưu cần currentPassword (428 REAUTH_REQUIRED) hoặc đăng nhập lại gần đây với tài khoản social (428 RECENT_LOGIN_REQUIRED). Email, mật khẩu, thông tin sinh viên, vai trò bị từ chối với 403 VERIFICATION_REQUIRED. Số điện thoại trùng tài khoản khác trả 409 PHONE_IN_USE. Gửi lại cùng giá trị trả changedFields rỗng. Đơn hàng đã tạo không bị thay đổi (ordersUpdated = 0).",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "customerName": { "type": "string", "maxLength": 120 }, "name": { "type": "string", "minLength": 2, "maxLength": 120 }, "phone": { "type": "string", "pattern": "^[0-9 +()-]{8,20}$" }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "currentPassword": { "type": "string" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "428": { "$ref": "#/components/responses/Error" } }
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "customerName": { "type": "string", "maxLength": 120, "example": "Nguyễn Văn An" },
+                  "name": { "type": "string", "minLength": 2, "maxLength": 120, "example": "Nguyễn Văn An" },
+                  "phone": { "type": "string", "pattern": "^[0-9 +()-]{8,20}$", "example": "0900000001" },
+                  "address": { "type": "string", "minLength": 10, "maxLength": 300, "example": "12 Đường Sách, Quận 1, TP.HCM" },
+                  "currentPassword": { "type": "string", "description": "Chỉ cần khi thay đổi số điện thoại đã lưu." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
+          "428": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/auth/logout": {
@@ -306,7 +542,9 @@
         "tags": ["Auth"],
         "summary": "Huỷ phiên hiện tại",
         "security": [{ "bearerAuth": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
         }
       }
     },
@@ -315,22 +553,38 @@
         "tags": ["Customers"],
         "summary": "Tìm kiếm, lọc và phân trang khách hàng",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:view",
+        "x-allowed-roles": ["admin", "sales", "support"],
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" } },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
-          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/CustomerSort" },
           { "$ref": "#/components/parameters/OrderDirection" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
         "tags": ["Customers"],
         "summary": "Tạo hồ sơ khách hàng (Admin, Sales)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:create",
+        "x-allowed-roles": ["admin", "sales"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/customers": {
@@ -338,22 +592,38 @@
         "tags": ["Customers"],
         "summary": "Tìm kiếm, lọc và phân trang khách hàng (admin alias)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:view",
+        "x-allowed-roles": ["admin", "sales", "support"],
         "parameters": [
           { "name": "search", "in": "query", "schema": { "type": "string" } },
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["new", "lead", "customer"] } },
-          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/CustomerSort" },
           { "$ref": "#/components/parameters/OrderDirection" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
         "tags": ["Customers"],
         "summary": "Tạo hồ sơ khách hàng (admin alias)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:create",
+        "x-allowed-roles": ["admin", "sales"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/customers/{id}/interactions": {
@@ -362,18 +632,35 @@
         "tags": ["Customers"],
         "summary": "Xem lịch sử tương tác có phân trang",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:interaction:view",
+        "x-allowed-roles": ["admin", "sales", "support"],
         "parameters": [
-          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
         "tags": ["Customers"],
         "summary": "Ghi nhận tương tác với khách hàng",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:interaction:create",
+        "x-allowed-roles": ["admin", "sales", "support"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInteractionInput" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/customers/{id}/interactions/{interactionId}": {
@@ -385,21 +672,44 @@
         "tags": ["Customers"],
         "summary": "Cập nhật tương tác",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:interaction:update",
+        "x-allowed-roles": ["admin", "sales"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInteractionUpdate" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       },
       "put": {
         "tags": ["Customers"],
         "summary": "Cập nhật tương tác",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:interaction:update",
+        "x-allowed-roles": ["admin", "sales"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInteractionUpdate" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       },
       "delete": {
         "tags": ["Customers"],
         "summary": "Xoá tương tác (chỉ Admin)",
         "security": [{ "bearerAuth": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "x-required-permission": "customer:interaction:delete",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/customers/{id}/interactions": {
@@ -410,31 +720,151 @@
     },
     "/api/customers/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
-      "get": { "tags": ["Customers"], "summary": "Xem hồ sơ khách hàng", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } },
-      "put": { "tags": ["Customers"], "summary": "Cập nhật hồ sơ khách hàng", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "tags": ["Customers"], "summary": "Chuyển trạng thái khách hàng", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "tags": ["Customers"], "summary": "Xoá mềm hồ sơ khách hàng (Admin)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Xem hồ sơ khách hàng",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:view",
+        "x-allowed-roles": ["admin", "sales", "support"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Customers"],
+        "summary": "Cập nhật hồ sơ khách hàng",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:update",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Customers"],
+        "summary": "Chuyển trạng thái khách hàng",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:update",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Customers"],
+        "summary": "Xoá mềm hồ sơ khách hàng (Admin)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:delete",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
     },
     "/api/admin/customers/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
-      "get": { "tags": ["Customers"], "summary": "Xem hồ sơ khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } },
-      "put": { "tags": ["Customers"], "summary": "Cập nhật hồ sơ khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
-      "patch": { "tags": ["Customers"], "summary": "Chuyển trạng thái khách hàng (admin alias)", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } },
-      "delete": { "tags": ["Customers"], "summary": "Xoá mềm hồ sơ khách hàng (Admin alias)", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Xem hồ sơ khách hàng (admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:view",
+        "x-allowed-roles": ["admin", "sales", "support"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Customers"],
+        "summary": "Cập nhật hồ sơ khách hàng (admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:update",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Customers"],
+        "summary": "Chuyển trạng thái khách hàng (admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:update",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["new", "lead", "customer"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Customers"],
+        "summary": "Xoá mềm hồ sơ khách hàng (Admin alias)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "customer:delete",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
     },
     "/api/admin/staff": {
       "get": {
         "tags": ["Admin"],
         "summary": "Danh sách nhân viên và quyền theo vai trò",
         "security": [{ "bearerAuth": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "x-required-permission": "read:staff",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
         "tags": ["Admin"],
         "summary": "Tạo nhân viên vai trò sales hoặc support",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:staff",
+        "x-allowed-roles": ["admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StaffCreate" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/staff/{id}": {
@@ -443,8 +873,16 @@
         "tags": ["Admin"],
         "summary": "Cập nhật nhân viên và thu hồi phiên hiện tại",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:staff",
+        "x-allowed-roles": ["admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StaffUpdate" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/audit": {
@@ -452,6 +890,8 @@
         "tags": ["Admin"],
         "summary": "Đọc nhật ký kiểm toán quản trị (chỉ đọc, yêu cầu quyền read:audit)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:audit",
+        "x-allowed-roles": ["admin"],
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
           { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "default": 0 } },
@@ -460,7 +900,12 @@
           { "name": "actorId", "in": "query", "schema": { "type": "string" } },
           { "name": "entityType", "in": "query", "schema": { "type": "string" } }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "405": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "description": "Danh sách bản ghi audit đã xác minh chuỗi băm SHA-256", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuditLogResponse" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "405": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/uploads/book-cover": {
@@ -468,8 +913,30 @@
         "tags": ["Admin"],
         "summary": "Tải lên ảnh bìa sách an toàn (JPEG, PNG, WebP, tối đa 2 MiB, yêu cầu quyền write:books)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "parameters": [
+          { "name": "X-File-Name", "in": "header", "required": false, "description": "Tên tệp gốc tùy chọn khi gửi trực tiếp nhị phân; chỉ dùng để kiểm tra an toàn, không dùng làm tên lưu trữ.", "schema": { "type": "string", "maxLength": 120, "example": "book-cover.png" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary", "description": "Ảnh JPEG, PNG hoặc WebP tối đa 2 MiB." }
+                }
+              }
+            },
+            "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+            "image/png": { "schema": { "type": "string", "format": "binary" } },
+            "image/webp": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
         "responses": {
-          "201": { "$ref": "#/components/responses/Ok" },
+          "201": { "description": "Đã lưu ảnh bìa an toàn", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadCoverResult" } } } },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
@@ -478,48 +945,487 @@
         }
       }
     },
-    "/api/uploads/book-covers/{filename}": {
+    "/api/admin/stats": {
       "get": {
-        "tags": ["Catalog"],
-        "summary": "Tải ảnh bìa sách đã được kiểm tra và lưu trữ an toàn",
+        "tags": ["Admin"],
+        "summary": "Thống kê quản trị",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:dashboard",
+        "x-allowed-roles": ["admin", "sales"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/monitoring": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Giám sát vận hành, trạng thái cơ sở dữ liệu, chỉ số request và sao lưu",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:dashboard",
+        "x-allowed-roles": ["admin", "sales"],
+        "responses": {
+          "200": { "description": "Tổng quan giám sát hệ thống", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MonitoringSummary" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/orders": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Danh sách đơn hàng đầy đủ, có phân trang",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:orders",
+        "x-allowed-roles": ["admin", "sales"],
         "parameters": [
-          { "name": "filename", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/OrderSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
         ],
         "responses": {
-          "200": { "description": "Nội dung ảnh bìa sách" },
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/orders/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật trạng thái đơn/thanh toán",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:orders",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"], "description": "Chuyển tuần tự received -> processing -> shipping -> completed; có thể huỷ trước khi hoàn tất." }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật trạng thái đơn/thanh toán (alias PUT)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:orders",
+        "x-allowed-roles": ["admin", "sales"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"] }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" }
         }
       }
     },
-    "/api/admin/stats": { "get": { "tags": ["Admin"], "summary": "Thống kê quản trị", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/OrderSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
-    "/api/admin/orders/{id}": {
-      "parameters": [{ "$ref": "#/components/parameters/Id" }],
-      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái đơn/thanh toán", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"], "description": "Chuyển tuần tự received -> processing -> shipping -> completed; có thể huỷ trước khi hoàn tất." }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
-    },
     "/api/admin/books": {
-      "get": { "tags": ["Admin"], "summary": "Danh sách sách quản trị, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/BookSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } },
-      "post": { "tags": ["Admin"], "summary": "Thêm sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "201": { "$ref": "#/components/responses/Created" }, "403": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Danh sách sách quản trị, có phân trang",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:books",
+        "x-allowed-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/BookSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Thêm sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
+      }
     },
     "/api/admin/books/{id}": {
       "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-      "put": { "tags": ["Admin"], "summary": "Cập nhật sách", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
-      "delete": { "tags": ["Admin"], "summary": "Xoá sách", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "put": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật một phần thông tin sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Book" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Xoá sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
     },
-    "/api/admin/services": { "get": { "tags": ["Admin"], "summary": "Danh sách yêu cầu dịch vụ, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/ServiceSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
+    "/api/admin/categories": {
+      "get": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Danh sách danh mục sách quản trị",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "description": "Danh sách danh mục", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Tạo danh mục sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CategoryInput" } } } },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/categories/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "put": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật danh mục sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CategoryInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật một phần danh mục sách",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CategoryInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Xoá danh mục sách (từ chối nếu còn sách liên kết)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/authors": {
+      "get": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Danh sách tác giả quản trị",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "description": "Danh sách tác giả", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Author" } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Tạo tác giả",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthorInput" } } } },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/authors/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "put": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật tác giả",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthorInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật một phần thông tin tác giả",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthorInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Xoá tác giả (từ chối nếu còn sách liên kết)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/publishers": {
+      "get": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Danh sách nhà xuất bản quản trị",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "description": "Danh sách nhà xuất bản", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Publisher" } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Tạo nhà xuất bản",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublisherInput" } } } },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/publishers/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/Slug" }],
+      "put": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật nhà xuất bản",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublisherInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Cập nhật một phần nhà xuất bản",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublisherInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin", "Catalog"],
+        "summary": "Xoá nhà xuất bản (từ chối nếu còn sách liên kết)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:books",
+        "x-allowed-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/admin/services": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Danh sách yêu cầu dịch vụ, có phân trang",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:services",
+        "x-allowed-roles": ["admin", "sales", "support"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/ServiceSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/admin/services/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
-      "patch": { "tags": ["Admin"], "summary": "Cập nhật trạng thái yêu cầu dịch vụ", "security": [{ "bearerAuth": [] }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" } } }
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật trạng thái yêu cầu dịch vụ",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:services",
+        "x-allowed-roles": ["admin", "sales", "support"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Admin"],
+        "summary": "Cập nhật trạng thái yêu cầu dịch vụ (alias PUT)",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:services",
+        "x-allowed-roles": ["admin", "sales", "support"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] } } } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
     },
-    "/api/admin/users": { "get": { "tags": ["Admin"], "summary": "Danh sách thành viên an toàn, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/UserSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
+    "/api/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Danh sách thành viên an toàn, có phân trang",
+        "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:users",
+        "x-allowed-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/UserSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/admin/users/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "patch": {
         "tags": ["Admin"],
         "summary": "Cập nhật trạng thái xác minh sinh viên",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:users",
+        "x-allowed-roles": ["admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["studentVerificationStatus"], "properties": { "studentVerificationStatus": { "type": "string", "enum": ["pending", "verified", "revoked"] } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/coupons": {
@@ -527,15 +1433,34 @@
         "tags": ["Admin"],
         "summary": "Danh sách mã giảm giá, có phân trang",
         "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/CouponSort" }, { "$ref": "#/components/parameters/OrderDirection" }],
-        "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } }
+        "x-required-permission": "read:coupons",
+        "x-allowed-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/CouponSort" },
+          { "$ref": "#/components/parameters/OrderDirection" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/PaginatedOk" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
         "tags": ["Admin"],
         "summary": "Tạo mã giảm giá",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:coupons",
+        "x-allowed-roles": ["admin"],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminCouponCreate" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/admin/coupons/{code}": {
@@ -544,30 +1469,55 @@
         "tags": ["Admin"],
         "summary": "Thay thế cấu hình mã giảm giá",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:coupons",
+        "x-allowed-roles": ["admin"],
         "parameters": [{ "name": "If-Match", "in": "header", "required": true, "description": "Giá trị updatedAt hiện tại để ngăn ghi đè bản cập nhật mới hơn.", "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminCouponUpdate" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "428": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "428": { "$ref": "#/components/responses/Error" }
+        }
       },
       "patch": {
         "tags": ["Admin"],
         "summary": "Bật hoặc tắt mã giảm giá",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:coupons",
+        "x-allowed-roles": ["admin"],
         "parameters": [{ "name": "If-Match", "in": "header", "required": true, "description": "Giá trị updatedAt hiện tại để ngăn ghi đè bản cập nhật mới hơn.", "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["enabled"], "properties": { "enabled": { "type": "boolean" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "428": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "428": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/privacy/consents": {
       "get": {
-        "tags": ["Auth"],
+        "tags": ["Privacy"],
         "summary": "Xem lịch sử consent của tài khoản",
         "security": [{ "bearerAuth": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
       },
       "post": {
-        "tags": ["Auth"],
+        "tags": ["Privacy"],
         "summary": "Ghi nhận consent cho chính sách dữ liệu",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "requestBody": {
           "required": true,
           "content": {
@@ -578,25 +1528,39 @@
                 "required": ["purpose", "policyVersion", "consent", "retentionDays"],
                 "properties": {
                   "purpose": { "type": "string", "enum": ["order", "service", "marketing"] },
-                  "policyVersion": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$" },
-                  "consent": { "type": "boolean" },
+                  "policyVersion": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$", "example": "2026-01" },
+                  "consent": { "type": "boolean", "example": true },
                   "dataSource": { "type": "string", "enum": ["web", "admin", "api"], "default": "web" },
-                  "retentionDays": { "type": "integer", "minimum": 0, "maximum": 3650, "description": "Chỉ consent có giá trị > 0 đủ điều kiện được công cụ vận hành xóa sau khi hết hạn; chế độ xem trước là mặc định." }
+                  "retentionDays": { "type": "integer", "minimum": 0, "maximum": 3650, "example": 365, "description": "Chỉ consent có giá trị > 0 đủ điều kiện được công cụ vận hành xóa sau khi hết hạn; chế độ xem trước là mặc định." }
                 }
               }
             }
           }
         },
-        "responses": { "201": { "$ref": "#/components/responses/Created" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/privacy/consents/{purpose}": {
       "delete": {
-        "tags": ["Auth"],
+        "tags": ["Privacy"],
         "summary": "Rút lại consent cho một mục đích",
         "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "name": "purpose", "in": "path", "required": true, "schema": { "type": "string", "enum": ["order", "service", "marketing"] } }, { "name": "policyVersion", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$" } }],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "parameters": [
+          { "name": "purpose", "in": "path", "required": true, "schema": { "type": "string", "enum": ["order", "service", "marketing"] } },
+          { "name": "policyVersion", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,20}$" } }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/api/privacy/data-requests": {
@@ -604,6 +1568,7 @@
         "tags": ["Privacy"],
         "summary": "Xem yêu cầu dữ liệu của tài khoản hiện tại",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "401": { "$ref": "#/components/responses/Error" }
@@ -613,6 +1578,7 @@
         "tags": ["Privacy"],
         "summary": "Tạo yêu cầu truy cập, cập nhật hoặc xóa dữ liệu",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "requestBody": {
           "required": true,
           "content": {
@@ -625,7 +1591,9 @@
           "201": { "$ref": "#/components/responses/Created" },
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -634,6 +1602,7 @@
         "tags": ["Privacy"],
         "summary": "Xem danh sách lịch sử bản xuất dữ liệu cá nhân của tài khoản hiện tại",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "401": { "$ref": "#/components/responses/Error" }
@@ -644,6 +1613,7 @@
         "summary": "Tạo bản xuất dữ liệu cá nhân (JSON) có thời hạn tải xuống",
         "description": "Yêu cầu xác minh danh tính bằng currentPassword (428 REAUTH_REQUIRED) hoặc đăng nhập lại trong 10 phút với tài khoản chỉ dùng social (428 RECENT_LOGIN_REQUIRED). Chặn tạo trùng khi đã có bản xuất còn hiệu lực (409 EXPORT_ALREADY_ACTIVE). Chỉ xuất dữ liệu thuộc quyền sở hữu của tài khoản và loại trừ thông tin nhạy cảm/bên thứ ba.",
         "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "requestBody": {
           "required": true,
           "content": {
@@ -652,8 +1622,8 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "format": { "type": "string", "enum": ["json"] },
-                  "currentPassword": { "type": "string" }
+                  "format": { "type": "string", "enum": ["json"], "example": "json" },
+                  "currentPassword": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." }
                 }
               }
             }
@@ -664,6 +1634,8 @@
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" },
           "428": { "$ref": "#/components/responses/Error" },
           "429": { "$ref": "#/components/responses/Error" }
         }
@@ -674,13 +1646,13 @@
         "tags": ["Privacy"],
         "summary": "Tải xuống tệp xuất dữ liệu cá nhân",
         "description": "Yêu cầu phiên đăng nhập của đúng chủ sở hữu và header X-Export-Token. Trả 410 EXPORT_EXPIRED khi liên kết hết hạn.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [{ "bearerAuth": [], "exportDownloadToken": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-          { "name": "X-Export-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
         ],
         "responses": {
-          "200": { "description": "Tệp JSON dữ liệu cá nhân (attachment)" },
+          "200": { "description": "Tệp JSON dữ liệu cá nhân (attachment)", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
@@ -693,6 +1665,8 @@
         "tags": ["Admin", "Privacy"],
         "summary": "Quản trị xem danh sách yêu cầu dữ liệu (quyền read:privacy)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "read:privacy",
+        "x-allowed-roles": ["admin"],
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "401": { "$ref": "#/components/responses/Error" },
@@ -705,6 +1679,8 @@
         "tags": ["Admin", "Privacy"],
         "summary": "Cập nhật trạng thái yêu cầu (quyền write:privacy)",
         "security": [{ "bearerAuth": [] }],
+        "x-required-permission": "write:privacy",
+        "x-allowed-roles": ["admin"],
         "parameters": [{ "$ref": "#/components/parameters/Id" }],
         "requestBody": {
           "required": true,
@@ -727,12 +1703,48 @@
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "opaque token" }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque session token",
+        "description": "Token phiên do `/api/auth/login`, `/api/auth/register` hoặc `/api/auth/social` cấp."
+      },
+      "firebaseIdToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Firebase ID token đã xác minh dùng cho `/api/auth/social`."
+      },
+      "webhookHmacSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-BookNest-Signature",
+        "description": "Chữ ký HMAC-SHA256 của raw request body dạng `sha256=<64-hex>`."
+      },
+      "sepayApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Khóa xác thực SePay dạng `Apikey <key>`."
+      },
+      "orderAccessCode": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Order-Access-Code",
+        "description": "Mã 256-bit (64 ký tự hex) dùng để tra cứu đơn hàng khách không đăng nhập."
+      },
+      "exportDownloadToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Export-Token",
+        "description": "Token tải xuống tạm thời cho bản xuất dữ liệu cá nhân."
+      }
     },
     "parameters": {
-      "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
-      "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string" } },
-      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\\\w\\\\-:.]+$" } },
+      "Id": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid", "example": "00000000-0000-4000-8000-000000000001" } },
+      "Slug": { "name": "slug", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-z0-9-]+$", "example": "van-hoc" } },
+      "CouponCode": { "name": "code", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[A-Za-z0-9_-]{3,32}$", "example": "BOOKNEST10" } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "description": "Khóa ổn định để retry không tạo đơn trùng", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\w\\-:.]+$", "example": "order-retry-2026-0001" } },
       "OrderAccessCode": { "name": "X-Order-Access-Code", "in": "header", "required": false, "description": "Bắt buộc với đơn khách. Mã 256-bit chỉ hiển thị sau khi tạo đơn; đơn cũ không có verifier không tra cứu công khai được. Chủ tài khoản và admin dùng quyền hiện có.", "schema": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" } },
       "Page": { "name": "page", "in": "query", "description": "Trang từ 1 đến 10000.", "schema": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1 } },
       "Limit": { "name": "limit", "in": "query", "description": "Số bản ghi, tối đa 100.", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
@@ -750,39 +1762,504 @@
       "PaginatedBooks": { "description": "Danh sách sách; metadata phân trang trong X-Pagination.", "headers": { "X-Pagination": { "description": "JSON gồm page, limit, total, totalPages, sort và order.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Book" } } } } },
       "PaginatedOrders": { "description": "Danh sách đơn hàng; metadata phân trang trong X-Pagination.", "headers": { "X-Pagination": { "description": "JSON gồm page, limit, total, totalPages, sort và order.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PublicOrder" } } } } },
       "Created": { "description": "Đã tạo dữ liệu", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
-      "Error": { "description": "Yêu cầu thất bại", "headers": { "X-Request-Id": { "description": "ID yêu cầu để đối chiếu log.", "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+      "Error": { "description": "Yêu cầu thất bại", "headers": { "X-Request-Id": { "description": "ID yêu cầu để đối chiếu log.", "schema": { "type": "string", "format": "uuid" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
     },
     "schemas": {
-      "PaymentConfig": { "type": "object", "required": ["bankCode", "bankName", "accountNumber", "accountName"], "properties": { "bankCode": { "type": "string" }, "bankName": { "type": "string" }, "accountNumber": { "type": "string", "pattern": "^\\d{6,20}$" }, "accountName": { "type": "string" } } },
-      "SepayWebhookEvent": { "type": "object", "required": ["id", "transferAmount", "transferType"], "properties": { "id": { "type": ["string", "integer"], "description": "ID giao dịch SePay." }, "transferAmount": { "type": ["integer", "string"], "description": "Số tiền chuyển; phải biểu diễn số nguyên dương." }, "transferType": { "type": "string", "description": "Chỉ giao dịch `in` được xét." }, "accountNumber": { "type": "string" }, "content": { "type": "string" }, "description": { "type": "string" }, "code": { "type": "string" }, "transactionDate": { "type": "string" } } },
-      "OrderStatus": { "type": "object", "required": ["paymentStatus", "orderStatus"], "properties": { "paymentStatus": { "type": "string" }, "orderStatus": { "type": "string" } } },
-      "StaffCreate": { "type": "object", "additionalProperties": false, "required": ["name", "email", "password", "role"], "properties": { "name": { "type": "string", "maxLength": 120 }, "email": { "type": "string", "format": "email", "maxLength": 254 }, "password": { "type": "string", "minLength": 12, "maxLength": 128 }, "role": { "type": "string", "enum": ["sales", "support"] } } },
-      "StaffUpdate": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "name": { "type": "string", "maxLength": 120 }, "email": { "type": "string", "format": "email", "maxLength": 254 }, "role": { "type": "string", "enum": ["sales", "support"] }, "isActive": { "type": "boolean" } } },
-      "AdminCouponCreate": { "type": "object", "additionalProperties": false, "required": ["code", "label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"], "properties": { "code": { "type": "string", "minLength": 3, "maxLength": 32 }, "label": { "type": "string" }, "rate": { "type": "number", "minimum": 0, "maximum": 0.3 }, "minSubtotal": { "type": "number", "minimum": 0 }, "maxUses": { "type": "integer", "minimum": 0 }, "startsAt": { "type": "string" }, "expiresAt": { "type": "string" }, "enabled": { "type": "boolean" } } },
-      "AdminCouponUpdate": { "type": "object", "additionalProperties": false, "required": ["label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"], "properties": { "label": { "type": "string" }, "rate": { "type": "number", "minimum": 0, "maximum": 0.3 }, "minSubtotal": { "type": "number", "minimum": 0 }, "maxUses": { "type": "integer", "minimum": 0 }, "startsAt": { "type": "string" }, "expiresAt": { "type": "string" }, "enabled": { "type": "boolean" } } },
-      "PrivacyDataRequestCreate": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "type": "string", "enum": ["access", "update", "export", "delete"] }, "channel": { "type": "string", "enum": ["web_portal", "email_support", "in_person"] } } },
-      "PrivacyDataRequestUpdate": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "status": { "type": "string", "enum": ["pending", "processing", "completed", "rejected"] }, "assignedTo": { "type": "string", "maxLength": 120 }, "escalationLevel": { "type": "string", "enum": ["l1_support", "l2_privacy_lead", "l3_legal_admin"] }, "resolutionCode": { "type": "string", "enum": ["fulfilled", "partially_fulfilled", "anonymized", "rejected_unverified", "rejected_legal_retention", "rejected_duplicate", "withdrawn"] }, "executeAnonymization": { "type": "boolean" } } },
-      "Error": { "type": "object", "properties": { "error": { "type": "string" } }, "required": ["error"] },
-      "Coupon": { "type": "object", "properties": { "rate": { "type": "number" }, "label": { "type": "string" } }, "required": ["rate", "label"] },
-      "Book": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "author": { "type": "string" }, "price": { "type": "number" }, "category": { "type": "string" }, "image": { "type": "string" }, "stock": { "type": "integer" } }, "required": ["title", "author", "price"] },
-      "Register": { "type": "object", "required": ["name", "email", "password"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "password": { "type": "string", "minLength": 12, "maxLength": 128 }, "studentType": { "type": "string" }, "studentId": { "type": "string" } } },
-      "Login": { "type": "object", "required": ["email", "password"], "properties": { "email": { "type": "string", "format": "email" }, "password": { "type": "string" } } },
-      "PasswordResetRequest": { "type": "object", "required": ["email"], "properties": { "email": { "type": "string", "format": "email" } } },
-      "PasswordResetConfirm": { "type": "object", "required": ["token", "password"], "properties": { "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "password": { "type": "string", "minLength": 12, "maxLength": 128 } } },
-      "Message": { "type": "object", "required": ["message"], "properties": { "message": { "type": "string" } } },
-      "AuthResult": { "type": "object", "required": ["token", "user"], "properties": { "token": { "type": "string" }, "user": { "type": "object", "additionalProperties": true } } },
-      "SocialAccountLink": { "type": "object", "additionalProperties": false, "required": ["idToken", "password"], "properties": { "idToken": { "type": "string", "description": "Firebase ID token của tài khoản social đã xác minh." }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
-      "SocialAccountUnlink": { "type": "object", "additionalProperties": false, "required": ["provider", "password"], "properties": { "provider": { "type": "string", "enum": ["google.com", "facebook.com"] }, "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." } } },
-      "CreateOrder": { "type": "object", "additionalProperties": false, "required": ["customerName", "address", "phone", "paymentMethod", "items"], "properties": { "customerName": { "type": "string", "minLength": 2, "maxLength": 120 }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$" }, "paymentMethod": { "type": "string", "enum": ["transfer", "cod"] }, "accessCode": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "Bắt buộc với đơn khách; 256-bit hex do trình duyệt tạo bằng Web Crypto. Máy chủ chỉ lưu hash và không trả lại mã." }, "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." }, "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." }, "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." } } } } } },
-      "PaymentWebhookEvent": { "type": "object", "additionalProperties": false, "required": ["id", "orderId", "status", "amount", "currency", "occurredAt"], "properties": { "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }, "orderId": { "type": "string", "format": "uuid" }, "status": { "type": "string", "enum": ["succeeded", "failed", "pending", "cancelled"] }, "amount": { "type": "integer", "minimum": 0 }, "currency": { "type": "string", "const": "VND" }, "occurredAt": { "type": "string", "format": "date-time" } } },
-      "OrderQuoteRequest": { "type": "object", "additionalProperties": false, "required": ["items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." }, "couponCode": { "type": "string" }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "required": ["title", "quantity"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
-      "OrderUpdateRequest": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"] }, "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] }, "items": { "type": "array", "minItems": 1, "maxItems": 50, "description": "Backend dùng catalog để tính lại giá, chiết khấu, tổng tiền và kiểm tra tồn kho.", "items": { "type": "object", "additionalProperties": false, "required": ["title", "quantity"], "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 200 }, "quantity": { "type": "integer", "minimum": 1 } } } } } },
-      "OrderQuote": { "type": "object", "required": ["discountRate", "couponCode", "subtotal", "discount", "total", "items"], "properties": { "discountRate": { "type": "number", "enum": [0, 0.05, 0.1] }, "couponCode": { "type": ["string", "null"] }, "subtotal": { "type": "integer", "minimum": 0 }, "discount": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "items": { "type": "object", "required": ["title", "quantity", "unitPrice", "lineTotal"], "properties": { "title": { "type": "string" }, "quantity": { "type": "integer" }, "unitPrice": { "type": "integer" }, "lineTotal": { "type": "integer" } } } } } },
-      "PublicOrder": { "type": "object", "properties": { "orderId": { "type": "string", "format": "uuid" }, "createdAt": { "type": "string", "format": "date-time" }, "status": { "type": "string" }, "paymentStatus": { "type": "string" }, "paymentMethod": { "type": "string" }, "couponCode": { "type": ["string", "null"] }, "subtotal": { "type": "integer", "minimum": 0 }, "discount": { "type": "integer", "minimum": 0 }, "total": { "type": "integer", "minimum": 0 }, "items": { "type": "array", "items": { "type": "object", "properties": { "title": { "type": "string" }, "quantity": { "type": "integer", "minimum": 1 }, "lineTotal": { "type": "integer", "minimum": 0 } } } } } },
-      "ServiceRequest": { "type": "object", "required": ["service", "bookTitle", "name", "phone"], "properties": { "service": { "type": "string", "enum": ["rent", "sell", "exchange"] }, "bookTitle": { "type": "string" }, "condition": { "type": "string" }, "name": { "type": "string" }, "phone": { "type": "string" }, "note": { "type": "string" } } },
-      "CustomerInput": { "type": "object", "required": ["name", "email", "phone"], "properties": { "name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "phone": { "type": "string" }, "status": { "type": "string", "enum": ["new", "lead", "customer"] } } },
-      "CustomerInteractionInput": { "type": "object", "additionalProperties": false, "required": ["type", "note"], "properties": { "type": { "type": "string", "enum": ["call", "chat", "email", "order", "review", "support", "feedback"] }, "note": { "type": "string", "minLength": 1, "maxLength": 2000 } } },
-      "CustomerInteractionUpdate": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "type": { "type": "string", "enum": ["call", "chat", "email", "order", "review", "support", "feedback"] }, "note": { "type": "string", "minLength": 1, "maxLength": 2000 } } }
+      "HealthStatus": {
+        "type": "object",
+        "required": ["status", "service"],
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "service": { "type": "string", "example": "booknest" }
+        }
+      },
+      "ReadinessStatus": {
+        "type": "object",
+        "required": ["status", "service"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ready", "not_ready"], "example": "ready" },
+          "service": { "type": "string", "example": "booknest" }
+        }
+      },
+      "PolicyDocument": {
+        "type": "object",
+        "required": ["policy"],
+        "properties": {
+          "policy": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": ["slug", "name"],
+        "properties": {
+          "slug": { "type": "string", "example": "van-hoc" },
+          "name": { "type": "string", "example": "Văn học" },
+          "description": { "type": "string", "example": "Tiểu thuyết và truyện ngắn chọn lọc" },
+          "status": { "type": "string", "enum": ["active", "inactive"], "example": "active" }
+        }
+      },
+      "CategoryInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "slug": { "type": "string", "pattern": "^[a-z0-9-]+$", "example": "van-hoc" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120, "example": "Văn học" },
+          "description": { "type": "string", "maxLength": 500 },
+          "status": { "type": "string", "enum": ["active", "inactive"] }
+        }
+      },
+      "Author": {
+        "type": "object",
+        "required": ["slug", "name"],
+        "properties": {
+          "slug": { "type": "string", "example": "nguyen-nhat-anh" },
+          "name": { "type": "string", "example": "Nguyễn Nhật Ánh" },
+          "bio": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "inactive"], "example": "active" }
+        }
+      },
+      "AuthorInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "slug": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120, "example": "Nguyễn Nhật Ánh" },
+          "bio": { "type": "string", "maxLength": 1000 },
+          "status": { "type": "string", "enum": ["active", "inactive"] }
+        }
+      },
+      "Publisher": {
+        "type": "object",
+        "required": ["slug", "name"],
+        "properties": {
+          "slug": { "type": "string", "example": "nxb-tre" },
+          "name": { "type": "string", "example": "NXB Trẻ" },
+          "status": { "type": "string", "enum": ["active", "inactive"], "example": "active" }
+        }
+      },
+      "PublisherInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "slug": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 120, "example": "NXB Trẻ" },
+          "status": { "type": "string", "enum": ["active", "inactive"] }
+        }
+      },
+      "MonitoringSummary": {
+        "type": "object",
+        "required": ["service", "status", "uptimeSeconds", "database", "requests"],
+        "properties": {
+          "service": { "type": "string", "example": "booknest" },
+          "status": { "type": "string", "example": "ok" },
+          "uptimeSeconds": { "type": "integer", "minimum": 0, "example": 3600 },
+          "database": { "type": "object", "additionalProperties": true },
+          "requests": { "type": "object", "additionalProperties": true },
+          "backup": { "type": ["object", "null"], "additionalProperties": true }
+        }
+      },
+      "AuditLogResponse": {
+        "type": "object",
+        "required": ["total", "limit", "offset", "entries", "policy"],
+        "properties": {
+          "total": { "type": "integer", "minimum": 0, "example": 12 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "example": 50 },
+          "offset": { "type": "integer", "minimum": 0, "example": 0 },
+          "entries": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+          "policy": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "UploadCoverResult": {
+        "type": "object",
+        "required": ["filename", "mimeType", "size", "sha256", "url"],
+        "properties": {
+          "filename": { "type": "string", "example": "00000000-0000-4000-8000-000000000001.png" },
+          "mimeType": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp"], "example": "image/png" },
+          "size": { "type": "integer", "minimum": 1, "maximum": 2097152, "example": 24576 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "url": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.png" }
+        }
+      },
+      "PaymentConfig": {
+        "type": "object",
+        "required": ["bankCode", "bankName", "accountNumber", "accountName"],
+        "properties": {
+          "bankCode": { "type": "string", "example": "VCB" },
+          "bankName": { "type": "string", "example": "Vietcombank" },
+          "accountNumber": { "type": "string", "pattern": "^\\d{6,20}$", "example": "0000000000" },
+          "accountName": { "type": "string", "example": "BOOKNEST STORE" }
+        }
+      },
+      "SepayWebhookEvent": {
+        "type": "object",
+        "required": ["id", "transferAmount", "transferType"],
+        "properties": {
+          "id": { "type": ["string", "integer"], "description": "ID giao dịch SePay.", "example": "sepay-tx-0001" },
+          "transferAmount": { "type": ["integer", "string"], "description": "Số tiền chuyển; phải biểu diễn số nguyên dương.", "example": 150000 },
+          "transferType": { "type": "string", "description": "Chỉ giao dịch `in` được xét.", "example": "in" },
+          "accountNumber": { "type": "string", "example": "0000000000" },
+          "content": { "type": "string", "example": "Thanh toan don hang BOOKNEST" },
+          "description": { "type": "string" },
+          "code": { "type": "string" },
+          "transactionDate": { "type": "string", "example": "2026-11-23 02:00:00" }
+        }
+      },
+      "OrderStatus": {
+        "type": "object",
+        "required": ["paymentStatus", "orderStatus"],
+        "properties": {
+          "paymentStatus": { "type": "string", "example": "pending" },
+          "orderStatus": { "type": "string", "example": "received" }
+        }
+      },
+      "StaffCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "email", "password", "role"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 120, "example": "Nhân viên Bán hàng" },
+          "email": { "type": "string", "format": "email", "maxLength": 254, "example": "sales@booknest.example.com" },
+          "password": { "type": "string", "minLength": 12, "maxLength": 128, "description": "Tối thiểu 12 ký tự; không dùng giá trị thật trong tài liệu." },
+          "role": { "type": "string", "enum": ["sales", "support"], "example": "sales" }
+        }
+      },
+      "StaffUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": { "type": "string", "maxLength": 120 },
+          "email": { "type": "string", "format": "email", "maxLength": 254 },
+          "role": { "type": "string", "enum": ["sales", "support"] },
+          "isActive": { "type": "boolean" }
+        }
+      },
+      "AdminCouponCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"],
+        "properties": {
+          "code": { "type": "string", "minLength": 3, "maxLength": 32, "example": "AUTUMN10" },
+          "label": { "type": "string", "example": "Giảm 10% đơn từ 150.000đ" },
+          "rate": { "type": "number", "minimum": 0, "maximum": 0.3, "example": 0.1 },
+          "minSubtotal": { "type": "number", "minimum": 0, "example": 150000 },
+          "maxUses": { "type": "integer", "minimum": 0, "example": 500 },
+          "startsAt": { "type": "string", "format": "date-time", "example": "2026-11-01T00:00:00.000Z" },
+          "expiresAt": { "type": "string", "format": "date-time", "example": "2026-12-31T23:59:59.000Z" },
+          "enabled": { "type": "boolean", "example": true }
+        }
+      },
+      "AdminCouponUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "rate", "minSubtotal", "maxUses", "startsAt", "expiresAt", "enabled"],
+        "properties": {
+          "label": { "type": "string" },
+          "rate": { "type": "number", "minimum": 0, "maximum": 0.3 },
+          "minSubtotal": { "type": "number", "minimum": 0 },
+          "maxUses": { "type": "integer", "minimum": 0 },
+          "startsAt": { "type": "string", "format": "date-time" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "enabled": { "type": "boolean" }
+        }
+      },
+      "PrivacyDataRequestCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["access", "update", "export", "delete"], "example": "export" },
+          "channel": { "type": "string", "enum": ["web_portal", "email_support", "in_person"], "example": "web_portal" }
+        }
+      },
+      "PrivacyDataRequestUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "processing", "completed", "rejected"] },
+          "assignedTo": { "type": "string", "maxLength": 120 },
+          "escalationLevel": { "type": "string", "enum": ["l1_support", "l2_privacy_lead", "l3_legal_admin"] },
+          "resolutionCode": { "type": "string", "enum": ["fulfilled", "partially_fulfilled", "anonymized", "rejected_unverified", "rejected_legal_retention", "rejected_duplicate", "withdrawn"] },
+          "executeAnonymization": { "type": "boolean" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string", "example": "Dữ liệu yêu cầu không hợp lệ." },
+          "code": { "type": "string", "example": "PAYLOAD_TOO_LARGE", "description": "Mã lỗi máy đọc được (tùy chọn theo từng loại lỗi)." },
+          "maxBytes": { "type": "integer", "minimum": 1, "example": 16384, "description": "Giới hạn byte tối đa (có mặt trên lỗi 413/414)." }
+        }
+      },
+      "Coupon": {
+        "type": "object",
+        "required": ["code", "rate", "label", "minSubtotal"],
+        "properties": {
+          "code": { "type": "string", "example": "BOOKNEST10" },
+          "rate": { "type": "number", "example": 0.1 },
+          "label": { "type": "string", "example": "Giảm 10%" },
+          "minSubtotal": { "type": "number", "example": 100000 }
+        }
+      },
+      "Book": {
+        "type": "object",
+        "required": ["title", "author", "price"],
+        "properties": {
+          "id": { "type": "string", "example": "nha-gia-kim" },
+          "title": { "type": "string", "example": "Nhà giả kim" },
+          "author": { "type": "string", "example": "Paulo Coelho" },
+          "price": { "type": "number", "example": 79000 },
+          "category": { "type": "string", "example": "van-hoc" },
+          "cover": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.png" },
+          "stock": { "type": "integer", "minimum": 0, "example": 25 }
+        }
+      },
+      "Register": {
+        "type": "object",
+        "required": ["name", "email", "password"],
+        "properties": {
+          "name": { "type": "string", "example": "Nguyễn Văn An" },
+          "email": { "type": "string", "format": "email", "example": "reader@example.com" },
+          "password": { "type": "string", "minLength": 12, "maxLength": 128 },
+          "studentType": { "type": "string", "enum": ["university", "high_school"] },
+          "studentId": { "type": "string", "example": "SV000001" }
+        }
+      },
+      "Login": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "reader@example.com" },
+          "password": { "type": "string" }
+        }
+      },
+      "PasswordResetRequest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": { "email": { "type": "string", "format": "email", "example": "reader@example.com" } }
+      },
+      "PasswordResetConfirm": {
+        "type": "object",
+        "required": ["token", "password"],
+        "properties": {
+          "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "password": { "type": "string", "minLength": 12, "maxLength": 128 }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "required": ["message"],
+        "properties": { "message": { "type": "string", "example": "Nếu email được đăng ký, hướng dẫn khôi phục mật khẩu sẽ được gửi đến hộp thư của bạn." } }
+      },
+      "AuthResult": {
+        "type": "object",
+        "required": ["token", "user"],
+        "properties": {
+          "token": { "type": "string", "description": "Opaque session token (không chứa mật khẩu/hash)." },
+          "expiresAt": { "type": "integer", "description": "Unix timestamp (ms) hết hạn phiên." },
+          "user": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "SocialAccountLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idToken", "password"],
+        "properties": {
+          "idToken": { "type": "string", "description": "Firebase ID token của tài khoản social đã xác minh." },
+          "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." }
+        }
+      },
+      "SocialAccountUnlink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "password"],
+        "properties": {
+          "provider": { "type": "string", "enum": ["google.com", "facebook.com"] },
+          "password": { "type": "string", "description": "Mật khẩu hiện tại để xác thực lại." }
+        }
+      },
+      "CreateOrder": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["customerName", "address", "phone", "paymentMethod", "items"],
+        "properties": {
+          "customerName": { "type": "string", "minLength": 2, "maxLength": 120, "example": "Nguyễn Văn An" },
+          "address": { "type": "string", "minLength": 10, "maxLength": 300, "example": "12 Đường Sách, Quận 1, TP.HCM" },
+          "phone": { "type": "string", "minLength": 8, "maxLength": 20, "pattern": "^[0-9 +()-]{8,20}$", "example": "0900000001" },
+          "paymentMethod": { "type": "string", "enum": ["transfer", "cod"], "example": "cod" },
+          "accessCode": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "Bắt buộc với đơn khách; 256-bit hex do trình duyệt tạo bằng Web Crypto. Máy chủ chỉ lưu hash và không trả lại mã." },
+          "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." },
+          "couponCode": { "type": "string", "example": "BOOKNEST10" },
+          "subtotal": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng giá luôn được tính lại từ catalog." },
+          "discount": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." },
+          "total": { "type": "number", "description": "Được chấp nhận tương thích ngược nhưng không được dùng làm giá trị tin cậy." },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": ["title", "quantity"],
+              "properties": {
+                "title": { "type": "string", "example": "Nhà giả kim" },
+                "quantity": { "type": "integer", "minimum": 1, "example": 1 },
+                "price": { "type": "number", "description": "Bỏ qua; backend dùng giá trong catalog." },
+                "lineTotal": { "type": "number", "description": "Bỏ qua; backend tính lại." }
+              }
+            }
+          }
+        }
+      },
+      "PaymentWebhookEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "orderId", "status", "amount", "currency", "occurredAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$", "example": "evt-2026-0001" },
+          "orderId": { "type": "string", "format": "uuid", "example": "00000000-0000-4000-8000-000000000001" },
+          "status": { "type": "string", "enum": ["succeeded", "failed", "pending", "cancelled"], "example": "succeeded" },
+          "amount": { "type": "integer", "minimum": 0, "example": 79000 },
+          "currency": { "type": "string", "const": "VND" },
+          "occurredAt": { "type": "string", "format": "date-time", "example": "2026-11-23T02:00:00.000Z" }
+        }
+      },
+      "OrderQuoteRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items"],
+        "properties": {
+          "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "description": "Tùy chọn tương thích ngược; máy chủ bỏ qua và tự tính theo tài khoản đã xác thực." },
+          "couponCode": { "type": "string", "example": "BOOKNEST10" },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": ["title", "quantity"],
+              "properties": {
+                "title": { "type": "string", "example": "Nhà giả kim" },
+                "quantity": { "type": "integer", "minimum": 1, "example": 1 }
+              }
+            }
+          }
+        }
+      },
+      "OrderUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "status": { "type": "string", "enum": ["received", "processing", "shipping", "completed", "cancelled"] },
+          "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "cancelled", "cod_pending", "refunded"] },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "Backend dùng catalog để tính lại giá, chiết khấu, tổng tiền và kiểm tra tồn kho.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["title", "quantity"],
+              "properties": {
+                "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "quantity": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      },
+      "OrderQuote": {
+        "type": "object",
+        "required": ["discountRate", "couponCode", "subtotal", "discount", "total", "items"],
+        "properties": {
+          "discountRate": { "type": "number", "enum": [0, 0.05, 0.1], "example": 0.1 },
+          "couponCode": { "type": ["string", "null"], "example": "BOOKNEST10" },
+          "subtotal": { "type": "integer", "minimum": 0, "example": 100000 },
+          "discount": { "type": "integer", "minimum": 0, "example": 10000 },
+          "total": { "type": "integer", "minimum": 0, "example": 90000 },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "quantity", "unitPrice", "lineTotal"],
+              "properties": {
+                "title": { "type": "string" },
+                "quantity": { "type": "integer" },
+                "unitPrice": { "type": "integer" },
+                "lineTotal": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "PublicOrder": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "format": "uuid", "example": "00000000-0000-4000-8000-000000000001" },
+          "createdAt": { "type": "string", "format": "date-time", "example": "2026-11-23T02:00:00.000Z" },
+          "status": { "type": "string", "example": "received" },
+          "paymentStatus": { "type": "string", "example": "cod_pending" },
+          "paymentMethod": { "type": "string", "example": "cod" },
+          "couponCode": { "type": ["string", "null"], "example": null },
+          "subtotal": { "type": "integer", "minimum": 0, "example": 79000 },
+          "discount": { "type": "integer", "minimum": 0, "example": 0 },
+          "total": { "type": "integer", "minimum": 0, "example": 79000 },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" },
+                "quantity": { "type": "integer", "minimum": 1 },
+                "lineTotal": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      },
+      "ServiceRequest": {
+        "type": "object",
+        "required": ["service", "bookTitle", "name", "phone"],
+        "properties": {
+          "service": { "type": "string", "enum": ["rent", "sell", "exchange"], "example": "rent" },
+          "bookTitle": { "type": "string", "example": "Nhà giả kim" },
+          "condition": { "type": "string", "example": "Mới 95%" },
+          "name": { "type": "string", "example": "Nguyễn Văn An" },
+          "phone": { "type": "string", "example": "0900000001" },
+          "note": { "type": "string", "example": "Nhận sách trong giờ hành chính" }
+        }
+      },
+      "CustomerInput": {
+        "type": "object",
+        "required": ["name", "email", "phone"],
+        "properties": {
+          "name": { "type": "string", "example": "Trần Minh Quân" },
+          "email": { "type": "string", "format": "email", "example": "customer@example.com" },
+          "phone": { "type": "string", "example": "0900000002" },
+          "status": { "type": "string", "enum": ["new", "lead", "customer"], "example": "lead" }
+        }
+      },
+      "CustomerInteractionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "note"],
+        "properties": {
+          "type": { "type": "string", "enum": ["call", "chat", "email", "order", "review", "support", "feedback"], "example": "call" },
+          "note": { "type": "string", "minLength": 1, "maxLength": 2000, "example": "Tư vấn đơn sách văn học" }
+        }
+      },
+      "CustomerInteractionUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "type": { "type": "string", "enum": ["call", "chat", "email", "order", "review", "support", "feedback"] },
+          "note": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
     }
   }
 }

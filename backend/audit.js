@@ -6,6 +6,42 @@ const { redactLogText } = require("./monitoring");
 const auditRequestContext = new AsyncLocalStorage();
 const auditWriteQueues = new Map();
 
+const AUDIT_OUTCOMES = Object.freeze(["attempt", "success", "denied", "failure"]);
+
+const AUDIT_POLICY = Object.freeze({
+  version: "2026-01",
+  retentionDays: 365,
+  minimumFields: Object.freeze([
+    "id",
+    "timestamp",
+    "action",
+    "actorId",
+    "actorRole",
+    "entityType",
+    "entityId",
+    "outcome",
+    "statusCode",
+    "requestId",
+  ]),
+  outcomes: AUDIT_OUTCOMES,
+  immutability:
+    "Append-only JSONL with SHA-256 hash chain, 0600 file permissions, and read-only admin API (mutations rejected with 405).",
+  auditedOperations: Object.freeze([
+    "admin.api.request / admin.api.denied / admin.api.failure (all /api/admin/* calls & outcomes)",
+    "staff.profile.create / staff.profile.update (staff provisioning, role changes, deactivation)",
+    "user.student_verification.update (student discount verification)",
+    "order.status.update / order.payment.update (order workflow, payment & refund transitions)",
+    "book.create / book.update / book.delete (catalog & stock administration)",
+    "coupon.create / coupon.update (discount & coupon administration)",
+    "service.status.update (book service request administration)",
+    "customer.* / customer_interaction.* (CRM administration)",
+    "privacy.data_request.update / privacy.export.* (DSAR & personal data export)",
+  ]),
+});
+
+const SENSITIVE_AUDIT_KEY_PATTERN =
+  /(password|token|secret|authorization|cookie|session|card|cvv|pan|signature|api.?key|private.?key|access.?code|bearer|otp|pin|bank.?account|citizen|passport|ssn|email|phone|address|customer(?:name|info)|full.?name|^name$|^note$)/i;
+
 function sanitizeAuditValue(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return redactLogText(value);
@@ -19,7 +55,7 @@ function sanitizeAuditValue(value, seen = new WeakSet()) {
     seen.add(value);
     const next = {};
     for (const [key, item] of Object.entries(value)) {
-      if (/(password|token|secret|authorization|cookie|session|card|cvv|pan|signature|email|phone|address|customer(?:name|info)|full.?name|^name$|^note$)/i.test(key)) {
+      if (SENSITIVE_AUDIT_KEY_PATTERN.test(key)) {
         continue;
       }
       next[key] = sanitizeAuditValue(item, seen);
@@ -29,9 +65,23 @@ function sanitizeAuditValue(value, seen = new WeakSet()) {
   return String(value);
 }
 
+function normalizeOutcome(outcome) {
+  if (typeof outcome === "string") {
+    const normalized = outcome.trim().toLowerCase();
+    if (AUDIT_OUTCOMES.includes(normalized)) return normalized;
+  }
+  return "success";
+}
+
 function normalizeAuditEvent(event = {}) {
   const timestamp = new Date().toISOString();
   const sanitized = sanitizeAuditValue(event);
+  const statusCode =
+    Number.isInteger(sanitized.statusCode) &&
+    sanitized.statusCode >= 100 &&
+    sanitized.statusCode <= 599
+      ? sanitized.statusCode
+      : null;
   const entry = {
     id: typeof sanitized.id === "string" && sanitized.id.trim() ? sanitized.id.trim() : crypto.randomUUID(),
     timestamp: typeof sanitized.timestamp === "string" && sanitized.timestamp ? sanitized.timestamp : timestamp,
@@ -42,6 +92,8 @@ function normalizeAuditEvent(event = {}) {
       ? sanitized.entityType.trim()
       : "resource",
     entityId: typeof sanitized.entityId === "string" ? sanitized.entityId.trim() : sanitized.entityId ?? null,
+    outcome: normalizeOutcome(sanitized.outcome),
+    statusCode,
     before: sanitized.before === undefined ? null : sanitized.before,
     after: sanitized.after === undefined ? null : sanitized.after,
     requestId: typeof sanitized.requestId === "string"
@@ -110,6 +162,10 @@ async function appendAuditEntry(filePath, event) {
 
 async function readAuditEntries(filePath) {
   const absolutePath = path.resolve(filePath);
+  const pendingWrite = auditWriteQueues.get(absolutePath);
+  if (pendingWrite) {
+    await pendingWrite.catch(() => {});
+  }
   try {
     const fileContents = await fs.readFile(absolutePath, "utf8");
     const lines = fileContents.split(/\r?\n/).filter(Boolean);
@@ -125,7 +181,7 @@ async function readAuditEntries(filePath) {
       if (parsed.previousHash !== previousHash) {
         throw new Error("Audit log chain was broken or tampered with.");
       }
-      const expectedHash = computeAuditEntryHash(previousHash, {
+      const hashPayload = {
         id: parsed.id,
         timestamp: parsed.timestamp,
         action: parsed.action,
@@ -133,12 +189,19 @@ async function readAuditEntries(filePath) {
         actorRole: parsed.actorRole,
         entityType: parsed.entityType,
         entityId: parsed.entityId,
+        ...(Object.prototype.hasOwnProperty.call(parsed, "outcome")
+          ? { outcome: parsed.outcome }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(parsed, "statusCode")
+          ? { statusCode: parsed.statusCode }
+          : {}),
         before: parsed.before,
         after: parsed.after,
         requestId: parsed.requestId,
         metadata: parsed.metadata,
         previousHash: parsed.previousHash,
-      });
+      };
+      const expectedHash = computeAuditEntryHash(previousHash, hashPayload);
       if (parsed.hash !== expectedHash) {
         throw new Error("Audit log hash validation failed.");
       }
@@ -153,6 +216,8 @@ async function readAuditEntries(filePath) {
 }
 
 module.exports = {
+  AUDIT_OUTCOMES,
+  AUDIT_POLICY,
   appendAuditEntry,
   computeAuditEntryHash,
   normalizeAuditEvent,

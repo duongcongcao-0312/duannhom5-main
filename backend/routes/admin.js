@@ -1,5 +1,11 @@
+const { AUDIT_POLICY, appendAuditEntry } = require("../audit");
+
 function createAdminRoutes(dependencies) {
   const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
+  async function recordAdminAudit(event) {
+    if (!auditLogPath) return;
+    await appendAuditEntry(auditLogPath, event);
+  }
   const serializeAdminOrder = (order) => {
     const { accessCodeHash, ...safeOrder } = order;
     return safeOrder;
@@ -253,7 +259,7 @@ if (
   adminServiceMatch &&
   (request.method === "PATCH" || request.method === "PUT")
 ) {
-  await requireRole(request, "write:services");
+  const actor = await requireRole(request, "write:services");
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu cập nhật yêu cầu dịch vụ không hợp lệ.",
@@ -274,6 +280,17 @@ if (
   if (!updated) {
     throw new RequestError(404, "Không tìm thấy yêu cầu.");
   }
+  await recordAdminAudit({
+    action: "service.status.update",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "service_request",
+    entityId: adminServiceMatch[1],
+    outcome: "success",
+    statusCode: 200,
+    after: { status: updated.status },
+    requestId: response.getHeader("X-Request-Id"),
+  });
   sendJson(response, 200, updated);
   return true;
 }
@@ -572,7 +589,7 @@ if (
   requestUrl.pathname === "/api/admin/coupons" &&
   request.method === "POST"
 ) {
-  await requireRole(request, "write:coupons");
+  const actor = await requireRole(request, "write:coupons");
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu coupon không hợp lệ.",
@@ -582,7 +599,24 @@ if (
   if ((await db.getCoupons()).some((entry) => entry.code === coupon.code)) {
     throw new RequestError(409, "Mã coupon đã tồn tại.");
   }
-  sendJson(response, 201, await db.saveCoupon(coupon, undefined, true));
+  const savedCoupon = await db.saveCoupon(coupon, undefined, true);
+  await recordAdminAudit({
+    action: "coupon.create",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "coupon",
+    entityId: savedCoupon.code,
+    outcome: "success",
+    statusCode: 201,
+    after: {
+      code: savedCoupon.code,
+      rate: savedCoupon.rate,
+      minSubtotal: savedCoupon.minSubtotal,
+      enabled: savedCoupon.enabled,
+    },
+    requestId: response.getHeader("X-Request-Id"),
+  });
+  sendJson(response, 201, savedCoupon);
   return true;
 }
 
@@ -593,7 +627,7 @@ if (
   adminCouponMatch &&
   (request.method === "PUT" || request.method === "PATCH")
 ) {
-  await requireRole(request, "write:coupons");
+  const actor = await requireRole(request, "write:coupons");
   const code = adminCouponMatch[1].toUpperCase();
   const existing = (await db.getCoupons()).find((entry) => entry.code === code);
   if (!existing) throw new RequestError(404, "Không tìm thấy coupon.");
@@ -616,6 +650,26 @@ if (
     coupon,
     expectedUpdatedAt,
   );
+  await recordAdminAudit({
+    action: "coupon.update",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "coupon",
+    entityId: updated.code,
+    outcome: "success",
+    statusCode: 200,
+    before: {
+      rate: existing.rate,
+      minSubtotal: existing.minSubtotal,
+      enabled: existing.enabled,
+    },
+    after: {
+      rate: updated.rate,
+      minSubtotal: updated.minSubtotal,
+      enabled: updated.enabled,
+    },
+    requestId: response.getHeader("X-Request-Id"),
+  });
   sendJson(response, 200, updated);
   return true;
 }
@@ -625,7 +679,7 @@ if (
   requestUrl.pathname === "/api/admin/books" &&
   request.method === "POST"
 ) {
-  await requireRole(request, "write:books");
+  const actor = await requireRole(request, "write:books");
   await getBookCategories();
   const payload = requireJsonObject(
     await readJson(request),
@@ -665,6 +719,21 @@ if (
     getBookCatalog().set(created.title, created);
     return created;
   });
+  await recordAdminAudit({
+    action: "book.create",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "book",
+    entityId: newBook.id,
+    outcome: "success",
+    statusCode: 201,
+    after: {
+      price: newBook.price,
+      stock: newBook.stock,
+      category: newBook.category,
+    },
+    requestId: response.getHeader("X-Request-Id"),
+  });
   sendJson(response, 201, newBook);
   return true;
 }
@@ -676,7 +745,7 @@ if (
   adminBookMatch &&
   (request.method === "PUT" || request.method === "PATCH")
 ) {
-  await requireRole(request, "write:books");
+  const actor = await requireRole(request, "write:books");
   await getBookCategories();
   const id = adminBookMatch[1];
   const payload = requireJsonObject(
@@ -731,12 +800,27 @@ if (
     if (result.title) getBookCatalog().set(result.title, result);
     return result;
   });
+  await recordAdminAudit({
+    action: "book.update",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "book",
+    entityId: updatedBook.id,
+    outcome: "success",
+    statusCode: 200,
+    after: {
+      price: updatedBook.price,
+      stock: updatedBook.stock,
+      category: updatedBook.category,
+    },
+    requestId: response.getHeader("X-Request-Id"),
+  });
   sendJson(response, 200, updatedBook);
   return true;
 }
 
 if (adminBookMatch && request.method === "DELETE") {
-  await requireRole(request, "write:books");
+  const actor = await requireRole(request, "write:books");
   if (catalogBookById.has(adminBookMatch[1])) {
     throw new RequestError(409, "Không thể xóa sách mặc định khỏi danh mục.");
   }
@@ -746,6 +830,16 @@ if (adminBookMatch && request.method === "DELETE") {
     const deleted = await db.deleteCustomBook(adminBookMatch[1]);
     if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
     if (previous?.title) getBookCatalog().delete(previous.title);
+  });
+  await recordAdminAudit({
+    action: "book.delete",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "book",
+    entityId: adminBookMatch[1],
+    outcome: "success",
+    statusCode: 200,
+    requestId: response.getHeader("X-Request-Id"),
   });
   sendJson(response, 200, { success: true });
   return true;
@@ -772,15 +866,38 @@ if (
 }
 
 if (
-  requestUrl.pathname === "/api/admin/audit" &&
-  request.method === "GET"
+  requestUrl.pathname === "/api/admin/audit" ||
+  requestUrl.pathname.startsWith("/api/admin/audit/")
 ) {
-  await requireRole(request, "read:users");
+  await requireRole(request, "read:audit");
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    throw new RequestError(
+      405,
+      "Nhật ký kiểm toán chỉ hỗ trợ đọc và không thể sửa hoặc xóa.",
+    );
+  }
+  if (requestUrl.pathname !== "/api/admin/audit") {
+    throw new RequestError(404, "Không tìm thấy API quản trị.");
+  }
   const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "50", 10);
   const offset = Number.parseInt(requestUrl.searchParams.get("offset") || "0", 10);
-  const entries = await readAuditEntries(auditLogPath);
-  const safeEntries = entries
-    .slice(Math.max(0, offset), Math.max(0, offset + (Number.isFinite(limit) && limit > 0 ? limit : 50)))
+  const actionFilter = requestUrl.searchParams.get("action")?.trim() || "";
+  const outcomeFilter = requestUrl.searchParams.get("outcome")?.trim().toLowerCase() || "";
+  const actorIdFilter = requestUrl.searchParams.get("actorId")?.trim() || "";
+  const entityTypeFilter = requestUrl.searchParams.get("entityType")?.trim() || "";
+  const allEntries = await readAuditEntries(auditLogPath);
+  const filteredEntries = allEntries.filter((entry) => {
+    if (actionFilter && entry.action !== actionFilter) return false;
+    if (outcomeFilter && (entry.outcome || "success") !== outcomeFilter) return false;
+    if (actorIdFilter && entry.actorId !== actorIdFilter) return false;
+    if (entityTypeFilter && entry.entityType !== entityTypeFilter) return false;
+    return true;
+  });
+  const safeOffset = Math.max(0, Number.isFinite(offset) ? offset : 0);
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 50;
+  const safeEntries = filteredEntries
+    .slice(safeOffset, safeOffset + safeLimit)
     .map((entry) => ({
       id: entry.id,
       timestamp: entry.timestamp,
@@ -789,13 +906,25 @@ if (
       actorRole: entry.actorRole,
       entityType: entry.entityType,
       entityId: entry.entityId,
+      outcome: entry.outcome || "success",
+      statusCode: entry.statusCode ?? null,
       requestId: entry.requestId,
       before: entry.before,
       after: entry.after,
       metadata: entry.metadata,
       hash: entry.hash,
     }));
-  sendJson(response, 200, { entries: safeEntries, total: entries.length, limit: safeEntries.length, offset });
+  sendJson(response, 200, {
+    entries: safeEntries,
+    total: filteredEntries.length,
+    limit: safeEntries.length,
+    offset: safeOffset,
+    policy: {
+      version: AUDIT_POLICY.version,
+      retentionDays: AUDIT_POLICY.retentionDays,
+      immutability: AUDIT_POLICY.immutability,
+    },
+  });
   return true;
 }
 

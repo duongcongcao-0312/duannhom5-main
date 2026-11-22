@@ -450,13 +450,17 @@
     "/api/admin/audit": {
       "get": {
         "tags": ["Admin"],
-        "summary": "Đọc nhật ký kiểm toán quản trị",
+        "summary": "Đọc nhật ký kiểm toán quản trị (chỉ đọc, yêu cầu quyền read:audit)",
         "security": [{ "bearerAuth": [] }],
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 50 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "default": 0 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+          { "name": "action", "in": "query", "schema": { "type": "string" } },
+          { "name": "outcome", "in": "query", "schema": { "type": "string", "enum": ["attempt", "success", "denied", "failure"] } },
+          { "name": "actorId", "in": "query", "schema": { "type": "string" } },
+          { "name": "entityType", "in": "query", "schema": { "type": "string" } }
         ],
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "405": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/admin/stats": { "get": { "tags": ["Admin"], "summary": "Thống kê quản trị", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },

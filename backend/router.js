@@ -36,6 +36,7 @@ const routes = [
   { name: "admin:staff", permission: "read:staff", method: "GET", match: (path) => path === "/api/admin/staff" },
   { name: "admin:staff:create", permission: "write:staff", method: "POST", match: (path) => path === "/api/admin/staff" },
   { name: "admin:staff:update", permission: "write:staff", method: "PATCH", match: (path) => /^\/api\/admin\/staff\/[0-9a-f-]{36}$/i.test(path) },
+  { name: "admin:audit", permission: "read:audit", method: "GET", match: (path) => path === "/api/admin/audit" },
   { name: "admin:customers", permission: "read:customers", method: "GET", match: (path) => path === "/api/admin/customers" },
   { name: "admin:customers:create", permission: "write:customers", method: "POST", match: (path) => path === "/api/admin/customers" },
   { name: "admin:customer:update", permission: "read:customers", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}$/i.test(path) },

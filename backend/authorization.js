@@ -20,6 +20,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     "delete:customers",
     "read:privacy",
     "write:privacy",
+    "read:audit",
   ]),
   sales: Object.freeze([
     "read:dashboard",

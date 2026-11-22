@@ -49,16 +49,21 @@ admin-only staff management; updated staff sessions are revoked.
 ## Audit trail
 
 Sensitive API requests and all `/api/admin/*` requests append an audit event
-with request ID, route, method, and the authenticated actor when available.
-The event is recorded before route handling, so denied attempts are captured
-too. Domain events record profile changes, order status changes, student
-verification, staff changes, and CRM/customer interaction changes in both
-file-backed and PostgreSQL storage modes. Audit payloads omit personal contact
-fields, credentials, and tokens.
+with request ID, route, method, outcome (`attempt`, `success`, `denied`,
+`failure`), HTTP `statusCode`, and the authenticated actor when available.
+The attempt is recorded before route handling, and denied (`401`/`403`) or
+failed (`4xx`/`5xx`) admin attempts are recorded before the error response is
+returned. Domain events record profile changes, order status/payment changes,
+student verification, staff changes, catalog book/coupon/service changes,
+privacy DSAR/export events, and CRM/customer interaction changes. Audit
+payloads strip credentials, tokens, secrets, and personal contact fields.
 
 The audit file is selected with `auditLogPath` in tests or defaults to
-`data/admin-audit.jsonl` for the application. The admin audit endpoint requires
-the `read:users` permission.
+`data/admin-audit.jsonl` for the application (append-only JSONL with SHA-256
+hash chaining, `0600` file permissions, and a 365-day operational retention
+policy defined in `AUDIT_POLICY` / `docs/audit-log-policy.md`). The admin audit
+endpoint (`GET /api/admin/audit`) requires the admin-only `read:audit`
+permission and rejects `POST`/`PUT`/`PATCH`/`DELETE` with `405`.
 
 ## Personal data updates
 

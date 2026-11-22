@@ -1945,12 +1945,44 @@ function createServer({
       actorRole: actor?.role || "anonymous",
       entityType: isAdminRequest ? "admin_api" : "sensitive_api",
       entityId: pathname,
+      outcome: "attempt",
       requestId: response.getHeader("X-Request-Id"),
       metadata: {
         method: request.method,
         route: pathname,
       },
     });
+  }
+
+  async function auditAdminRequestFailure(request, requestId, status) {
+    let pathname = "";
+    try {
+      pathname = new URL(request.url || "/", "http://localhost").pathname;
+    } catch {
+      return;
+    }
+    if (!pathname.startsWith("/api/admin/")) return;
+    const isDenied = status === 401 || status === 403;
+    try {
+      const actor = await getAuthUser(request).catch(() => null);
+      await appendAuditEntry(auditLogPath, {
+        action: isDenied ? "admin.api.denied" : "admin.api.failure",
+        actorId: actor?.userId || null,
+        actorRole: actor?.role || "anonymous",
+        entityType: "admin_api",
+        entityId: pathname,
+        outcome: isDenied ? "denied" : "failure",
+        statusCode: status,
+        requestId,
+        metadata: {
+          method: request.method,
+          route: pathname,
+          statusCode: status,
+        },
+      });
+    } catch {
+      // Do not mask the primary HTTP error response if audit write fails.
+    }
   }
 
   async function requireCustomerPermission(request, permission) {
@@ -2535,7 +2567,7 @@ function createServer({
         dispatchMonitoringAlert(alert, requestId);
       }
     });
-    void withAuditRequestContext(requestId, () => handleRequest(request, response)).catch((error) => {
+    void withAuditRequestContext(requestId, () => handleRequest(request, response)).catch(async (error) => {
       const isExpectedError =
         error instanceof RequestError || error instanceof CustomerError;
       const status =
@@ -2545,6 +2577,7 @@ function createServer({
         error.status <= 599
           ? error.status
           : 500;
+      await auditAdminRequestFailure(request, requestId, status);
       if (status >= 500) {
         logRequestError(
           request,

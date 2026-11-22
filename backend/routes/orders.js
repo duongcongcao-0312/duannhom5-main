@@ -245,8 +245,12 @@ if (orderMatch && (request.method === "PATCH" || request.method === "PUT")) {
   orderUpdateOptions.actorRole = requester.role;
   orderUpdateOptions.actorId = requester.userId;
   if (
-    requester.role === ROLES.USER &&
-    (payload.paymentStatus !== undefined || payload.items !== undefined)
+    requester.role !== ROLES.ADMIN &&
+    (
+      payload.paymentStatus !== undefined ||
+      payload.items !== undefined ||
+      (payload.status !== undefined && payload.status !== "cancelled")
+    )
   ) {
     throw new RequestError(
       403,

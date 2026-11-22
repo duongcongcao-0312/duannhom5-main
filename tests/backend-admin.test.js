@@ -335,6 +335,101 @@ test("issue #213 - category CRUD protects linked books and storefront visibility
   assert.equal(inactiveDeleteRes.status, 200);
 });
 
+test("issue #214 - author management keeps names, slugs and linked books consistent", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-authors-test-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    booksPath: path.join(temporaryDirectory, "books.json"),
+    authorsPath: path.join(temporaryDirectory, "authors.json"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
+  });
+  const { token } = await login.json();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const publicBefore = await (await fetch(`${baseUrl}/api/authors`)).json();
+  assert.ok(Array.isArray(publicBefore));
+  assert.ok(publicBefore.some((author) => author.slug));
+
+  const createdRes = await fetch(`${baseUrl}/api/admin/authors`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Nguyễn Minh Quân", displayName: "N. M. Quân", slug: "nguyen-minh-quan", bio: "Tác giả thử nghiệm" }),
+  });
+  assert.equal(createdRes.status, 201);
+  const created = await createdRes.json();
+  assert.equal(created.slug, "nguyen-minh-quan");
+
+  const duplicateRes = await fetch(`${baseUrl}/api/admin/authors`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Nguyễn Minh Quân", slug: "n-m-quan" }),
+  });
+  assert.equal(duplicateRes.status, 409);
+
+  const bookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      title: "Sách tác giả thử nghiệm",
+      author: "Nguyễn Minh Quân",
+      authorIds: [created.slug],
+      category: "van-hoc",
+      price: 90000,
+      stock: 5,
+    }),
+  });
+  assert.equal(bookRes.status, 201);
+  const book = await bookRes.json();
+  assert.equal(book.author, "N. M. Quân");
+  assert.deepEqual(book.authorIds, [created.slug]);
+
+  const updateRes = await fetch(`${baseUrl}/api/admin/authors/${created.slug}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ name: "Nguyễn Quân", displayName: "Nguyễn Quân", slug: "nguyen-quan" }),
+  });
+  assert.equal(updateRes.status, 200);
+  const updated = await updateRes.json();
+  assert.equal(updated.slug, "nguyen-quan");
+
+  const catalogRes = await fetch(`${baseUrl}/api/admin/books`, { headers });
+  const updatedBook = (await catalogRes.json()).find((entry) => entry.id === book.id);
+  assert.equal(updatedBook.author, "Nguyễn Quân");
+
+  const deleteLinkedRes = await fetch(`${baseUrl}/api/admin/authors/${updated.slug}`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(deleteLinkedRes.status, 409);
+
+  const inactiveRes = await fetch(`${baseUrl}/api/admin/authors/${updated.slug}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ status: "inactive" }),
+  });
+  assert.equal(inactiveRes.status, 200);
+  const publicAuthors = await (await fetch(`${baseUrl}/api/authors`)).json();
+  assert.equal(publicAuthors.some((author) => author.slug === "nguyen-quan"), false);
+});
+
 test("admin coupons enforce dates, minimum spend, and redemption limits on the server", async (t) => {
   configureTestAdmin();
   const temporaryDirectory = await fsPromises.mkdtemp(

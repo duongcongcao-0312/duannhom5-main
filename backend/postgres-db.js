@@ -2113,6 +2113,29 @@ class PostgresDatabase {
     return categories;
   }
 
+  async getAuthors(fallback = []) {
+    await this.init();
+    const { rows } = await this.pool.query(
+      `SELECT records FROM booknest_data WHERE collection = 'authors'`,
+    );
+    if (!rows.length) return fallback;
+    const records = rows[0].records;
+    return Array.isArray(records) ? records : fallback;
+  }
+
+  async saveAuthors(authors) {
+    await this.init();
+    await this.pool.query(
+      `INSERT INTO booknest_data (collection, records, updated_at)
+       VALUES ('authors', $1::jsonb, NOW())
+       ON CONFLICT (collection) DO UPDATE SET
+         records = EXCLUDED.records,
+         updated_at = EXCLUDED.updated_at`,
+      [JSON.stringify(authors)],
+    );
+    return authors;
+  }
+
   async persistAdminBookUpdate(id, updateData, expectedUpdatedAt, catalogOverride, baseBook) {
     await this.init();
     const client = await this.pool.connect();
@@ -2206,6 +2229,8 @@ class PostgresDatabase {
         stock: Number.isInteger(book.stock) ? book.stock : 12,
         cover: String(book.cover || "").trim() || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
         description: String(book.description || "").trim(),
+        authorIds: Array.isArray(book.authorIds) ? book.authorIds : [],
+        authors: Array.isArray(book.authors) ? book.authors : [],
         ...(book.isActive !== undefined ? { isActive: Boolean(book.isActive) } : {}),
         ...(book.discontinued !== undefined ? { discontinued: Boolean(book.discontinued) } : {}),
         ...(typeof book.status === "string" && book.status ? { status: book.status } : {}),

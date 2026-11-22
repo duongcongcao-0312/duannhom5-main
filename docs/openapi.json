@@ -260,9 +260,10 @@
       "patch": {
         "tags": ["Auth"],
         "summary": "Cập nhật thông tin liên hệ của tài khoản hiện tại",
+        "description": "Chỉ cập nhật tài khoản của phiên hiện tại. Trường tự cập nhật: customerName, name, phone, address. Thay số điện thoại đã lưu cần currentPassword (428 REAUTH_REQUIRED) hoặc đăng nhập lại gần đây với tài khoản social (428 RECENT_LOGIN_REQUIRED). Email, mật khẩu, thông tin sinh viên, vai trò bị từ chối với 403 VERIFICATION_REQUIRED. Số điện thoại trùng tài khoản khác trả 409 PHONE_IN_USE. Gửi lại cùng giá trị trả changedFields rỗng. Đơn hàng đã tạo không bị thay đổi (ordersUpdated = 0).",
         "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "customerName": { "type": "string" }, "name": { "type": "string" }, "phone": { "type": "string" }, "address": { "type": "string" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" } }
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "minProperties": 1, "properties": { "customerName": { "type": "string", "maxLength": 120 }, "name": { "type": "string", "minLength": 2, "maxLength": 120 }, "phone": { "type": "string", "pattern": "^[0-9 +()-]{8,20}$" }, "address": { "type": "string", "minLength": 10, "maxLength": 300 }, "currentPassword": { "type": "string" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "428": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/auth/logout": {
@@ -558,6 +559,65 @@
           "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/privacy/exports": {
+      "get": {
+        "tags": ["Privacy"],
+        "summary": "Xem danh sách lịch sử bản xuất dữ liệu cá nhân của tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Privacy"],
+        "summary": "Tạo bản xuất dữ liệu cá nhân (JSON) có thời hạn tải xuống",
+        "description": "Yêu cầu xác minh danh tính bằng currentPassword (428 REAUTH_REQUIRED) hoặc đăng nhập lại trong 10 phút với tài khoản chỉ dùng social (428 RECENT_LOGIN_REQUIRED). Chặn tạo trùng khi đã có bản xuất còn hiệu lực (409 EXPORT_ALREADY_ACTIVE). Chỉ xuất dữ liệu thuộc quyền sở hữu của tài khoản và loại trừ thông tin nhạy cảm/bên thứ ba.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "format": { "type": "string", "enum": ["json"] },
+                  "currentPassword": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Created" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "428": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/privacy/exports/{id}/download": {
+      "get": {
+        "tags": ["Privacy"],
+        "summary": "Tải xuống tệp xuất dữ liệu cá nhân",
+        "description": "Yêu cầu phiên đăng nhập của đúng chủ sở hữu và header X-Export-Token. Trả 410 EXPORT_EXPIRED khi liên kết hết hạn.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "X-Export-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Tệp JSON dữ liệu cá nhân (attachment)" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" }
         }
       }
     },

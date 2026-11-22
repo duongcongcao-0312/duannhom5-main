@@ -120,6 +120,88 @@
     return result;
   }
 
+  let latestExportDownload = null;
+
+  async function loadExports() {
+    if (!getToken()) {
+      setStatus('privacyExportStatus', 'Đăng nhập để tạo và tải bản xuất dữ liệu.');
+      return null;
+    }
+    const result = await request('/api/privacy/exports', { method: 'GET' });
+    const list = document.getElementById('privacyExportList');
+    if (list) {
+      list.replaceChildren();
+      for (const item of result.exports || []) {
+        const entry = document.createElement('li');
+        const statusText = item.expired ? 'Đã hết hạn' : `Còn hiệu lực đến ${item.expiresAt}`;
+        entry.textContent = `${item.filename} (${item.format.toUpperCase()}) — ${statusText}`;
+        list.appendChild(entry);
+      }
+    }
+    if (!latestExportDownload) {
+      setStatus(
+        'privacyExportStatus',
+        result.exports && result.exports.length
+          ? 'Lịch sử bản xuất dữ liệu của bạn:'
+          : 'Bạn chưa có bản xuất dữ liệu nào.'
+      );
+    }
+    return result;
+  }
+
+  async function createDataExport(currentPassword = '') {
+    const body = { format: 'json' };
+    if (typeof currentPassword === 'string' && currentPassword) {
+      body.currentPassword = currentPassword;
+    }
+    const result = await request('/api/privacy/exports', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    latestExportDownload = result.export || null;
+    const downloadButton = document.getElementById('privacyExportDownloadButton');
+    if (downloadButton && latestExportDownload && latestExportDownload.downloadToken) {
+      downloadButton.hidden = false;
+    }
+    setStatus(
+      'privacyExportStatus',
+      `Đã tạo bản xuất ${result.export.filename}. Liên kết có hiệu lực đến ${result.export.expiresAt}.`
+    );
+    return result;
+  }
+
+  async function downloadDataExport(exportRecord = latestExportDownload) {
+    const token = getToken();
+    if (!token) throw new Error('Vui lòng đăng nhập để tiếp tục.');
+    if (!exportRecord || !exportRecord.downloadUrl || !exportRecord.downloadToken) {
+      throw new Error('Không có mã tải xuống hợp lệ. Vui lòng tạo bản xuất mới khi bản cũ hết hạn.');
+    }
+    const response = await window.booknestApiFetch(exportRecord.downloadUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Export-Token': exportRecord.downloadToken
+      }
+    });
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      throw new Error(errorBody.error || 'Không thể tải bản xuất dữ liệu.');
+    }
+    const blob = await response.blob();
+    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = exportRecord.filename || 'booknest-personal-data.json';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }
+    setStatus('privacyExportStatus', `Đã tải xuống ${exportRecord.filename}.`);
+    return blob;
+  }
+
   function bindControls() {
     if (typeof document.querySelectorAll === 'function') {
       for (const button of document.querySelectorAll('[data-consent-save]')) {
@@ -148,6 +230,30 @@
           .catch((error) => setStatus('privacyDataRequestStatus', error.message));
       });
     }
+
+    const exportForm = document.getElementById('privacyExportForm');
+    if (exportForm) {
+      exportForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const passwordInput = document.getElementById('privacyExportPassword');
+        const password = passwordInput ? passwordInput.value : '';
+        createDataExport(password)
+          .then(() => {
+            if (passwordInput) passwordInput.value = '';
+            return loadExports();
+          })
+          .catch((error) => setStatus('privacyExportStatus', error.message));
+      });
+    }
+
+    const downloadButton = document.getElementById('privacyExportDownloadButton');
+    if (downloadButton) {
+      downloadButton.addEventListener('click', () => {
+        downloadDataExport()
+          .then(() => loadExports())
+          .catch((error) => setStatus('privacyExportStatus', error.message));
+      });
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -156,12 +262,18 @@
     loadDataRequests().catch((error) =>
       setStatus('privacyDataRequestStatus', error.message)
     );
+    loadExports().catch((error) =>
+      setStatus('privacyExportStatus', error.message)
+    );
   });
 
   window.booknestPrivacy = {
+    createDataExport,
     createDataRequest,
+    downloadDataExport,
     loadConsents,
     loadDataRequests,
+    loadExports,
     revokeConsent,
     saveConsent
   };

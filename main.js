@@ -109,19 +109,75 @@ function saveCustomerInfo(info) {
 	}
 }
 
+const ACCOUNT_PROFILE_FIELDS = ['customerName', 'name', 'phone', 'address'];
+
+function requestProfilePassword(message) {
+	return new Promise((resolve) => {
+		const dialog = document.createElement('dialog');
+		dialog.className = 'account-dialog';
+		dialog.setAttribute('aria-label', 'Xác nhận thay đổi thông tin cá nhân');
+		const form = document.createElement('form');
+		form.method = 'dialog';
+		const text = document.createElement('p');
+		text.textContent = message;
+		const label = document.createElement('label');
+		label.textContent = 'Mật khẩu hiện tại';
+		const input = document.createElement('input');
+		input.type = 'password';
+		input.name = 'currentPassword';
+		input.autocomplete = 'current-password';
+		input.required = true;
+		label.append(input);
+		const confirmButton = document.createElement('button');
+		confirmButton.type = 'submit';
+		confirmButton.value = 'confirm';
+		confirmButton.textContent = 'Xác nhận';
+		const cancelButton = document.createElement('button');
+		cancelButton.type = 'button';
+		cancelButton.textContent = 'Bỏ qua';
+		cancelButton.addEventListener('click', () => dialog.close(''));
+		form.append(text, label, confirmButton, cancelButton);
+		dialog.append(form);
+		dialog.addEventListener('close', () => {
+			const password = dialog.returnValue === 'confirm' ? input.value : '';
+			dialog.remove();
+			resolve(password);
+		});
+		document.body.append(dialog);
+		dialog.showModal();
+	});
+}
+
 async function saveCustomerInfoToAccount(info) {
 	const token = window.booknestAuth.getToken();
 	if (!token) return;
-	const response = await window.booknestApiFetch('/api/auth/customer-info', {
+	const payload = {};
+	for (const field of ACCOUNT_PROFILE_FIELDS) {
+		if (typeof info?.[field] === 'string' && info[field].trim()) payload[field] = info[field].trim();
+	}
+	if (!Object.keys(payload).length) return;
+	const send = (body) => window.booknestApiFetch('/api/auth/customer-info', {
 		method: 'PATCH',
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify(info)
+		body: JSON.stringify(body)
 	});
-	const result = await response.json().catch(() => ({}));
+	let response = await send(payload);
+	let result = await response.json().catch(() => ({}));
+	if (response.status === 428 && result.code === 'REAUTH_REQUIRED') {
+		const currentPassword = await requestProfilePassword(
+			`${result.error} Đơn hàng hiện tại vẫn dùng số điện thoại bạn vừa nhập.`
+		);
+		if (!currentPassword) return;
+		response = await send({ ...payload, currentPassword });
+		result = await response.json().catch(() => ({}));
+	}
 	if (!response.ok) throw new Error(result.error || 'Không thể lưu thông tin vào tài khoản.');
+	if (Array.isArray(result.changedFields) && result.changedFields.length) {
+		window.booknestToast?.('Đã cập nhật thông tin cá nhân trong tài khoản.', 'success');
+	}
 }
 
 function applyAccountCustomerInfo(user) {

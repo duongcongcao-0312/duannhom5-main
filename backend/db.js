@@ -10,6 +10,7 @@ const {
 } = require("./security");
 const { appendAuditEntry, readAuditEntries, sanitizeAuditValue } = require("./audit");
 const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
+const { pickSelfServiceFields } = require("./profile-update");
 const {
   PRIVACY_DATA_REQUEST_TYPES,
   isPrivacyDataRequestTransitionAllowed,
@@ -462,12 +463,10 @@ class Database {
     });
   }
 
-  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER) {
+  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER, options = {}) {
     const safeCustomerInfo = {};
-    for (const [key, value] of Object.entries(customerInfo || {})) {
-      if (typeof value === "string" || typeof value === "number") {
-        safeCustomerInfo[key] = sanitizeTextValue(value, { maxLength: 300, allowEmpty: true, fieldName: key });
-      }
+    for (const [key, value] of Object.entries(pickSelfServiceFields(customerInfo))) {
+      safeCustomerInfo[key] = sanitizeTextValue(value, { maxLength: 300, allowEmpty: true, fieldName: key });
     }
     const updatedUser = await this.updateUsers((users) => {
       const user = users.find((entry) => entry.id === id);
@@ -479,13 +478,17 @@ class Database {
       return user;
     });
     if (updatedUser) {
+      // Minimal audit: field names and confirmation method only, never values.
       await appendAuditEntry(this.auditLogPath, {
         action: "user.customer_info.update",
         actorId,
         actorRole: normalizeRole(actorRole),
         entityType: "user",
         entityId: id,
-        metadata: { changedFields: Object.keys(safeCustomerInfo) },
+        metadata: {
+          changedFields: Object.keys(safeCustomerInfo),
+          confirmation: typeof options.confirmation === "string" ? options.confirmation : "none",
+        },
       });
     }
     return updatedUser;

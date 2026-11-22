@@ -1,6 +1,27 @@
 const { redactLogText } = require("../monitoring");
+const {
+  ProfileUpdateError,
+  RECENT_LOGIN_WINDOW_MS,
+  diffCustomerInfo,
+  findPhoneConflict,
+  parseProfileUpdate,
+  pickSelfServiceFields,
+  requiresConfirmation,
+} = require("../profile-update");
+
+function withErrorCode(error, errorCode) {
+  error.errorCode = errorCode;
+  return error;
+}
+
 function createAuthRoutes(dependencies) {
   const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, db, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
+  function toRequestError(error) {
+    if (error instanceof ProfileUpdateError) {
+      return withErrorCode(new RequestError(error.status, error.message), error.errorCode);
+    }
+    return error;
+  }
   return async function handleRoute(request, response, requestUrl) {
 if (
   requestUrl.pathname === "/api/auth/password-reset" &&
@@ -346,38 +367,93 @@ if (
   requestUrl.pathname === "/api/auth/customer-info" &&
   request.method === "PATCH"
 ) {
+  // Ownership: the target account always comes from the session, never the payload.
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
-  const payload = requireJsonObject(
-    await readJson(request),
-    "Thông tin khách hàng không hợp lệ.",
-    payloadSchemas.customerInfo,
-  );
+  const rawPayload = await readJson(request);
+  let parsed;
+  try {
+    parsed = parseProfileUpdate(rawPayload, sanitizePlainText);
+  } catch (error) {
+    throw toRequestError(error);
+  }
 
-  const customerInfo = {};
-  for (const field of ["customerName", "name", "phone", "address"]) {
-    if (Object.prototype.hasOwnProperty.call(payload, field)) {
-      const rawValue = payload[field];
-      const safeValue = sanitizePlainText(
-        typeof rawValue === "string" ? rawValue : String(rawValue || ""),
-        field === "phone" ? 20 : 300,
+  const user = await db.findUserById(session.userId);
+  if (!user || user.isActive === false) {
+    throw new RequestError(404, "Không tìm thấy tài khoản.");
+  }
+  const currentInfo = user.customerInfo || {};
+  const changed = diffCustomerInfo(currentInfo, parsed.changes);
+  const changedFields = Object.keys(changed);
+
+  // Duplicate submission (no effective change): no write, no audit entry.
+  if (changedFields.length === 0) {
+    sendJson(response, 200, {
+      customerInfo: pickSelfServiceFields(currentInfo),
+      changedFields: [],
+      ordersUpdated: 0,
+    });
+    return true;
+  }
+
+  if (changed.phone && typeof db.getUsers === "function") {
+    const users = await db.getUsers();
+    if (findPhoneConflict(users, user.id, changed.phone)) {
+      throw withErrorCode(
+        new RequestError(
+          409,
+          "Số điện thoại này không thể dùng cho tài khoản của bạn. Vui lòng liên hệ hỗ trợ nếu cần.",
+        ),
+        "PHONE_IN_USE",
       );
-      if (!safeValue && field !== "customerName") {
-        throw new RequestError(400, "Thông tin khách hàng không hợp lệ.");
-      }
-      customerInfo[field] = safeValue;
     }
   }
+
+  let confirmation = "none";
+  if (requiresConfirmation(currentInfo, changed)) {
+    if (user.passwordAuthEnabled !== false) {
+      if (!parsed.currentPassword) {
+        throw withErrorCode(
+          new RequestError(
+            428,
+            "Thay đổi số điện thoại cần xác nhận bằng mật khẩu hiện tại.",
+          ),
+          "REAUTH_REQUIRED",
+        );
+      }
+      await verifyPasswordReauthentication(request, response, user, parsed.currentPassword);
+      confirmation = "password";
+    } else {
+      const sessionAge = Date.now() - Number(session.createdAt || 0);
+      if (!(sessionAge >= 0 && sessionAge <= RECENT_LOGIN_WINDOW_MS)) {
+        throw withErrorCode(
+          new RequestError(
+            428,
+            "Thay đổi số điện thoại cần đăng nhập lại để xác nhận. Vui lòng đăng xuất và đăng nhập lại.",
+          ),
+          "RECENT_LOGIN_REQUIRED",
+        );
+      }
+      confirmation = "recent_login";
+    }
+  }
+
   const updatedUser = await db.updateCustomerInfo(
     session.userId,
-    customerInfo,
+    changed,
     session.userId,
     session.role,
+    { confirmation },
   );
   if (!updatedUser)
     throw new RequestError(404, "Không tìm thấy tài khoản.");
   session.customerInfo = updatedUser.customerInfo;
-  sendJson(response, 200, { customerInfo: updatedUser.customerInfo });
+  // Existing orders keep the delivery snapshot captured at checkout.
+  sendJson(response, 200, {
+    customerInfo: pickSelfServiceFields(updatedUser.customerInfo),
+    changedFields,
+    ordersUpdated: 0,
+  });
   return true;
 }
 

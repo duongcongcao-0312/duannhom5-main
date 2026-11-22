@@ -30,6 +30,13 @@
         }
       }
     },
+    "/api/policies/return": {
+      "get": {
+        "tags": ["Public"],
+        "summary": "Công khai chính sách đổi trả hàng (điều kiện, thời hạn 7 ngày, bằng chứng, phí vận chuyển và quy trình)",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/policies/refund": {
       "get": {
         "tags": ["Public"],

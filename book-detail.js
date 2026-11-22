@@ -110,6 +110,7 @@ if (!book) {
 				<p class="detail-price">${formatPrice(book.price)}</p>
 				<p class="detail-description">${escapeHtml(getBookDescription(book))}</p>
 				<div class="detail-actions"><button class="primary-button" id="buyBook" type="button">Mua ngay</button><a class="secondary-button" href="index.html#books">Chọn sách khác</a></div>
+				<p class="payment-note" id="productReturnNotice">Hỗ trợ <a href="returns.html">đổi trả trong 7 ngày</a> (miễn phí vận chuyển nếu sách lỗi/giao sai) và <a href="refund.html">hoàn tiền minh bạch</a>.</p>
 			</div>
 		</div>
 		<section class="detail-extra" aria-labelledby="detailIntroTitle">

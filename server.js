@@ -2085,6 +2085,7 @@ function createServer({
     STUDENT_VERIFICATION_STATUSES,
     allowedOrderStatuses,
     allowedPaymentStatuses,
+    allowedServiceStatuses,
     assertStockCoversReservations,
     assertUniqueBookTitle,
     auditLogPath,

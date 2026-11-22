@@ -17,6 +17,7 @@ const { verifyPasswordResetToken, secureHashPasswordResetToken } = require("./se
 const { hashOrderRequest } = require("./order-idempotency");
 const { getCouponUnavailableReason } = require("./coupons");
 const { pickSelfServiceFields } = require("./profile-update");
+const { validateRefundTransition } = require("./refund-policy");
 const {
   PRIVACY_DATA_REQUEST_TYPES,
   PRIVACY_ESCALATION_LEVELS,
@@ -1891,6 +1892,10 @@ class PostgresDatabase {
         );
       }
       const nextOrderStatus = status !== undefined ? status : order.status;
+      const refundViolation = validateRefundTransition(order, nextOrderStatus, paymentStatus);
+      if (refundViolation) {
+        throw new CustomerError(refundViolation.status, refundViolation.message);
+      }
       if (nextOrderStatus === "cancelled" && paymentStatus === "paid") {
         throw new CustomerError(
           400,
@@ -1901,7 +1906,9 @@ class PostgresDatabase {
         const finalPaymentStatus = paymentStatus !== undefined
           ? paymentStatus
           : order.paymentStatus;
-        if (!new Set(["paid", "cod_pending"]).has(finalPaymentStatus)) {
+        const isRefundingCompletedOrder =
+          order.status === "completed" && finalPaymentStatus === "refunded";
+        if (!isRefundingCompletedOrder && !new Set(["paid", "cod_pending"]).has(finalPaymentStatus)) {
           throw new CustomerError(
             400,
             "Chỉ có đơn hàng đã xác nhận thanh toán mới được đánh dấu hoàn tất.",

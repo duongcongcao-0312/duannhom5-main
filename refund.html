@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Chính sách đổi trả và hoàn tiền của BookNest">
+  <title>Chính sách đổi trả &amp; hoàn tiền | BookNest</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <main class="legal-page">
+    <a class="brand" href="index.html"><span class="brand-mark">BN</span><span>BookNest</span></a>
+    <p class="eyebrow">Chính sách thương mại</p>
+    <h1>Chính sách đổi trả &amp; hoàn tiền</h1>
+    <p>Chính sách này công khai các trường hợp được hoàn tiền, mức hoàn, phương thức, thời hạn và quy trình xử lý tại BookNest, áp dụng đồng bộ với chính sách đổi trả, thanh toán và chăm sóc khách hàng. Trước khi vận hành kinh doanh chính thức, đơn vị vận hành cần rà soát lại nội dung này với chuyên gia pháp lý hoặc cơ quan có thẩm quyền.</p>
+
+    <h2 id="refundConditions">1. Điều kiện hoàn tiền &amp; mức hoàn</h2>
+    <ul>
+      <li><strong>Hủy đơn đã thanh toán trước khi giao hàng (hoàn 100%):</strong> áp dụng cho đơn chuyển khoản đã xác nhận thanh toán (<code>paid</code>) và được hủy trước khi bàn giao đơn vị vận chuyển.</li>
+      <li><strong>Sách lỗi in ấn, hư hỏng do vận chuyển hoặc giao sai/thiếu sách (hoàn 100% hoặc đổi mới miễn phí):</strong> áp dụng khi khách hàng thông báo trong vòng <strong>7 ngày</strong> kể từ ngày nhận hàng kèm mã đơn và hình ảnh/video kiểm tra hàng.</li>
+      <li><strong>Hết hàng sau khi đã thanh toán (hoàn 100%):</strong> áp dụng nếu BookNest không thể giao đủ sách theo đơn đã thanh toán và khách hàng chọn hoàn tiền.</li>
+      <li><strong>Đổi ý trả hàng trong thời hạn đổi trả 7 ngày:</strong> hoàn <strong>100% giá trị sách</strong> (không gồm phí vận chuyển hai chiều nếu có) sau khi kho kiểm tra sách còn nguyên trạng, chưa sử dụng, không rách/viết vẽ và đủ phụ kiện đi kèm.</li>
+    </ul>
+
+    <h2 id="nonRefundable">2. Trường hợp không áp dụng hoàn tiền</h2>
+    <ul>
+      <li>Đơn hàng chưa phát sinh thanh toán thành công (trạng thái <code>pending</code>, <code>failed</code>, <code>cancelled</code> chưa thu tiền hoặc <code>cod_pending</code> chưa giao/chưa thu tiền).</li>
+      <li>Yêu cầu gửi quá <strong>7 ngày</strong> kể từ ngày nhận hàng (trừ trường hợp lỗi phát sinh từ phía BookNest).</li>
+      <li>Sách đã qua sử dụng, rách, ướt, viết vẽ hoặc thiếu phụ kiện tặng kèm so với tình trạng lúc giao.</li>
+    </ul>
+
+    <h2 id="refundMethods">3. Phương thức &amp; thời gian xử lý hoàn tiền</h2>
+    <ul>
+      <li><strong>Đơn chuyển khoản ngân hàng (VietQR / SePay):</strong> hoàn về đúng tài khoản ngân hàng nguồn đã thực hiện chuyển khoản sau khi đối soát mã thanh toán (<code>BN...</code>). Thời gian nhận tiền dự kiến <strong>3–5 ngày làm việc</strong> kể từ khi phê duyệt.</li>
+      <li><strong>Đơn thanh toán khi nhận hàng (COD) đã thu tiền &amp; hoàn hàng hợp lệ:</strong> hoàn qua chuyển khoản ngân hàng vào tài khoản chính chủ do khách hàng xác nhận. Thời gian nhận tiền dự kiến <strong>3–5 ngày làm việc</strong> sau khi kho xác nhận nhận lại hàng hoàn đạt điều kiện.</li>
+      <li><strong>Thời gian tiếp nhận &amp; phản hồi phê duyệt:</strong> trong vòng <strong>2 ngày làm việc</strong> kể từ khi nhận đủ thông tin và chứng từ cần thiết.</li>
+    </ul>
+
+    <h2 id="refundWorkflow">4. Quy trình yêu cầu, phê duyệt, đối soát &amp; cập nhật trạng thái</h2>
+    <ol>
+      <li><strong>Tiếp nhận yêu cầu (CSKH):</strong> khách hàng cung cấp mã đơn hàng (UUID), lý do hoàn tiền, hình ảnh/video tình trạng sách (nếu là lỗi/đổi trả) qua kênh chăm sóc khách hàng.</li>
+      <li><strong>Kiểm tra điều kiện &amp; đối soát giao dịch:</strong> bộ phận CSKH và vận hành kiểm tra thời hạn đổi trả 7 ngày, tình trạng hàng hoàn (nếu có) và đối soát giao dịch thanh toán (mã <code>BN...</code> trên hệ thống SePay hoặc biên nhận thu hộ COD).</li>
+      <li><strong>Phê duyệt hoàn tiền:</strong> quản trị viên có thẩm quyền (quyền <code>write:orders</code>) kiểm tra kết quả đối soát và phê duyệt mức hoàn, phương thức hoàn.</li>
+      <li><strong>Chuyển hoàn &amp; cập nhật trạng thái:</strong> sau khi thực hiện chuyển hoàn, quản trị viên cập nhật trạng thái thanh toán của đơn sang <code>refunded</code> trên hệ thống. Trạng thái <code>refunded</code> là trạng thái kết thúc, được ghi nhận vào nhật ký kiểm toán và hiển thị khi khách tra cứu đơn hàng.</li>
+    </ol>
+
+    <h2 id="refundSync">5. Đồng bộ đổi trả, thanh toán &amp; chăm sóc khách hàng</h2>
+    <p>Mọi thông tin tài khoản nhận hoàn tiền chỉ được dùng cho mục đích xử lý giao dịch hoàn tiền và được bảo vệ theo <a href="privacy.html">Chính sách quyền riêng tư</a>. Các điều khoản đặt hàng và giao nhận được quy định tại <a href="terms.html">Điều khoản dịch vụ</a>.</p>
+
+    <p><a href="index.html">Về trang chủ</a> · <a href="terms.html">Điều khoản dịch vụ</a> · <a href="privacy.html">Chính sách bảo mật</a></p>
+  </main>
+</body>
+</html>

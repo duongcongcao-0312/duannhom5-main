@@ -30,6 +30,13 @@
         }
       }
     },
+    "/api/policies/refund": {
+      "get": {
+        "tags": ["Public"],
+        "summary": "Công khai chính sách đổi trả và hoàn tiền (điều kiện, mức hoàn, thời hạn, phương thức và quy trình)",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/books": {
       "get": {
         "tags": ["Store"],

@@ -1,4 +1,5 @@
 const { getCouponUnavailableReason } = require("../coupons");
+const { REFUND_POLICY } = require("../refund-policy");
 
 function createPublicRoutes({
   db,
@@ -68,6 +69,11 @@ function createPublicRoutes({
     if (requestUrl.pathname === "/api/categories" && request.method === "GET") {
       const categories = (await getBookCategories()).filter((category) => category.status !== "inactive");
       sendJson(response, 200, categories);
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/policies/refund" && request.method === "GET") {
+      sendJson(response, 200, { policy: REFUND_POLICY });
       return true;
     }
     return false;

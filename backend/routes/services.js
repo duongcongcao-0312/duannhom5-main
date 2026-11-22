@@ -30,8 +30,9 @@ if (requestUrl.pathname === "/api/services" && request.method === "POST") {
   if (!allowedServiceTypes.has(service)) {
     throw new RequestError(400, "Loại dịch vụ không hợp lệ.");
   }
+  const requester = await getAuthUser(request);
   const entry = await db.addServiceRequest({
-    ...payload,
+    userId: requester?.userId || null,
     bookTitle,
     name,
     phone,

@@ -53,6 +53,12 @@ const {
   resolveRequestBodyLimit,
 } = require("./backend/request-limits");
 const {
+  PAYLOAD_SCHEMAS,
+  ValidationError,
+  validateJsonPayload,
+  validateQueryParams,
+} = require("./backend/validation");
+const {
   createRateLimitBucketKey,
   getClientAddress,
   parseTrustedProxyIps,
@@ -192,327 +198,7 @@ function enqueueOrderWrite(ordersPath, operation) {
   return result;
 }
 
-const payloadSchemas = {
-  passwordReset: {
-    allowed: ["email"],
-    required: ["email"],
-    types: { email: "string" },
-  },
-  passwordResetConfirm: {
-    allowed: ["token", "password"],
-    required: ["token", "password"],
-    types: { token: "string", password: "string" },
-    preserveStrings: ["password"],
-  },
-  register: {
-    allowed: ["name", "email", "password", "studentType", "studentId"],
-    required: ["name", "email", "password"],
-    types: {
-      name: "string",
-      email: "string",
-      password: "string",
-      studentType: "string",
-      studentId: "string",
-    },
-    preserveStrings: ["password"],
-  },
-  login: {
-    allowed: ["email", "password"],
-    required: ["email", "password"],
-    types: { email: "string", password: "string" },
-    preserveStrings: ["password"],
-  },
-  staff: {
-    allowed: ["name", "email", "password", "role"],
-    required: ["name", "email", "password", "role"],
-    types: { name: "string", email: "string", password: "string", role: "string" },
-    preserveStrings: ["password"],
-  },
-  staffUpdate: {
-    allowed: ["name", "email", "role", "isActive"],
-    types: { name: "string", email: "string", role: "string", isActive: "boolean" },
-    minProperties: 1,
-  },
-  socialAuth: {
-    allowed: [
-      "name",
-      "email",
-      "provider",
-      "providerId",
-      "firebaseUid",
-      "studentType",
-      "studentId",
-    ],
-    required: ["email"],
-    types: {
-      name: "string",
-      email: "string",
-      provider: "string",
-      providerId: "string",
-      firebaseUid: "string",
-      studentType: "string",
-      studentId: "string",
-    },
-  },
-  socialAuthLink: {
-    allowed: ["idToken", "password"],
-    required: ["idToken", "password"],
-    types: { idToken: "string", password: "string" },
-    preserveStrings: ["idToken", "password"],
-  },
-  socialAuthUnlink: {
-    allowed: ["provider", "password"],
-    required: ["provider", "password"],
-    types: { provider: "string", password: "string" },
-    preserveStrings: ["password"],
-  },
-  customerInfo: {
-    allowed: ["customerName", "name", "phone", "address", "currentPassword"],
-    types: {
-      customerName: "string",
-      name: "string",
-      phone: "string",
-      address: "string",
-      currentPassword: "string",
-    },
-    minProperties: 1,
-    preserveStrings: ["currentPassword"],
-  },
-  customerInteraction: {
-    allowed: ["type", "note"],
-    required: ["type", "note"],
-    types: { type: "string", note: "string" },
-    preserveStrings: ["note"],
-  },
-  customerInteractionUpdate: {
-    allowed: ["type", "note"],
-    types: { type: "string", note: "string" },
-    minProperties: 1,
-    preserveStrings: ["note"],
-  },
-  customer: {
-    allowed: ["name", "email", "phone"],
-    required: ["name", "email", "phone"],
-    types: { name: "string", email: "string", phone: "string" },
-  },
-  customerUpdate: {
-    allowed: ["name", "email", "phone", "status"],
-    types: {
-      name: "string",
-      email: "string",
-      phone: "string",
-      status: "string",
-    },
-    minProperties: 1,
-  },
-  order: {
-    allowed: [
-      "customerName",
-      "address",
-      "phone",
-      "paymentMethod",
-      "accessCode",
-      "discountRate",
-      "couponCode",
-      "subtotal",
-      "discount",
-      "total",
-      "items",
-    ],
-    required: [
-      "customerName",
-      "address",
-      "phone",
-      "paymentMethod",
-      "items",
-    ],
-    types: {
-      customerName: "string",
-      address: "string",
-      phone: "string",
-      paymentMethod: "string",
-      accessCode: "string",
-      discountRate: "number",
-      couponCode: "string",
-      subtotal: "number",
-      discount: "number",
-      total: "number",
-      items: "array",
-    },
-  },
-  orderQuote: {
-    allowed: ["discountRate", "couponCode", "items"],
-    required: ["items"],
-    types: {
-      discountRate: "number",
-      couponCode: "string",
-      items: "array",
-    },
-    coupon: {
-      allowed: [
-        "code",
-        "label",
-        "rate",
-        "minSubtotal",
-        "maxUses",
-        "startsAt",
-        "expiresAt",
-        "enabled",
-      ],
-      required: [
-        "code",
-        "label",
-        "rate",
-        "minSubtotal",
-        "maxUses",
-        "startsAt",
-        "expiresAt",
-        "enabled",
-      ],
-      types: {
-        code: "string",
-        label: "string",
-        rate: "number",
-        minSubtotal: "number",
-        maxUses: "number",
-        startsAt: "string",
-        expiresAt: "string",
-        enabled: "boolean",
-      },
-    },
-    couponUpdate: {
-      allowed: [
-        "label",
-        "rate",
-        "minSubtotal",
-        "maxUses",
-        "startsAt",
-        "expiresAt",
-        "enabled",
-      ],
-      required: [
-        "label",
-        "rate",
-        "minSubtotal",
-        "maxUses",
-        "startsAt",
-        "expiresAt",
-        "enabled",
-      ],
-      types: {
-        label: "string",
-        rate: "number",
-        minSubtotal: "number",
-        maxUses: "number",
-        startsAt: "string",
-        expiresAt: "string",
-        enabled: "boolean",
-      },
-    },
-    couponToggle: {
-      allowed: ["enabled"],
-      required: ["enabled"],
-      types: { enabled: "boolean" },
-    },
-  },
-  orderUpdate: {
-    allowed: ["status", "paymentStatus", "items"],
-    types: { status: "string", paymentStatus: "string", items: "array" },
-    minProperties: 1,
-  },
-  orderStatusUpdate: {
-    allowed: ["status", "paymentStatus"],
-    types: { status: "string", paymentStatus: "string" },
-    minProperties: 1,
-  },
-  service: {
-    allowed: ["bookTitle", "name", "phone", "service", "condition", "note"],
-    required: ["bookTitle", "name", "phone", "service"],
-    types: {
-      bookTitle: "string",
-      name: "string",
-      phone: "string",
-      service: "string",
-      condition: "string",
-      note: "string",
-    },
-  },
-  serviceStatus: {
-    allowed: ["status"],
-    required: ["status"],
-    types: { status: "string" },
-  },
-  book: {
-    allowed: [
-      "title",
-      "author",
-      "authorIds",
-      "authors",
-      "publisher",
-      "publisherId",
-      "category",
-      "price",
-      "stock",
-      "cover",
-      "description",
-      "isActive",
-      "discontinued",
-      "status",
-    ],
-    required: ["title", "price"],
-    types: {
-      title: "string",
-      author: "string",
-      authorIds: "array",
-      authors: "array",
-      publisher: "string",
-      publisherId: "string",
-      category: "string",
-      price: "number",
-      stock: "number",
-      cover: "string",
-      description: "string",
-      isActive: "boolean",
-      discontinued: "boolean",
-      status: "string",
-    },
-  },
-  bookUpdate: {
-    allowed: [
-      "title",
-      "author",
-      "authorIds",
-      "authors",
-      "publisher",
-      "publisherId",
-      "category",
-      "price",
-      "stock",
-      "cover",
-      "description",
-      "isActive",
-      "discontinued",
-      "status",
-    ],
-    types: {
-      title: "string",
-      author: "string",
-      authorIds: "array",
-      authors: "array",
-      publisher: "string",
-      publisherId: "string",
-      category: "string",
-      price: "number",
-      stock: "number",
-      cover: "string",
-      description: "string",
-      isActive: "boolean",
-      discontinued: "boolean",
-      status: "string",
-    },
-    minProperties: 1,
-  },
-};
+const payloadSchemas = PAYLOAD_SCHEMAS;
 const securityHeaders = {
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -953,77 +639,11 @@ function requireJsonObject(
   message = "Dữ liệu yêu cầu không hợp lệ.",
   schema,
 ) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new RequestError(400, message);
-  }
-
-  const sanitized = sanitizePayload(payload);
-  for (const field of schema?.preserveStrings || []) {
-    if (typeof payload[field] === "string") {
-      sanitized[field] = payload[field];
-    }
-  }
-  const prototype = Object.getPrototypeOf(sanitized);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new RequestError(400, message);
-  }
-
-  if (schema) {
-    const allowedFields = new Set(schema.allowed);
-    if (Object.keys(sanitized).some((field) => !allowedFields.has(field))) {
-      throw new RequestError(400, message);
-    }
-    if (schema.required?.some((field) => !Object.hasOwn(sanitized, field))) {
-      throw new RequestError(400, message);
-    }
-    if (
-      Number.isInteger(schema.minProperties) &&
-      Object.keys(sanitized).length < schema.minProperties
-    ) {
-      throw new RequestError(400, message);
-    }
-    for (const [field, type] of Object.entries(schema.types || {})) {
-      if (
-        Object.hasOwn(sanitized, field) &&
-        (type === "array"
-          ? !Array.isArray(sanitized[field])
-          : typeof sanitized[field] !== type)
-      ) {
-        throw new RequestError(400, message);
-      }
-    }
-  }
-
-  return sanitized;
+  return validateJsonPayload(payload, schema, { message, sanitizePayload });
 }
 
 function validateQuery(requestUrl, schema, message) {
-  const values = {};
-  for (const [field, value] of requestUrl.searchParams) {
-    const definition = schema[field];
-    if (!definition || Object.hasOwn(values, field) || value.length > definition.maxLength) {
-      throw new RequestError(400, message);
-    }
-
-    if (definition.type === "integer") {
-      if (!/^\d+$/.test(value)) throw new RequestError(400, message);
-      const number = Number(value);
-      if (
-        !Number.isSafeInteger(number) ||
-        number < definition.min ||
-        number > definition.max
-      ) {
-        throw new RequestError(400, message);
-      }
-      values[field] = number;
-      continue;
-    }
-    if (definition.values && !definition.values.includes(value)) {
-      throw new RequestError(400, message);
-    }
-    values[field] = value;
-  }
-  return values;
+  return validateQueryParams(requestUrl, schema, message);
 }
 
 function paginateList(records, query, defaultSort, defaultLimit = 50) {
@@ -2629,6 +2249,7 @@ function createServer({
       const isExpectedError =
         error instanceof RequestError ||
         error instanceof RequestLimitError ||
+        error instanceof ValidationError ||
         error instanceof CustomerError;
       const status =
         isExpectedError &&
@@ -2665,7 +2286,7 @@ function createServer({
       })();
       if (isApiRequest) {
         const message =
-          (status < 500 || error instanceof RequestError || error instanceof RequestLimitError) && isExpectedError
+          (status < 500 || error instanceof RequestError || error instanceof RequestLimitError || error instanceof ValidationError) && isExpectedError
             ? error.message
             : "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.";
         const errorCode =
@@ -2676,6 +2297,9 @@ function createServer({
         if (errorCode) body.code = errorCode;
         if (isExpectedError && Number.isSafeInteger(error.maxBytes)) {
           body.maxBytes = error.maxBytes;
+        }
+        if (error instanceof ValidationError && Array.isArray(error.details) && error.details.length > 0) {
+          body.details = error.details;
         }
         sendJson(response, status, body);
         return;

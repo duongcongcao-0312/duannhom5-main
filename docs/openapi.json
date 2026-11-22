@@ -2006,8 +2006,20 @@
         "required": ["error"],
         "properties": {
           "error": { "type": "string", "example": "Dữ liệu yêu cầu không hợp lệ." },
-          "code": { "type": "string", "example": "PAYLOAD_TOO_LARGE", "description": "Mã lỗi máy đọc được (tùy chọn theo từng loại lỗi)." },
-          "maxBytes": { "type": "integer", "minimum": 1, "example": 16384, "description": "Giới hạn byte tối đa (có mặt trên lỗi 413/414)." }
+          "code": { "type": "string", "example": "VALIDATION_ERROR", "description": "Mã lỗi máy đọc được (ví dụ VALIDATION_ERROR, PAYLOAD_TOO_LARGE, UNSUPPORTED_API_VERSION)." },
+          "maxBytes": { "type": "integer", "minimum": 1, "example": 16384, "description": "Giới hạn byte tối đa (có mặt trên lỗi 413/414)." },
+          "details": {
+            "type": "array",
+            "description": "Chi tiết trường vi phạm validation (không bao giờ chứa giá trị thô của trường nhạy cảm).",
+            "items": {
+              "type": "object",
+              "required": ["field", "reason"],
+              "properties": {
+                "field": { "type": "string", "example": "email" },
+                "reason": { "type": "string", "example": "unexpected_field" }
+              }
+            }
+          }
         }
       },
       "Coupon": {

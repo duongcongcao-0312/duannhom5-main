@@ -48,6 +48,7 @@ if (
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu danh mục không hợp lệ.",
+    payloadSchemas.category,
   );
   const slug = normalizeCategorySlug(payload.slug || payload.value || payload.name || payload.label);
   const name = sanitizePlainText(payload.name || payload.label, 120);
@@ -100,6 +101,7 @@ if (
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu cập nhật danh mục không hợp lệ.",
+    payloadSchemas.categoryUpdate,
   );
   const requestedSlug = normalizeCategorySlug(payload.slug || payload.value);
   if (requestedSlug && requestedSlug !== slug) {
@@ -319,6 +321,7 @@ if (
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu tác giả không hợp lệ.",
+    payloadSchemas.author,
   );
   const name = sanitizePlainText(payload.name || payload.displayName, 200);
   const slug = normalizeAuthorSlug(payload.slug || payload.id || name);
@@ -381,6 +384,7 @@ if (
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu cập nhật tác giả không hợp lệ.",
+    payloadSchemas.authorUpdate,
   );
   const name = sanitizePlainText(payload.name || payload.displayName || existing.name, 200);
   if (!name) {
@@ -473,7 +477,11 @@ if (
   request.method === "POST"
 ) {
   await requireRole(request, "write:books");
-  const payload = requireJsonObject(await readJson(request), "Dữ liệu nhà xuất bản không hợp lệ.");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu nhà xuất bản không hợp lệ.",
+    payloadSchemas.publisher,
+  );
   const name = sanitizePlainText(payload.name || payload.displayName, 200);
   const slug = normalizePublisherSlug(payload.slug || payload.id || name);
   if (!name || !slug) {
@@ -527,7 +535,11 @@ if (
     return true;
   }
 
-  const payload = requireJsonObject(await readJson(request), "Dữ liệu cập nhật nhà xuất bản không hợp lệ.");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu cập nhật nhà xuất bản không hợp lệ.",
+    payloadSchemas.publisherUpdate,
+  );
   const name = sanitizePlainText(payload.name || payload.displayName || existing.name, 200);
   if (!name) throw new RequestError(400, "Tên nhà xuất bản không được để trống.");
   const nextSlug = normalizePublisherSlug(payload.slug || payload.id) || slug;

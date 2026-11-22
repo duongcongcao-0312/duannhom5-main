@@ -59,6 +59,10 @@ const {
   validateQueryParams,
 } = require("./backend/validation");
 const {
+  buildApiErrorPayload,
+  resolveCorrelationId,
+} = require("./backend/api-errors");
+const {
   createRateLimitBucketKey,
   getClientAddress,
   parseTrustedProxyIps,
@@ -246,15 +250,7 @@ class RequestError extends Error {
 }
 
 function getRequestId(request) {
-  const suppliedId = request.headers["x-request-id"];
-  const authorization = request.headers["authorization"] || "";
-  const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
-  return typeof suppliedId === "string" &&
-    suppliedId.length <= 128 &&
-    /^[A-Za-z0-9._:-]+$/.test(suppliedId) &&
-    suppliedId !== bearerToken
-    ? suppliedId
-    : randomUUID();
+  return resolveCorrelationId(request);
 }
 
 function logRequestError(request, requestId, error, message) {
@@ -2193,7 +2189,13 @@ function createServer({
 
     // Catch unhandled /api/ requests
     if (requestUrl.pathname.startsWith("/api/")) {
-      sendJson(response, 404, { error: "Không tìm thấy API." });
+      const { payload } = buildApiErrorPayload({
+        error: new RequestError(404, "Không tìm thấy API."),
+        status: 404,
+        isExpectedError: true,
+        requestId: response.getHeader("X-Request-Id"),
+      });
+      sendJson(response, 404, payload);
       return;
     }
 
@@ -2285,23 +2287,13 @@ function createServer({
         }
       })();
       if (isApiRequest) {
-        const message =
-          (status < 500 || error instanceof RequestError || error instanceof RequestLimitError || error instanceof ValidationError) && isExpectedError
-            ? error.message
-            : "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.";
-        const errorCode =
-          isExpectedError && status < 500 && typeof error.errorCode === "string"
-            ? error.errorCode
-            : undefined;
-        const body = { error: message };
-        if (errorCode) body.code = errorCode;
-        if (isExpectedError && Number.isSafeInteger(error.maxBytes)) {
-          body.maxBytes = error.maxBytes;
-        }
-        if (error instanceof ValidationError && Array.isArray(error.details) && error.details.length > 0) {
-          body.details = error.details;
-        }
-        sendJson(response, status, body);
+        const { status: effectiveStatus, payload } = buildApiErrorPayload({
+          error,
+          status,
+          isExpectedError,
+          requestId,
+        });
+        sendJson(response, effectiveStatus, payload);
         return;
       }
       void sendHtmlError(response, status, status === 404 ? "404" : "500");

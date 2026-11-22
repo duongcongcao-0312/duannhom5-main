@@ -2003,10 +2003,11 @@
       },
       "Error": {
         "type": "object",
-        "required": ["error"],
+        "required": ["error", "code", "requestId"],
         "properties": {
           "error": { "type": "string", "example": "Dữ liệu yêu cầu không hợp lệ." },
-          "code": { "type": "string", "example": "VALIDATION_ERROR", "description": "Mã lỗi máy đọc được (ví dụ VALIDATION_ERROR, PAYLOAD_TOO_LARGE, UNSUPPORTED_API_VERSION)." },
+          "code": { "type": "string", "example": "VALIDATION_ERROR", "description": "Mã lỗi máy đọc được chuẩn hóa theo loại lỗi (BAD_REQUEST, VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, INTERNAL_ERROR, SERVICE_UNAVAILABLE)." },
+          "requestId": { "type": "string", "example": "00000000-0000-4000-8000-000000000001", "description": "Correlation ID an toàn trùng khớp với header X-Request-Id để đối chiếu log." },
           "maxBytes": { "type": "integer", "minimum": 1, "example": 16384, "description": "Giới hạn byte tối đa (có mặt trên lỗi 413/414)." },
           "details": {
             "type": "array",

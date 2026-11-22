@@ -393,6 +393,8 @@ const payloadSchemas = {
       "author",
       "authorIds",
       "authors",
+      "publisher",
+      "publisherId",
       "category",
       "price",
       "stock",
@@ -405,8 +407,8 @@ const payloadSchemas = {
       author: "string",
       authorIds: "array",
       authors: "array",
-      authorIds: "array",
-      authors: "array",
+      publisher: "string",
+      publisherId: "string",
       category: "string",
       price: "number",
       stock: "number",
@@ -420,6 +422,8 @@ const payloadSchemas = {
       "author",
       "authorIds",
       "authors",
+      "publisher",
+      "publisherId",
       "category",
       "price",
       "stock",
@@ -429,6 +433,10 @@ const payloadSchemas = {
     types: {
       title: "string",
       author: "string",
+      authorIds: "array",
+      authors: "array",
+      publisher: "string",
+      publisherId: "string",
       category: "string",
       price: "number",
       stock: "number",
@@ -660,14 +668,20 @@ function normalizeAdminBook(payload, existing) {
   const author = payload.author === undefined
     ? existing?.author
     : sanitizePlainText(payload.author, 200);
+  const publisher = payload.publisher === undefined
+    ? existing?.publisher
+    : sanitizePlainText(payload.publisher, 200);
+  const publisherId = payload.publisherId === undefined
+    ? existing?.publisherId
+    : normalizePublisherSlug(payload.publisherId);
   const category = payload.category === undefined
     ? existing?.category
     : sanitizePlainText(payload.category, 64);
   const price = payload.price === undefined ? existing?.price : payload.price;
   const stock = payload.stock === undefined ? existing?.stock : payload.stock;
 
-  if (!title || !author) {
-    throw new RequestError(400, "Vui lòng nhập tên sách và tác giả.");
+  if (!title) {
+    throw new RequestError(400, "Vui lòng nhập tên sách.");
   }
   if (!allowedBookCategories.has(category)) {
     throw new RequestError(400, "Thể loại sách không hợp lệ.");
@@ -688,6 +702,8 @@ function normalizeAdminBook(payload, existing) {
     authors: Array.isArray(payload.authors)
       ? payload.authors.map((value) => sanitizePlainText(value, 200)).filter(Boolean)
       : [],
+    publisher,
+    publisherId,
     category,
     price,
     stock,
@@ -1226,6 +1242,7 @@ function createServer({
   booksPath,
   categoriesPath,
   authorsPath,
+  publishersPath,
   couponsPath,
   customerInteractionsPath,
   consentRecordsPath,
@@ -1285,6 +1302,7 @@ function createServer({
       booksPath,
       categoriesPath,
       authorsPath,
+      publishersPath,
       couponsPath,
       customerInteractionsPath,
       consentRecordsPath,
@@ -1682,6 +1700,48 @@ function createServer({
     return authors;
   }
 
+  function normalizePublisherSlug(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/đ/g, "d")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+  }
+
+  let publishersReady;
+  async function getBookPublishers() {
+    if (!publishersReady) {
+      publishersReady = (async () => {
+        const stored = await db.getPublishers([]);
+        return (Array.isArray(stored) ? stored : []).map((publisher) => {
+          const name = sanitizePlainText(publisher.name || publisher.displayName || "", 200);
+          const slug = normalizePublisherSlug(publisher.slug || publisher.id || name);
+          return {
+            id: slug,
+            slug,
+            name,
+            displayName: sanitizePlainText(publisher.displayName || name, 200),
+            status: ["active", "inactive"].includes(publisher.status) ? publisher.status : "active",
+            address: sanitizePlainText(publisher.address || "", 300),
+            website: sanitizePlainText(publisher.website || "", 500),
+            createdAt: publisher.createdAt,
+            updatedAt: publisher.updatedAt,
+          };
+        }).filter((publisher) => publisher.slug && publisher.name);
+      })();
+    }
+    return publishersReady;
+  }
+
+  async function saveBookPublishers(publishers) {
+    await db.savePublishers(publishers);
+    publishersReady = Promise.resolve(publishers);
+    return publishers;
+  }
+
   function applyCustomerFilters(customers, { search = "", status = "", page = 1, limit = 20 } = {}) {
     const normalizedSearch = String(search || "").trim().toLowerCase();
     const normalizedStatus = String(status || "").trim();
@@ -1743,6 +1803,7 @@ function createServer({
     const refreshedOverrides = new Map();
     const overridesById = new Map(overrides.map((book) => [book.id, book]));
     const allAuthors = await getBookAuthors();
+    const allPublishers = await getBookPublishers();
     const enrichAuthorLinks = (book) => {
       const names = Array.isArray(book.authors)
         ? book.authors
@@ -1752,7 +1813,18 @@ function createServer({
         : names.map((name) => allAuthors.find((author) =>
             author.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
           )?.slug).filter(Boolean);
-      return { ...book, author: names.join(", ") || book.author || "", authors: names, authorIds };
+      const publisher = allPublishers.find((entry) =>
+        entry.slug === book.publisherId ||
+        entry.name.toLocaleLowerCase("vi") === String(book.publisher || "").toLocaleLowerCase("vi")
+      );
+      return {
+        ...book,
+        author: names.join(", ") || book.author || "",
+        authors: names,
+        authorIds,
+        publisherId: publisher?.slug || book.publisherId || "",
+        publisher: publisher?.displayName || publisher?.name || book.publisher || "",
+      };
     };
     const baseBooks = books.map((book) => {
       const id = catalogBookId(book);
@@ -1782,6 +1854,10 @@ function createServer({
     getCatalogBookList,
     getBookCategories,
     getBookAuthors,
+    getBookPublishers,
+    getBookAuthors,
+    getBookPublishers,
+    getBookPublishers,
     getBookAuthors,
     logRequestError,
     paginateBookList: (records, filters) => paginateList(records, filters, "title"),
@@ -1938,6 +2014,7 @@ function createServer({
     listQuerySchema,
     normalizeAdminBook,
     normalizeAuthorSlug,
+    normalizePublisherSlug,
     normalizeCategorySlug,
     normalizeCoupon,
     ordersPath,
@@ -1953,6 +2030,7 @@ function createServer({
     sendPaginatedJson,
     saveBookCategories,
     saveBookAuthors,
+    saveBookPublishers,
     sessionStore,
     validateQuery,
     waitForCatalogReady,

@@ -10,6 +10,7 @@ function createPublicRoutes({
   validateBookQuery,
   getBookCategories,
   getBookAuthors,
+  getBookPublishers,
 }) {
   return async function handlePublicRoute(request, response, requestUrl) {
     if (
@@ -74,6 +75,11 @@ function createPublicRoutes({
     if (requestUrl.pathname === "/api/authors" && request.method === "GET") {
       const authors = (await getBookAuthors()).filter((author) => author.status !== "inactive");
       sendJson(response, 200, authors);
+      return true;
+    }
+    if (requestUrl.pathname === "/api/publishers" && request.method === "GET") {
+      const publishers = (await getBookPublishers()).filter((publisher) => publisher.status !== "inactive");
+      sendJson(response, 200, publishers);
       return true;
     }
     return false;

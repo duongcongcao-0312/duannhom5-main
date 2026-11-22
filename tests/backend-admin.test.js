@@ -430,6 +430,111 @@ test("issue #214 - author management keeps names, slugs and linked books consist
   assert.equal(publicAuthors.some((author) => author.slug === "nguyen-quan"), false);
 });
 
+test("issue #215 - publisher CRUD keeps linked book data consistent", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-publishers-test-"),
+  );
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    booksPath: path.join(temporaryDirectory, "books.json"),
+    publishersPath: path.join(temporaryDirectory, "publishers.json"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
+  });
+  const { token } = await login.json();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const publicBefore = await (await fetch(`${baseUrl}/api/publishers`)).json();
+  assert.ok(Array.isArray(publicBefore));
+
+  const createdRes = await fetch(`${baseUrl}/api/admin/publishers`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      name: "Nhà xuất bản Trẻ",
+      displayName: "NXB Trẻ",
+      slug: "nxb-tre",
+      address: "161B Lý Chính Thắng",
+      website: "https://nxbtre.com.vn",
+    }),
+  });
+  assert.equal(createdRes.status, 201);
+  const created = await createdRes.json();
+
+  const duplicateRes = await fetch(`${baseUrl}/api/admin/publishers`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Nhà xuất bản Trẻ", slug: "nxb-tre-2" }),
+  });
+  assert.equal(duplicateRes.status, 409);
+
+  const bookRes = await fetch(`${baseUrl}/api/admin/books`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      title: "Sách nhà xuất bản thử nghiệm",
+      author: "Tác giả thử",
+      category: "van-hoc",
+      publisher: "NXB Trẻ",
+      publisherId: created.slug,
+      price: 75000,
+      stock: 4,
+    }),
+  });
+  assert.equal(bookRes.status, 201);
+  const book = await bookRes.json();
+  assert.equal(book.publisher, "NXB Trẻ");
+  assert.equal(book.publisherId, "nxb-tre");
+
+  const updateRes = await fetch(`${baseUrl}/api/admin/publishers/${created.slug}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({
+      name: "Nhà xuất bản Trẻ TP.HCM",
+      displayName: "NXB Trẻ TP.HCM",
+      slug: "nxb-tre-tphcm",
+    }),
+  });
+  assert.equal(updateRes.status, 200);
+  const updated = await updateRes.json();
+  assert.equal(updated.slug, "nxb-tre-tphcm");
+
+  const catalog = await (await fetch(`${baseUrl}/api/admin/books`, { headers })).json();
+  const linkedBook = catalog.find((entry) => entry.id === book.id);
+  assert.equal(linkedBook.publisher, "NXB Trẻ TP.HCM");
+  assert.equal(linkedBook.publisherId, "nxb-tre-tphcm");
+
+  const deleteLinkedRes = await fetch(`${baseUrl}/api/admin/publishers/${updated.slug}`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(deleteLinkedRes.status, 409);
+
+  const inactiveRes = await fetch(`${baseUrl}/api/admin/publishers/${updated.slug}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ status: "inactive" }),
+  });
+  assert.equal(inactiveRes.status, 200);
+  const publicPublishers = await (await fetch(`${baseUrl}/api/publishers`)).json();
+  assert.equal(publicPublishers.some((publisher) => publisher.slug === "nxb-tre-tphcm"), false);
+});
+
 test("admin coupons enforce dates, minimum spend, and redemption limits on the server", async (t) => {
   configureTestAdmin();
   const temporaryDirectory = await fsPromises.mkdtemp(

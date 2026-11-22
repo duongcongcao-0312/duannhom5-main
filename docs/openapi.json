@@ -30,6 +30,13 @@
         }
       }
     },
+    "/api/policies/privacy": {
+      "get": {
+        "tags": ["Public"],
+        "summary": "Công khai chính sách quyền riêng tư (kiểm kê dữ liệu, cookie/analytics, bên nhận, thời hạn lưu, quyền chủ thể dữ liệu và kênh liên hệ)",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/policies/terms": {
       "get": {
         "tags": ["Public"],

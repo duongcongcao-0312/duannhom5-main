@@ -1,4 +1,5 @@
 const { getCouponUnavailableReason } = require("../coupons");
+const { PRIVACY_POLICY } = require("../privacy-policy");
 const { REFUND_POLICY } = require("../refund-policy");
 const { RETURN_POLICY } = require("../return-policy");
 const { SHIPPING_POLICY } = require("../shipping-policy");
@@ -105,6 +106,11 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/policies/terms" && request.method === "GET") {
       sendJson(response, 200, { policy: TERMS_POLICY });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/policies/privacy" && request.method === "GET") {
+      sendJson(response, 200, { policy: PRIVACY_POLICY });
       return true;
     }
     return false;

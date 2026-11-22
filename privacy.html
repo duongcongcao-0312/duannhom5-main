@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Thông tin về dữ liệu trong BookNest">
+  <meta name="description" content="Chính sách quyền riêng tư và bảo vệ dữ liệu cá nhân của BookNest">
   <title>Chính sách quyền riêng tư | BookNest</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="main.css">
@@ -11,35 +11,48 @@
 <body>
   <main class="legal-page">
     <a class="brand" href="index.html"><span class="brand-mark">BN</span><span>BookNest</span></a>
-    <p class="eyebrow">Thông tin dữ liệu</p>
-    <h1>Quyền riêng tư</h1>
-    <p>BookNest là ứng dụng mẫu. Không nhập dữ liệu cá nhân hoặc thông tin thanh toán thật vào bản demo. Cách lưu trữ phụ thuộc cấu hình triển khai của từng môi trường.</p>
+    <p class="eyebrow">Pháp lý · Phiên bản 2026-01 · Hiệu lực từ 01/01/2026</p>
+    <h1>Chính sách quyền riêng tư</h1>
+    <p>Chính sách này công khai rõ cách BookNest thu thập, sử dụng, chia sẻ, lưu trữ và bảo vệ dữ liệu cá nhân trên website và hệ thống backend. Trước khi vận hành thương mại với người dùng thật, đơn vị vận hành cần xác nhận nội dung chính sách, thông tin pháp nhân và đầu mối bảo vệ dữ liệu với chuyên gia pháp lý hoặc cơ quan có thẩm quyền; tài liệu này không thay thế tư vấn pháp lý.</p>
 
-    <h2>1. Dữ liệu ứng dụng xử lý</h2>
+    <h2 id="privacyDataInventory">1. Kiểm kê dữ liệu thu thập, mục đích, bên nhận &amp; thời hạn lưu trữ</h2>
     <ul>
-      <li>Tài khoản có thể gồm tên, email, mật khẩu đã băm ở backend và thông tin phân loại học sinh/sinh viên do người dùng cung cấp.</li>
-      <li>Đơn hàng có thể gồm tên người nhận, số điện thoại, địa chỉ, mặt hàng, số lượng, mã ưu đãi, phương thức và trạng thái thanh toán.</li>
-      <li>Yêu cầu dịch vụ có thể gồm tên, số điện thoại, loại dịch vụ, tên sách và ghi chú.</li>
-      <li>Nhân viên quản trị có thể tạo hồ sơ CRM, ghi chú tương tác và nhật ký hoạt động quản trị.</li>
+      <li><strong>Tài khoản &amp; xác thực:</strong> họ tên, email đăng nhập, mật khẩu đã băm (<code>scrypt</code>), thông tin phân loại/xác minh học sinh/sinh viên (nếu cung cấp), liên kết social (Google/Facebook nếu bật) và phiên đăng nhập (Bearer token). <em>Mục đích:</em> tạo tài khoản, xác thực, khôi phục mật khẩu và áp dụng ưu đãi hợp lệ. <em>Bên nhận:</em> backend/CSDL BookNest, Firebase Authentication (khi bật đăng nhập social), dịch vụ email SMTP (khi gửi mã khôi phục mật khẩu). <em>Thời hạn lưu:</em> trong thời gian tài khoản hoạt động hoặc đến khi có yêu cầu xóa/ẩn danh hợp lệ; phiên đăng nhập hết hạn sau 8 giờ (refresh tối đa 30 ngày) hoặc khi đăng xuất/thu hồi.</li>
+      <li><strong>Đơn hàng, giao nhận &amp; thanh toán:</strong> tên người nhận, số điện thoại, địa chỉ giao hàng, mặt hàng, số lượng, mã ưu đãi, phương thức (chuyển khoản/COD), mã thanh toán <code>BN...</code> và trạng thái thanh toán. <em>Mục đích:</em> xử lý đơn hàng, đối soát thanh toán, giao nhận, đổi trả/hoàn tiền và giải quyết khiếu nại. <em>Bên nhận:</em> backend/CSDL BookNest, VietQR (tạo ảnh QR), SePay (khi bật webhook đối soát), đơn vị vận chuyển và bộ phận CSKH/Bán hàng. <em>Thời hạn lưu:</em> lưu giữ phục vụ đối soát giao dịch, bảo hành/đổi trả và nghĩa vụ kế toán/thuế theo quy định pháp luật hiện hành.</li>
+      <li><strong>Yêu cầu dịch vụ sách (thuê, thu mua, trao đổi):</strong> họ tên, số điện thoại, loại dịch vụ, tên sách và ghi chú. <em>Mục đích:</em> tiếp nhận, tư vấn và thực hiện dịch vụ. <em>Bên nhận:</em> backend/CSDL và bộ phận hỗ trợ/bán hàng BookNest. <em>Thời hạn lưu:</em> trong thời gian xử lý yêu cầu và hỗ trợ hậu mãi liên quan hoặc đến khi xử lý yêu cầu xóa hợp lệ.</li>
+      <li><strong>Bản ghi consent &amp; yêu cầu dữ liệu cá nhân (DSAR):</strong> mục đích consent (<code>order</code>, <code>service</code>, <code>marketing</code>), phiên bản chính sách, trạng thái đồng ý/rút lại, <code>retentionDays</code>, loại yêu cầu dữ liệu và trạng thái xử lý. <em>Mục đích:</em> lưu bằng chứng đồng ý và theo dõi thực thi quyền của chủ thể dữ liệu. <em>Bên nhận:</em> Phụ trách dữ liệu cá nhân / Quản trị viên có quyền <code>read:privacy</code>, <code>write:privacy</code>. <em>Thời hạn lưu:</em> bản ghi consent có <code>retentionDays &gt; 0</code> đủ điều kiện dọn dẹp sau khi hết hạn; tệp xuất JSON tự hủy sau 15 phút.</li>
+      <li><strong>Hồ sơ CSKH (CRM) &amp; nhật ký kiểm toán:</strong> hồ sơ khách hàng CRM, ghi chú tương tác CSKH và nhật ký hoạt động quản trị (request ID, route, hành động, người thực hiện; không lưu mật khẩu, token hay giá trị dữ liệu nhạy cảm tự do). <em>Mục đích:</em> chăm sóc khách hàng, giải quyết tranh chấp và giám sát an ninh hệ thống. <em>Bên nhận:</em> nhân viên được phân quyền theo ma trận quyền (<code>support</code>, <code>sales</code>, <code>admin</code>).</li>
     </ul>
-    <p>Ứng dụng không nhận số thẻ thanh toán. Chọn chuyển khoản không đồng nghĩa BookNest xử lý giao dịch ngân hàng; webhook SePay chỉ cập nhật đơn khi được cấu hình và xác minh dữ liệu giao dịch.</p>
+    <p>Ứng dụng <strong>không thu thập hoặc lưu trữ số thẻ thanh toán</strong>. Chọn chuyển khoản không đồng nghĩa BookNest xử lý giao dịch ngân hàng trực tiếp; webhook SePay chỉ cập nhật trạng thái đơn khi được cấu hình và xác minh dữ liệu giao dịch hợp lệ.</p>
 
-    <h2>2. Nơi lưu dữ liệu</h2>
-    <p>Giỏ hàng, yêu thích và mã ưu đãi được lưu trong <code>localStorage</code>. Bearer token, hồ sơ hiển thị và một số thông tin liên hệ tạm được lưu trong <code>sessionStorage</code>. Một số yêu cầu dịch vụ có thể được giữ cục bộ trên thiết bị khi gửi máy chủ thất bại.</p>
-    <p>Backend lưu tài khoản, đơn hàng, yêu cầu dịch vụ và dữ liệu quản trị trong file JSON/JSONL khi chạy chế độ file, hoặc PostgreSQL khi có <code>DATABASE_URL</code>. Tùy môi trường, dữ liệu có thể được xử lý bởi nhà cung cấp hosting và database đã cấu hình. Xóa dữ liệu trình duyệt không xóa dữ liệu đã gửi tới backend.</p>
-
-    <h2>3. Dịch vụ bên ngoài</h2>
+    <h2 id="privacyCookiesAnalytics">2. Cookie, bộ nhớ trình duyệt &amp; công cụ phân tích (Analytics)</h2>
     <ul>
-      <li>Nếu đăng nhập Google/Facebook được bật, Firebase Authentication xử lý đăng nhập; backend xác minh Firebase ID token.</li>
-      <li>Ảnh QR chuyển khoản được yêu cầu từ VietQR. Request có thể chứa mã ngân hàng, số tài khoản nhận, tên tài khoản, số tiền và nội dung/mã đơn.</li>
-      <li>Hosting, email khôi phục mật khẩu, database và nhận webhook phụ thuộc cấu hình của nhà vận hành.</li>
+      <li><strong>Không dùng cookie quảng cáo và không gắn trình theo dõi analytics bên thứ ba:</strong> BookNest không sử dụng Google Analytics, Facebook Pixel hay cookie quảng cáo/theo dõi hành vi; website không tự đặt cookie theo dõi qua <code>document.cookie</code>.</li>
+      <li><strong><code>localStorage</code> trên trình duyệt:</strong> lưu giỏ hàng, danh sách sách yêu thích, mã ưu đãi đang áp dụng và bản lưu dự phòng khi gửi yêu cầu dịch vụ tới máy chủ thất bại. Dữ liệu tồn tại cho đến khi bạn tự xóa dữ liệu trình duyệt.</li>
+      <li><strong><code>sessionStorage</code> trên trình duyệt:</strong> lưu Bearer token phiên đăng nhập, hồ sơ hiển thị của tài khoản, thông tin liên hệ tạm và mã đơn hàng gần nhất vừa đặt. Dữ liệu tự xóa khi đóng tab/phiên trình duyệt.</li>
+      <li><strong>Lưu trữ máy chủ &amp; xác thực bên thứ ba:</strong> backend lưu dữ liệu trong file JSON/JSONL (chế độ file) hoặc PostgreSQL (khi có <code>DATABASE_URL</code>). Xóa dữ liệu trình duyệt không xóa dữ liệu đã gửi tới backend. Chỉ khi đăng nhập Google/Facebook được bật, SDK Firebase Authentication (<code>gstatic.com</code>) có thể dùng bộ nhớ/cookie kỹ thuật của nhà cung cấp để hoàn tất xác thực.</li>
     </ul>
-    <p>Không gửi service-account private key, mật khẩu, API key riêng tư hoặc dữ liệu không cần thiết tới frontend. Các giá trị cấu hình Firebase Web app là public; API key vẫn cần được giới hạn theo cấu hình của dự án.</p>
 
-    <h2>4. Consent, lưu giữ và yêu cầu dữ liệu</h2>
-    <p>Bạn có thể xem, ghi nhận hoặc rút lại consent gắn với tài khoản ở phần bên dưới. Việc ghi nhận consent tại đây không tự động chặn hoặc cho phép gửi đơn hàng/yêu cầu dịch vụ. Yêu cầu truy cập, cập nhật hoặc xóa dữ liệu được lưu để nhân viên quản trị xử lý; việc gửi yêu cầu không tự xóa dữ liệu.</p>
-    <p>Chỉ bản ghi consent có <code>retentionDays</code> lớn hơn 0 mới đủ điều kiện được công cụ vận hành xóa sau khi hết hạn. Công cụ chạy ở chế độ xem trước theo mặc định; việc chạy định kỳ cần được nhà vận hành cấu hình. Giá trị 0 không tự hết hạn. Công cụ này không xóa đơn hàng, tài khoản hoặc yêu cầu dịch vụ.</p>
-    <p>Thời hạn lưu giữ thống nhất và đầu mối liên hệ quyền riêng tư vẫn cần được đơn vị vận hành công bố trước khi dùng với người thật. Các yêu cầu phải được xem xét và thực hiện theo chính sách áp dụng; giao diện hiện chỉ ghi nhận trạng thái quy trình.</p>
+    <h2 id="privacyThirdParties">3. Chia sẻ dữ liệu &amp; các bên cung cấp dịch vụ</h2>
+    <ul>
+      <li><strong>Firebase Authentication (Google):</strong> xử lý đăng nhập Google/Facebook khi được bật; backend chỉ xác minh Firebase ID token.</li>
+      <li><strong>VietQR:</strong> tạo ảnh QR chuyển khoản. Yêu cầu chỉ chứa mã ngân hàng, số tài khoản nhận, tên tài khoản nhận, số tiền và nội dung/mã thanh toán <code>BN...</code>.</li>
+      <li><strong>SePay Webhook:</strong> khi được nhà vận hành cấu hình và xác minh khóa API, hệ thống nhận thông báo giao dịch chuyển khoản để đối soát mã <code>BN...</code> và số tiền đơn hàng.</li>
+      <li><strong>Hạ tầng Hosting, Cơ sở dữ liệu, Email SMTP &amp; Đơn vị vận chuyển:</strong> dữ liệu tối thiểu cần thiết được xử lý bởi nhà cung cấp hosting, cơ sở dữ liệu PostgreSQL, dịch vụ email khôi phục mật khẩu/thông báo và đối tác vận chuyển do đơn vị vận hành cấu hình.</li>
+    </ul>
+    <p>Hệ thống không gửi service-account private key, mật khẩu, API key riêng tư hoặc dữ liệu không cần thiết tới frontend. Các giá trị cấu hình Firebase Web app là thông tin công khai và cần được giới hạn domain/API key theo cấu hình dự án.</p>
+
+    <h2 id="privacyRetentionAndRights">4. Thời hạn lưu trữ, quản lý consent &amp; quyền của chủ thể dữ liệu</h2>
+    <p>Bạn có các quyền sau đối với dữ liệu cá nhân của mình và có thể thực hiện trực tiếp trên trang này hoặc qua đầu mối bảo vệ dữ liệu:</p>
+    <ul>
+      <li><strong>Quyền được biết, đồng ý &amp; rút lại đồng ý:</strong> xem, ghi nhận hoặc rút lại consent gắn với tài khoản (<code>order</code>, <code>service</code>, <code>marketing</code>) tại mục <a href="#consentManagement">Quản lý consent</a> bên dưới. Việc ghi nhận consent tại đây không tự động chặn hoặc cho phép gửi đơn hàng/yêu cầu dịch vụ.</li>
+      <li><strong>Quyền truy cập dữ liệu (<code>access</code>):</strong> xem thông tin tài khoản, lịch sử đơn hàng, lịch sử consent hoặc gửi yêu cầu truy cập (mục tiêu xử lý nội bộ trong <strong>48 giờ</strong>).</li>
+      <li><strong>Quyền chỉnh sửa, cập nhật (<code>update</code>):</strong> tự cập nhật họ tên, số điện thoại, địa chỉ giao hàng hoặc gửi yêu cầu cập nhật các trường cần xác minh bổ sung (mục tiêu <strong>48 giờ</strong>).</li>
+      <li><strong>Quyền xuất dữ liệu (<code>export</code>):</strong> tự tạo và tải tệp UTF-8 JSON tại mục <a href="#privacyExportSection">Xuất dữ liệu cá nhân</a> (hiệu lực 15 phút) hoặc gửi yêu cầu xuất dữ liệu (mục tiêu <strong>48 giờ</strong>).</li>
+      <li><strong>Quyền xóa / ẩn danh dữ liệu (<code>delete</code>):</strong> gửi yêu cầu xóa/ẩn danh (mục tiêu xử lý nội bộ <strong>72 giờ</strong>). Yêu cầu được nhân viên phụ trách dữ liệu xác minh và thực hiện; việc gửi yêu cầu không tự xóa dữ liệu ngay lập tức. Khi hoàn tất ẩn danh, toàn bộ phiên đăng nhập bị thu hồi ngay; chứng từ giao dịch/đơn hàng có thể được giữ lại theo nghĩa vụ kế toán/đối soát.</li>
+      <li><strong>Quyền khiếu nại, phản ánh:</strong> gửi phản ánh tới CSKH hoặc đầu mối bảo vệ dữ liệu nếu cho rằng dữ liệu cá nhân bị xử lý không phù hợp.</li>
+    </ul>
+    <p><strong>Quy tắc dọn dẹp consent theo thời hạn:</strong> chỉ bản ghi consent có <code>retentionDays</code> lớn hơn 0 mới đủ điều kiện được công cụ vận hành (<code>npm run privacy:retention</code>) dọn dẹp sau khi hết hạn. Công cụ chạy ở chế độ xem trước theo mặc định; việc chạy định kỳ do nhà vận hành cấu hình. Giá trị <code>0</code> không tự hết hạn để lưu bằng chứng đồng ý. Công cụ này không xóa đơn hàng, tài khoản hoặc yêu cầu dịch vụ.</p>
 
     <h2 id="profileUpdatePolicy">5. Cập nhật dữ liệu cá nhân</h2>
     <ul>
@@ -61,13 +74,13 @@
       <li>Mỗi tài khoản chỉ có một bản xuất đang còn hiệu lực tại một thời điểm để tránh tạo trùng lặp. Nhật ký chỉ ghi thời điểm tạo/tải, dung lượng và số lượng bản ghi; không ghi nội dung dữ liệu cá nhân hay mã tải xuống.</li>
     </ul>
 
-    <h2 id="privacyRequestProcedure">7. Quy trình xử lý yêu cầu dữ liệu cá nhân &amp; liên hệ</h2>
+    <h2 id="privacyRequestProcedure">7. Kênh liên hệ &amp; quy trình xử lý yêu cầu dữ liệu cá nhân</h2>
     <ul>
-      <li><strong>Kênh tiếp nhận:</strong> gửi trực tuyến tại mục “Yêu cầu dữ liệu cá nhân” bên dưới (sau khi đăng nhập), hoặc gửi qua kênh hỗ trợ/email đầu mối bảo vệ dữ liệu do đơn vị vận hành công bố khi triển khai chính thức.</li>
+      <li><strong>Kênh tiếp nhận:</strong> (1) gửi trực tuyến tại mục “Yêu cầu dữ liệu cá nhân” bên dưới sau khi đăng nhập (<code>web_portal</code>); (2) gửi qua email đầu mối bảo vệ dữ liệu (<code>email_support</code>) hoặc (3) gửi trực tiếp bằng văn bản (<code>in_person</code>) tới địa chỉ do đơn vị vận hành công bố chính thức khi triển khai kinh doanh.</li>
       <li><strong>Xác minh danh tính:</strong> yêu cầu gửi từ tài khoản đang đăng nhập được xác minh qua phiên đăng nhập; các thay đổi quan trọng hoặc xuất tệp dữ liệu yêu cầu xác nhận lại mật khẩu (hoặc đăng nhập lại trong 10 phút với tài khoản social). Yêu cầu gửi qua email/trực tiếp cần đối chiếu chủ sở hữu tài khoản trước khi xử lý.</li>
       <li><strong>Phân loại &amp; thời hạn phản hồi nội bộ:</strong> yêu cầu <em>truy cập</em>, <em>cập nhật</em> và <em>xuất dữ liệu</em> có mục tiêu xử lý trong <strong>48 giờ</strong>; yêu cầu <em>xóa/ẩn danh</em> có mục tiêu xử lý trong <strong>72 giờ</strong> (đơn hàng/chứng từ giao dịch có thể được lưu giữ phục vụ đối soát theo quy định áp dụng).</li>
       <li><strong>Phân công, chuyển cấp &amp; ghi nhận kết quả:</strong> mỗi yêu cầu được theo dõi trạng thái (<code>pending</code> → <code>processing</code> → <code>completed</code>/<code>rejected</code>), phân công người phụ trách (Hỗ trợ L1 → Phụ trách dữ liệu L2 → Quản trị pháp lý L3 khi quá hạn hoặc có vướng mắc pháp lý) và ghi nhận mã kết quả không chứa dữ liệu nhạy cảm.</li>
-      <li><strong>Bảo vệ dữ liệu khi xử lý:</strong> chỉ quản trị viên có quyền chuyên trách mới được tiếp cận hàng đợi yêu cầu; nhật ký hệ thống không lưu thông tin cá nhân tự do. Khi hoàn tất yêu cầu xóa/ẩn danh, toàn bộ phiên đăng nhập của tài khoản bị thu hồi ngay lập tức.</li>
+      <li><strong>Bảo vệ dữ liệu khi xử lý:</strong> chỉ quản trị viên có quyền chuyên trách (<code>read:privacy</code>, <code>write:privacy</code>) mới được tiếp cận hàng đợi yêu cầu; nhật ký hệ thống không lưu thông tin cá nhân tự do. Khi hoàn tất yêu cầu xóa/ẩn danh, toàn bộ phiên đăng nhập của tài khoản bị thu hồi ngay lập tức.</li>
     </ul>
 
     <section id="consentManagement" aria-labelledby="consentHeading">
@@ -94,7 +107,7 @@
 
     <section aria-labelledby="privacyDataRequestHeading">
       <h2 id="privacyDataRequestHeading">Yêu cầu dữ liệu cá nhân</h2>
-      <p>Đăng nhập để gửi yêu cầu truy cập, cập nhật hoặc xóa dữ liệu. Bạn có thể xem trạng thái xử lý bên dưới.</p>
+      <p>Đăng nhập để gửi yêu cầu truy cập, cập nhật, xuất hoặc xóa dữ liệu. Bạn có thể xem trạng thái xử lý bên dưới.</p>
       <form id="privacyDataRequestForm">
         <label for="privacyDataRequestType">Loại yêu cầu</label>
         <select id="privacyDataRequestType" name="type" required>
@@ -122,10 +135,18 @@
       <ul id="privacyExportList"></ul>
     </section>
 
-    <h2>8. Bảo vệ thông tin</h2>
-    <p>Mật khẩu tài khoản được băm ở backend. Không có cam kết rằng toàn bộ dữ liệu khác được mã hóa ở cấp ứng dụng khi lưu trữ; biện pháp bảo vệ còn phụ thuộc cấu hình hosting, database, quyền truy cập, HTTPS, backup và quản lý secret của môi trường triển khai. Không coi ứng dụng mẫu là hệ thống đã được chứng nhận hoặc sẵn sàng xử lý dữ liệu nhạy cảm.</p>
+    <h2 id="privacySecurity">8. Biện pháp bảo vệ dữ liệu cá nhân</h2>
+    <ul>
+      <li>Mật khẩu tài khoản được băm một chiều ở backend bằng <code>scrypt</code> kèm salt ngẫu nhiên; token khôi phục mật khẩu và mã tải xuống xuất dữ liệu được băm trước khi lưu.</li>
+      <li>Phân quyền truy cập theo vai trò (RBAC) ở backend; hàng đợi dữ liệu cá nhân và nhật ký kiểm toán yêu cầu quyền chuyên trách.</li>
+      <li>Nhật ký hệ thống áp dụng cơ chế ẩn dữ liệu nhạy cảm, không ghi mật khẩu, token hay nội dung dữ liệu cá nhân tự do.</li>
+      <li>Biện pháp bảo vệ hạ tầng (HTTPS/TLS, mã hóa ổ đĩa/sao lưu, quản lý secret và tường lửa cơ sở dữ liệu) phụ thuộc cấu hình môi trường triển khai thực tế của đơn vị vận hành.</li>
+    </ul>
 
-    <p><a href="index.html">Về trang chủ</a></p>
+    <h2 id="privacyChanges">9. Phiên bản, ngày hiệu lực &amp; cập nhật chính sách</h2>
+    <p>Chính sách này mang mã phiên bản <strong>2026-01</strong>, có hiệu lực từ ngày <strong>01/01/2026</strong> và được đồng bộ với <a href="terms.html">Điều khoản sử dụng</a>, <a href="shipping.html">Chính sách vận chuyển</a>, <a href="returns.html">Chính sách đổi trả</a> và <a href="refund.html">Chính sách hoàn tiền</a>. Khi có thay đổi quan trọng về phạm vi thu thập, bên nhận hoặc thời hạn lưu trữ dữ liệu, BookNest sẽ cập nhật mã phiên bản, ngày hiệu lực và công bố trước ít nhất <strong>7 ngày</strong> trên trang này.</p>
+
+    <p><a href="index.html">Về trang chủ</a> · <a href="terms.html">Điều khoản sử dụng</a> · <a href="shipping.html">Chính sách vận chuyển</a> · <a href="returns.html">Chính sách đổi trả</a> · <a href="refund.html">Chính sách hoàn tiền</a></p>
   </main>
   <script src="assets/api-config.js"></script>
   <script src="assets/api-client.js"></script>

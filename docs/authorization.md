@@ -20,7 +20,7 @@
 | `POST /api/auth/register`, `/login`, `/social`, `/password-reset*` | Public entry points; credentials or social identity are verified server-side. |
 | `GET /api/auth/me`, `PATCH /api/auth/customer-info`, `/api/auth/logout` | Authenticated session; profile changes apply only to that session's user. See [Personal data updates](#personal-data-updates). |
 | `/api/privacy/consents*`, `/api/privacy/data-requests`, `/api/privacy/exports*` | Authenticated session; consent, request, and personal data export records are strictly scoped to the session user ID. See [Personal data export](#personal-data-export). |
-| `GET /api/books`, `GET /api/coupons/:code`, `GET /api/policies/terms`, `GET /api/policies/shipping`, `GET /api/policies/return`, `GET /api/policies/refund`, `POST /api/services`, `POST /api/orders/quote` | Public catalog, coupon lookup, terms/shipping/return/refund policies, service request, or quote. |
+| `GET /api/books`, `GET /api/coupons/:code`, `GET /api/policies/privacy`, `GET /api/policies/terms`, `GET /api/policies/shipping`, `GET /api/policies/return`, `GET /api/policies/refund`, `POST /api/services`, `POST /api/orders/quote` | Public catalog, coupon lookup, privacy/terms/shipping/return/refund policies, service request, or quote. |
 | `POST /api/orders` | Guest or authenticated checkout. Authenticated order ownership is assigned from the session; client `userId` is rejected. |
 | `GET /api/orders` | Authenticated; returns only orders owned by the session user. |
 | `GET /api/orders/:id` and `GET /api/orders/:id/status` | Account orders require the owner or admin. Guest checkout tracking remains available by the unguessable order UUID; treat it as a bearer lookup secret. |

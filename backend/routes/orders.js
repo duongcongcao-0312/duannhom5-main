@@ -153,8 +153,7 @@ if (orderStatusMatch && request.method === "GET") {
   );
   const order = await db.findOrderById(orderStatusMatch[1], ordersPath);
   if (!order) {
-    sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
-    return true;
+    throw new RequestError(404, "Không tìm thấy đơn hàng.");
   }
   const requester = await getAuthUser(request);
   if (order.userId) {
@@ -199,8 +198,7 @@ if (orderMatch && request.method === "GET") {
   );
   const order = await db.findOrderById(orderMatch[1], ordersPath);
   if (!order) {
-    sendJson(response, 404, { error: "Không tìm thấy đơn hàng." });
-    return true;
+    throw new RequestError(404, "Không tìm thấy đơn hàng.");
   }
   const requester = await getAuthUser(request);
   if (requester && requester.role !== ROLES.ADMIN) {
@@ -385,6 +383,21 @@ if (orderMatch && (request.method === "PATCH" || request.method === "PUT")) {
   }
   sendJson(response, 200, updated);
   return true;
+}
+
+if (orderMatch && request.method === "DELETE") {
+  const requester = await getAuthUser(request);
+  if (!requester) {
+    throw new RequestError(401, "Chưa đăng nhập.");
+  }
+  const order = await db.findOrderById(orderMatch[1], ordersPath);
+  if (!order) {
+    throw new RequestError(404, "Không tìm thấy đơn hàng.");
+  }
+  if (requester.role !== ROLES.ADMIN && (!order.userId || order.userId !== requester.userId)) {
+    throw new RequestError(403, "Bạn không có quyền xóa đơn hàng của người dùng khác.");
+  }
+  throw new RequestError(405, "Không hỗ trợ xóa đơn hàng; vui lòng dùng PATCH với trạng thái cancelled.");
 }
 
     return false;

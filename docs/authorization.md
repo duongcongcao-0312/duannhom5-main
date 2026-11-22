@@ -30,21 +30,25 @@
 | `/api/admin/*` | Permission checked server-side. Unknown admin routes fail closed. |
 | `/api/customers*` and `/api/admin/customers*` | CRM permission matrix below; the `/api/admin` prefix does not bypass permission checks. |
 
-## Staff permission matrix
+## Role × Resource × Action permission matrix
 
-| Capability | Customer | Support | Sales | Admin |
-| --- | --- | --- | --- | --- |
-| Dashboard | — | — | Read | Read |
-| Orders | Own orders only | — | Read/update status | Read/update |
-| Services | — | Read/update | Read/update | Read/update |
-| Books and coupons | Public catalog only | — | — | Read/write |
-| Users and staff management | — | — | — | Read/write |
-| CRM customer records | — | Read | Read/create/update | Read/create/update/delete |
-| CRM interactions | — | Read/create | Read/create/update | Read/create/update/delete |
+Synchronized with `PERMISSION_MATRIX`, `ROLE_PERMISSIONS`, and `CUSTOMER_ROLE_PERMISSIONS` in `backend/authorization.js` (least-privilege by default; unknown roles and routes fail closed):
 
-CRM permissions and admin API permissions are defined in
-`backend/authorization.js`. Role changes and deactivation are restricted to
-admin-only staff management; updated staff sessions are revoked.
+| Resource | User (`user`) | Support (`support`) | Sales (`sales`) | Admin (`admin`) | Exceptions & boundaries |
+| --- | --- | --- | --- | --- | --- |
+| Dashboard & monitoring (`dashboard`) | — | — | Read | Read | Read-only operational stats & monitoring. |
+| Orders (`orders`) | Read / Write (own) | — (own only) | Read / Write | Read / Write | User may only read/cancel own orders; Sales may update workflow status only (no `paymentStatus`); direct order delete returns `405` (use `cancelled`). |
+| Service requests (`services`) | Write (create) | Read / Write | Read / Write | Read / Write | Authenticated or guest users may submit requests; staff/admin triage status. |
+| Products & catalog (`products`) | Read (public) | Read (public) | Read (public) | Read / Write / Delete | Books, categories, authors, publishers, and book-cover uploads are Admin-only for writes/deletes; non-admins only read public catalog. |
+| Coupons (`coupons`) | Read (public) | Read (public) | Read (public) | Read / Write | Public lookup validates single active code; Admin manages coupon rules. |
+| CRM customer records (`customers`) | — | Read | Read / Write | Read / Write / Delete | Support cannot create/update/delete CRM records; Sales cannot delete; Admin soft-deletes. |
+| CRM care interactions (`customer_interactions`) | — | Read / Write (create) | Read / Write | Read / Write / Delete | Support may read and create interactions only (no update/delete); Sales cannot delete. |
+| Profiles & shipping addresses (`profiles_and_addresses`) | Read / Write / Delete (own) | Read / Write / Delete (own) | Read / Write / Delete (own) | Read / Write | Strictly scoped to owner (`requireOwnershipOrPermission`); Admin can read profiles and verify student status; direct account deletion returns `403` (use DSAR). |
+| Privacy consents, DSAR & exports (`privacy_and_dsar`) | Read / Write / Delete (own) | Read / Write / Delete (own) | Read / Write / Delete (own) | Read / Write (queue) | Personal privacy endpoints are strictly scoped to session user; Admin manages `/api/v1/admin/privacy/data-requests` and governed anonymization. |
+| Staff management (`staff`) | — | — | — | Read / Write | Admin may only provision/update `sales` or `support` (cannot mint `admin`); updates/deactivation immediately revoke active staff sessions. |
+| Audit log (`audit`) | — | — | — | Read | Immutable append-only JSONL; `POST`/`PUT`/`PATCH`/`DELETE` return `405` even for Admin. |
+
+Role changes and deactivation are restricted to admin-only staff management; updated staff sessions are revoked.
 
 ## Audit trail
 

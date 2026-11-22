@@ -178,6 +178,82 @@ const SENSITIVE_OPERATIONS_CATALOG = Object.freeze({
   }),
 });
 
+const PERMISSION_MATRIX = Object.freeze({
+  dashboard: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze([]) }),
+    sales: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+  }),
+  orders: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["cancel_instead_of_delete"]) }),
+    sales: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["no_payment_status_change", "no_other_user_direct_order_api"]) }),
+    support: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze(["own_orders_only"]) }),
+    [ROLES.USER]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["own_orders_only", "cancel_only"]) }),
+  }),
+  services: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    sales: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: true, delete: false, exceptions: Object.freeze(["create_service_request_only"]) }),
+  }),
+  products: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze([]) }),
+    sales: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_catalog_only"]) }),
+    support: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_catalog_only"]) }),
+    [ROLES.USER]: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_catalog_only"]) }),
+  }),
+  coupons: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    sales: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_coupon_lookup_only"]) }),
+    support: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_coupon_lookup_only"]) }),
+    [ROLES.USER]: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["public_coupon_lookup_only"]) }),
+  }),
+  customers: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["soft_delete"]) }),
+    sales: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze([]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+  }),
+  customer_interactions: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze([]) }),
+    sales: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["create_only_no_update_or_delete"]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+  }),
+  profiles_and_addresses: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["student_verification_and_governed_deletion_only"]) }),
+    sales: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_account_and_addresses_only"]) }),
+    support: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_account_and_addresses_only"]) }),
+    [ROLES.USER]: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_account_and_addresses_only", "no_direct_account_delete"]) }),
+  }),
+  privacy_and_dsar: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["admin_dsar_queue_and_anonymization"]) }),
+    sales: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_personal_privacy_only"]) }),
+    support: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_personal_privacy_only"]) }),
+    [ROLES.USER]: Object.freeze({ read: true, write: true, delete: true, exceptions: Object.freeze(["own_consents_dsar_exports_only"]) }),
+  }),
+  staff: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: true, delete: false, exceptions: Object.freeze(["sales_and_support_roles_only", "deactivate_revokes_sessions"]) }),
+    sales: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+  }),
+  audit: Object.freeze({
+    [ROLES.ADMIN]: Object.freeze({ read: true, write: false, delete: false, exceptions: Object.freeze(["immutable_append_only"]) }),
+    sales: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+    support: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+    [ROLES.USER]: Object.freeze({ read: false, write: false, delete: false, exceptions: Object.freeze([]) }),
+  }),
+});
+
+function canAccessResource(user, resource, action) {
+  if (!user || !Object.hasOwn(PERMISSION_MATRIX, resource)) return false;
+  if (!["read", "write", "delete"].includes(action)) return false;
+  const role = normalizeRole(user.role);
+  return PERMISSION_MATRIX[resource]?.[role]?.[action] === true;
+}
+
 function hasPermission(user, permission) {
   const role = normalizeRole(user?.role);
   return ROLE_PERMISSIONS[role]?.includes(permission) === true;
@@ -202,9 +278,11 @@ function requireOwnershipOrPermission(
 
 module.exports = {
   CUSTOMER_ROLE_PERMISSIONS,
+  PERMISSION_MATRIX,
   ROLE_PERMISSIONS,
   SENSITIVE_OPERATIONS_CATALOG,
   authenticate,
+  canAccessResource,
   hasPermission,
   requireCustomerPermission,
   requireOwnershipOrPermission,

@@ -22,6 +22,9 @@ if (
   requestUrl.pathname === "/api/privacy/consents" &&
   request.method === "GET"
 ) {
+  if ([...requestUrl.searchParams.keys()].length > 0) {
+    throw new RequestError(400, "Endpoint /api/privacy/consents không chấp nhận tham số truy vấn.");
+  }
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
   if (typeof db.getConsentRecords !== "function") {
@@ -90,6 +93,9 @@ if (
   requestUrl.pathname === "/api/privacy/data-requests" &&
   request.method === "GET"
 ) {
+  if ([...requestUrl.searchParams.keys()].length > 0) {
+    throw new RequestError(400, "Endpoint /api/privacy/data-requests không chấp nhận tham số truy vấn.");
+  }
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
   if (typeof db.getPrivacyDataRequests !== "function") {
@@ -269,6 +275,11 @@ const revokeConsentMatch = requestUrl.pathname.match(
   /^\/api\/privacy\/consents\/(order|service|marketing)$/,
 );
 if (revokeConsentMatch && request.method === "DELETE") {
+  for (const key of requestUrl.searchParams.keys()) {
+    if (key !== "policyVersion") {
+      throw new RequestError(400, "Tham số truy vấn không hợp lệ.");
+    }
+  }
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
   if (typeof db.revokeConsent !== "function") {
@@ -295,6 +306,9 @@ if (
   requestUrl.pathname === "/api/privacy/exports" &&
   request.method === "GET"
 ) {
+  if ([...requestUrl.searchParams.keys()].length > 0) {
+    throw new RequestError(400, "Endpoint /api/privacy/exports không chấp nhận tham số truy vấn.");
+  }
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
   if (!privacyExportStore) {

@@ -1,4 +1,5 @@
 const { redactLogText } = require("../monitoring");
+const { requireOwnershipOrPermission } = require("../authorization");
 const {
   ProfileUpdateError,
   RECENT_LOGIN_WINDOW_MS,
@@ -354,6 +355,9 @@ if (
 }
 
 if (requestUrl.pathname === "/api/auth/me" && request.method === "GET") {
+  if ([...requestUrl.searchParams.keys()].length > 0) {
+    throw new RequestError(400, "Endpoint /api/auth/me không chấp nhận tham số truy vấn.");
+  }
   const user = await getAuthUser(request);
   if (!user) {
     throw new RequestError(401, "Chưa đăng nhập.");
@@ -361,6 +365,141 @@ if (requestUrl.pathname === "/api/auth/me" && request.method === "GET") {
   const storedUser = await db.findUserById(user.userId);
   sendJson(response, 200, { user: publicUser(storedUser || user) });
   return true;
+}
+
+const userProfileMatch = requestUrl.pathname.match(
+  /^\/api\/users\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+);
+if (userProfileMatch) {
+  const targetUserId = userProfileMatch[1];
+  const session = await getAuthUser(request);
+  if (!session) {
+    throw new RequestError(401, "Chưa đăng nhập.");
+  }
+
+  if (request.method === "GET") {
+    requireOwnershipOrPermission(
+      session,
+      {
+        ownerId: targetUserId,
+        permission: "read:users",
+        message: "Bạn không có quyền xem hồ sơ của tài khoản khác.",
+      },
+      RequestError,
+    );
+    const targetUser = await db.findUserById(targetUserId);
+    if (!targetUser) {
+      throw new RequestError(404, "Không tìm thấy tài khoản.");
+    }
+    sendJson(response, 200, { user: publicUser(targetUser) });
+    return true;
+  }
+
+  if (request.method === "PATCH" || request.method === "PUT") {
+    requireOwnershipOrPermission(
+      session,
+      {
+        ownerId: targetUserId,
+        permission: "write:users",
+        message: "Bạn không có quyền cập nhật hồ sơ của tài khoản khác.",
+      },
+      RequestError,
+    );
+    const rawPayload = await readJson(request);
+    let parsed;
+    try {
+      parsed = parseProfileUpdate(rawPayload, sanitizePlainText);
+    } catch (error) {
+      throw toRequestError(error);
+    }
+    const targetUser = await db.findUserById(targetUserId);
+    if (!targetUser || targetUser.isActive === false) {
+      throw new RequestError(404, "Không tìm thấy tài khoản.");
+    }
+    const currentInfo = targetUser.customerInfo || {};
+    const changed = diffCustomerInfo(currentInfo, parsed.changes);
+    const changedFields = Object.keys(changed);
+    if (changedFields.length === 0) {
+      sendJson(response, 200, {
+        customerInfo: pickSelfServiceFields(currentInfo),
+        changedFields: [],
+        ordersUpdated: 0,
+      });
+      return true;
+    }
+    if (changed.phone && typeof db.getUsers === "function") {
+      const users = await db.getUsers();
+      if (findPhoneConflict(users, targetUser.id, changed.phone)) {
+        throw withErrorCode(
+          new RequestError(
+            409,
+            "Số điện thoại này không thể dùng cho tài khoản của bạn. Vui lòng liên hệ hỗ trợ nếu cần.",
+          ),
+          "PHONE_IN_USE",
+        );
+      }
+    }
+    let confirmation = "none";
+    if (session.userId === targetUser.id && requiresConfirmation(currentInfo, changed)) {
+      if (targetUser.passwordAuthEnabled !== false) {
+        if (!parsed.currentPassword) {
+          throw withErrorCode(
+            new RequestError(428, "Thay đổi số điện thoại cần xác nhận bằng mật khẩu hiện tại."),
+            "REAUTH_REQUIRED",
+          );
+        }
+        await verifyPasswordReauthentication(request, response, targetUser, parsed.currentPassword);
+        confirmation = "password";
+      } else {
+        const sessionAge = Date.now() - Number(session.createdAt || 0);
+        if (!(sessionAge >= 0 && sessionAge <= RECENT_LOGIN_WINDOW_MS)) {
+          throw withErrorCode(
+            new RequestError(
+              428,
+              "Thay đổi số điện thoại cần đăng nhập lại để xác nhận. Vui lòng đăng xuất và đăng nhập lại.",
+            ),
+            "RECENT_LOGIN_REQUIRED",
+          );
+        }
+        confirmation = "recent_login";
+      }
+    }
+    const updatedUser = await db.updateCustomerInfo(
+      targetUser.id,
+      changed,
+      session.userId,
+      session.role,
+      { confirmation },
+    );
+    if (!updatedUser) {
+      throw new RequestError(404, "Không tìm thấy tài khoản.");
+    }
+    sendJson(response, 200, {
+      customerInfo: pickSelfServiceFields(updatedUser.customerInfo),
+      changedFields,
+      ordersUpdated: 0,
+    });
+    return true;
+  }
+
+  if (request.method === "DELETE") {
+    requireOwnershipOrPermission(
+      session,
+      {
+        ownerId: targetUserId,
+        permission: "write:users",
+        message: "Bạn không có quyền xóa hồ sơ của tài khoản khác.",
+      },
+      RequestError,
+    );
+    throw withErrorCode(
+      new RequestError(
+        403,
+        "Không hỗ trợ xóa trực tiếp tài khoản; vui lòng gửi yêu cầu xóa dữ liệu qua /api/v1/privacy/data-requests.",
+      ),
+      "GOVERNED_DELETION_REQUIRED",
+    );
+  }
 }
 
 if (

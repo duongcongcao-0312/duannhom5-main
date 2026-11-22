@@ -512,7 +512,65 @@
         "x-allowed-roles": ["user", "sales", "support", "admin"],
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Xem hồ sơ tài khoản (chỉ chính chủ hoặc admin có quyền read:users, chống IDOR)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Auth"],
+        "summary": "Cập nhật hồ sơ tài khoản (chỉ chính chủ hoặc admin có quyền write:users, chống IDOR)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "customerName": { "type": "string", "maxLength": 120 },
+                  "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+                  "phone": { "type": "string", "pattern": "^[0-9 +()-]{8,20}$" },
+                  "address": { "type": "string", "minLength": 10, "maxLength": 300 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Chặn xóa chéo hồ sơ (403) và yêu cầu quy trình DSAR cho việc xóa tài khoản",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
         }
       }
     },

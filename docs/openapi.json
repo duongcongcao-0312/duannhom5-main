@@ -30,6 +30,13 @@
         }
       }
     },
+    "/api/policies/terms": {
+      "get": {
+        "tags": ["Public"],
+        "summary": "Công khai điều khoản sử dụng (tài khoản, đặt hàng, bản quyền, thay đổi điều khoản và khiếu nại)",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/policies/shipping": {
       "get": {
         "tags": ["Public"],

@@ -565,6 +565,89 @@
         }
       }
     },
+    "/api/addresses": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Liệt kê địa chỉ giao hàng của tài khoản hiện tại (chống IDOR)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": {
+            "description": "Danh sách địa chỉ thuộc tài khoản đang đăng nhập",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["addresses"], "properties": { "addresses": { "type": "array", "items": { "$ref": "#/components/schemas/ShippingAddress" } } } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Tạo địa chỉ giao hàng mới cho tài khoản hiện tại",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ShippingAddressInput" } } } },
+        "responses": {
+          "201": { "description": "Địa chỉ giao hàng đã tạo", "content": { "application/json": { "schema": { "type": "object", "required": ["address"], "properties": { "address": { "$ref": "#/components/schemas/ShippingAddress" } } } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/addresses/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Xem chi tiết địa chỉ giao hàng (chỉ chủ sở hữu hoặc admin read:users)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "description": "Thông tin địa chỉ giao hàng", "content": { "application/json": { "schema": { "type": "object", "required": ["address"], "properties": { "address": { "$ref": "#/components/schemas/ShippingAddress" } } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "put": {
+        "tags": ["Auth"],
+        "summary": "Thay thế địa chỉ giao hàng (chỉ chủ sở hữu hoặc admin write:users)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ShippingAddressInput" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "tags": ["Auth"],
+        "summary": "Cập nhật một phần địa chỉ giao hàng (chỉ chủ sở hữu hoặc admin write:users)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ShippingAddressUpdate" } } } },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Xóa địa chỉ giao hàng (chỉ chủ sở hữu hoặc admin write:users)",
+        "security": [{ "bearerAuth": [] }],
+        "x-allowed-roles": ["user", "sales", "support", "admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/customers": {
       "get": {
         "tags": ["Customers"],
@@ -2288,6 +2371,52 @@
         "properties": {
           "type": { "type": "string", "enum": ["call", "chat", "email", "order", "review", "support", "feedback"] },
           "note": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      },
+      "ShippingAddress": {
+        "type": "object",
+        "required": ["id", "userId", "recipientName", "phone", "addressLine", "isDefault"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid", "example": "00000000-0000-4000-8000-000000000001" },
+          "userId": { "type": "string", "format": "uuid" },
+          "recipientName": { "type": "string", "example": "Nguyễn Văn An" },
+          "phone": { "type": "string", "example": "0900000001" },
+          "addressLine": { "type": "string", "example": "12 Đường Sách, Quận 1" },
+          "ward": { "type": "string", "example": "Phường Bến Nghé" },
+          "district": { "type": "string", "example": "Quận 1" },
+          "city": { "type": "string", "example": "TP.HCM" },
+          "label": { "type": "string", "example": "Nhà riêng" },
+          "isDefault": { "type": "boolean", "example": true }
+        }
+      },
+      "ShippingAddressInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["recipientName", "phone", "addressLine"],
+        "properties": {
+          "recipientName": { "type": "string", "minLength": 2, "maxLength": 120, "example": "Nguyễn Văn An" },
+          "phone": { "type": "string", "minLength": 8, "maxLength": 20, "example": "0900000001" },
+          "addressLine": { "type": "string", "minLength": 5, "maxLength": 300, "example": "12 Đường Sách, Quận 1" },
+          "ward": { "type": "string", "maxLength": 100 },
+          "district": { "type": "string", "maxLength": 100 },
+          "city": { "type": "string", "maxLength": 100 },
+          "label": { "type": "string", "maxLength": 60 },
+          "isDefault": { "type": "boolean" }
+        }
+      },
+      "ShippingAddressUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "recipientName": { "type": "string", "minLength": 2, "maxLength": 120 },
+          "phone": { "type": "string", "minLength": 8, "maxLength": 20 },
+          "addressLine": { "type": "string", "minLength": 5, "maxLength": 300 },
+          "ward": { "type": "string", "maxLength": 100 },
+          "district": { "type": "string", "maxLength": 100 },
+          "city": { "type": "string", "maxLength": 100 },
+          "label": { "type": "string", "maxLength": 60 },
+          "isDefault": { "type": "boolean" }
         }
       }
     }

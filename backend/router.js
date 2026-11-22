@@ -6,6 +6,7 @@ const routes = [
   { name: "version", method: "GET", match: (path) => path === "/api/version" },
   { name: "coupon:get", method: "GET", match: (path) => /^\/api\/coupons\/[A-Za-z0-9_-]+$/.test(path) },
   { name: "auth", match: (path) => path.startsWith("/api/auth/") },
+  { name: "addresses", match: (path) => /^\/api\/addresses(?:\/[0-9a-f-]{36})?$/i.test(path) },
   { name: "customers", match: (path) => /^\/api\/(?:admin\/)?customers(?:\/[0-9a-f-]{36})?$/.test(path) },
   { name: "customer-interactions", match: (path) => /^\/api\/(?:admin\/)?customers\/[0-9a-f-]{36}\/interactions(?:\/[0-9a-f-]{36})?$/i.test(path) },
   { name: "orders", match: (path) => /^\/api\/orders(?:\/[0-9a-f-]+)?$/.test(path) },

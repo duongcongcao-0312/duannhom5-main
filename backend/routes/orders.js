@@ -1,5 +1,5 @@
 function createOrderRoutes(dependencies) {
-  const { RequestError, ROLES, allowedDiscountRates, allowedOrderStatuses, allowedPaymentStatuses, createAndPersistOrder, createOrder, createUpdatedOrderItems, db, defaultBookStock, enqueueOrderWrite, getAuthUser, getClientAddress, getBookCatalog, listQuerySchema, ordersPath, orderRequestLimit, orderRequestWindowMs, paginateList, payloadSchemas, publicOrder, randomUUID, rateLimitRequest, readJson, requireJsonObject, roundMoney, sanitizePlainText, sendJson, sendPaginatedJson, validateQuery, verifyOrderAccessCode, waitForCatalogReady } = dependencies;
+  const { RequestError, ROLES, addressStore, allowedDiscountRates, allowedOrderStatuses, allowedPaymentStatuses, createAndPersistOrder, createOrder, createUpdatedOrderItems, db, defaultBookStock, enqueueOrderWrite, getAuthUser, getClientAddress, getBookCatalog, listQuerySchema, ordersPath, orderRequestLimit, orderRequestWindowMs, paginateList, payloadSchemas, publicOrder, randomUUID, rateLimitRequest, readJson, requireJsonObject, roundMoney, sanitizePlainText, sendJson, sendPaginatedJson, validateQuery, verifyOrderAccessCode, waitForCatalogReady } = dependencies;
   return async function handleRoute(request, response, requestUrl) {
 // --- API: Orders ---
 if (
@@ -116,6 +116,18 @@ if (requestUrl.pathname === "/api/orders" && request.method === "POST") {
         ? "Tài khoản đã đăng nhập không thể gửi mã truy cập đơn khách."
         : "Đơn hàng khách cần mã truy cập gồm 64 ký tự hex.",
     );
+  }
+  if (payload.addressId !== undefined) {
+    if (!requester) {
+      throw new RequestError(401, "Vui lòng đăng nhập để sử dụng địa chỉ đã lưu.");
+    }
+    const savedAddress = addressStore ? await addressStore.findById(payload.addressId) : null;
+    if (!savedAddress) {
+      throw new RequestError(404, "Không tìm thấy địa chỉ giao hàng.");
+    }
+    if (savedAddress.userId !== requester.userId && requester.role !== ROLES.ADMIN) {
+      throw new RequestError(403, "Bạn không có quyền sử dụng địa chỉ giao hàng của tài khoản khác.");
+    }
   }
   const { order, replayed } = await createAndPersistOrder(
     payload,

@@ -82,6 +82,8 @@ const { getCouponUnavailableReason } = require("./backend/coupons");
 const { createPaymentRoutes } = require("./backend/routes/payments");
 const { createPublicRoutes } = require("./backend/routes/public");
 const { createOrderRoutes } = require("./backend/routes/orders");
+const { createAddressRoutes } = require("./backend/routes/addresses");
+const { AddressStore } = require("./backend/addresses");
 const { createAuthRoutes } = require("./backend/routes/auth");
 const { createPrivacyRoutes } = require("./backend/routes/privacy");
 const { createCustomerRoutes } = require("./backend/routes/customers");
@@ -1038,6 +1040,7 @@ function createServer({
   consentRecordsPath,
   privacyDataRequestsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
+  addressesPath = path.join(root, "data", "addresses.json"),
   uploadsDir = path.join(root, "data", "uploads", "book-covers"),
   requestBodyLimits = {},
   uploadMaxBytes = UPLOAD_POLICY.maxFileBytes,
@@ -1935,9 +1938,22 @@ function createServer({
     sepayConfig: sepayConfiguration,
     sendJson,
   });
+  const addressStore = new AddressStore(addressesPath);
+  const handleAddressRoute = createAddressRoutes({
+    RequestError,
+    addressStore,
+    getAuthUser,
+    payloadSchemas,
+    readJson: readRequestJson,
+    requireJsonObject,
+    sanitizePlainText,
+    sendJson,
+    validateQuery,
+  });
   const handleOrderRoute = createOrderRoutes({
     RequestError,
     ROLES,
+    addressStore,
     allowedDiscountRates,
     allowedOrderStatuses,
     allowedPaymentStatuses,
@@ -2166,6 +2182,7 @@ function createServer({
     if (await handlePublicRoute(request, response, requestUrl)) return;
     if (await handlePaymentRoute(request, response, requestUrl.pathname)) return;
     if (await handleAuthRoute(request, response, requestUrl)) return;
+    if (await handleAddressRoute(request, response, requestUrl)) return;
     if (await handlePrivacyRoute(request, response, requestUrl)) return;
     if (await handleCustomerRoute(request, response, requestUrl)) return;
     if (await handleServiceRoute(request, response, requestUrl)) return;

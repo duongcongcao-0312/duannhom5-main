@@ -19,6 +19,11 @@ const { getCouponUnavailableReason } = require("./coupons");
 const { pickSelfServiceFields } = require("./profile-update");
 const {
   PRIVACY_DATA_REQUEST_TYPES,
+  PRIVACY_ESCALATION_LEVELS,
+  PRIVACY_REQUEST_CHANNELS,
+  PRIVACY_RESOLUTION_CODES,
+  PRIVACY_VERIFICATION_METHODS,
+  computePrivacyRequestDueAt,
   isPrivacyDataRequestTransitionAllowed,
   mapPrivacyDataRequestRow,
 } = require("./privacy-data-requests");
@@ -2320,8 +2325,9 @@ class PostgresDatabase {
 
   async getPrivacyDataRequests(subjectId) {
     const { rows } = await this.pool.query(
-      `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
-              created_at, updated_at, resolved_at
+      `SELECT request_id, subject_id, request_type, status, channel, verification_method,
+              assigned_to, escalation_level, resolution_code, due_at,
+              created_by, updated_by, created_at, updated_at, resolved_at
        FROM privacy_data_requests
        WHERE subject_id = $1::uuid
        ORDER BY created_at DESC`,
@@ -2332,38 +2338,81 @@ class PostgresDatabase {
 
   async getAllPrivacyDataRequests() {
     const { rows } = await this.pool.query(
-      `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
-              created_at, updated_at, resolved_at
+      `SELECT request_id, subject_id, request_type, status, channel, verification_method,
+              assigned_to, escalation_level, resolution_code, due_at,
+              created_by, updated_by, created_at, updated_at, resolved_at
        FROM privacy_data_requests
        ORDER BY created_at DESC`,
     );
     return rows.map(mapPrivacyDataRequestRow);
   }
 
-  async createPrivacyDataRequest(subjectId, requestType) {
+  async createPrivacyDataRequest(subjectId, requestType, options = {}) {
     if (!PRIVACY_DATA_REQUEST_TYPES.includes(requestType)) {
       throw new CustomerError(400, "Loại yêu cầu dữ liệu cá nhân không hợp lệ.");
     }
+    const channel = options.channel || "web_portal";
+    const verificationMethod = options.verificationMethod || "session_token";
+    if (!PRIVACY_REQUEST_CHANNELS.includes(channel)) {
+      throw new CustomerError(400, "Kênh tiếp nhận yêu cầu không hợp lệ.");
+    }
+    if (!PRIVACY_VERIFICATION_METHODS.includes(verificationMethod)) {
+      throw new CustomerError(400, "Phương thức xác minh không hợp lệ.");
+    }
+    const dueAt = computePrivacyRequestDueAt(requestType, new Date().toISOString());
     const { rows } = await this.pool.query(
-      `INSERT INTO privacy_data_requests (subject_id, request_type, created_by)
-       VALUES ($1::uuid, $2, $1::uuid)
+      `INSERT INTO privacy_data_requests (
+         subject_id, request_type, channel, verification_method, due_at, created_by
+       )
+       VALUES ($1::uuid, $2, $3, $4, $5::timestamptz, $1::uuid)
        ON CONFLICT (subject_id, request_type)
          WHERE status IN ('pending', 'processing')
        DO NOTHING
-       RETURNING request_id, subject_id, request_type, status, created_by, updated_by,
-                 created_at, updated_at, resolved_at`,
-      [subjectId, requestType],
+       RETURNING request_id, subject_id, request_type, status, channel, verification_method,
+                 assigned_to, escalation_level, resolution_code, due_at,
+                 created_by, updated_by, created_at, updated_at, resolved_at`,
+      [subjectId, requestType, channel, verificationMethod, dueAt],
     );
-    return rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+    const created = rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+    if (created) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "privacy.data_request.create",
+        actorId: subjectId,
+        actorRole: ROLES.USER,
+        entityType: "privacy_data_request",
+        entityId: created.id,
+        metadata: {
+          type: created.type,
+          channel: created.channel,
+          verificationMethod: created.verificationMethod,
+          dueAt: created.dueAt,
+        },
+      });
+    }
+    return created;
   }
 
-  async updatePrivacyDataRequest(id, status, updatedBy) {
+  async updatePrivacyDataRequest(id, status, updatedBy, options = {}) {
+    if (
+      options.escalationLevel !== undefined &&
+      !PRIVACY_ESCALATION_LEVELS.includes(options.escalationLevel)
+    ) {
+      throw new CustomerError(400, "Cấp chuyển xử lý không hợp lệ.");
+    }
+    if (
+      options.resolutionCode !== undefined &&
+      options.resolutionCode !== null &&
+      !PRIVACY_RESOLUTION_CODES.includes(options.resolutionCode)
+    ) {
+      throw new CustomerError(400, "Mã kết quả xử lý không hợp lệ.");
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       const { rows: currentRows } = await client.query(
-        `SELECT request_id, subject_id, request_type, status, created_by, updated_by,
-                created_at, updated_at, resolved_at
+        `SELECT request_id, subject_id, request_type, status, channel, verification_method,
+                assigned_to, escalation_level, resolution_code, due_at,
+                created_by, updated_by, created_at, updated_at, resolved_at
          FROM privacy_data_requests
          WHERE request_id = $1::uuid
          FOR UPDATE`,
@@ -2374,27 +2423,102 @@ class PostgresDatabase {
         await client.query("COMMIT");
         return null;
       }
-      if (!isPrivacyDataRequestTransitionAllowed(current.status, status)) {
+      const nextStatus = status !== undefined ? status : current.status;
+      if (nextStatus !== current.status) {
+        if (!isPrivacyDataRequestTransitionAllowed(current.status, nextStatus)) {
+          await client.query("ROLLBACK");
+          return { conflict: true };
+        }
+      } else if (status !== undefined && ["completed", "rejected"].includes(current.status)) {
         await client.query("ROLLBACK");
         return { conflict: true };
       }
+      const nextAssignedTo = options.assignedTo !== undefined
+        ? (String(options.assignedTo || "").trim().slice(0, 120) || null)
+        : current.assigned_to;
+      const nextEscalationLevel = options.escalationLevel !== undefined
+        ? options.escalationLevel
+        : (current.escalation_level || "l1_support");
+      const nextResolutionCode = options.resolutionCode !== undefined
+        ? options.resolutionCode
+        : current.resolution_code;
       const { rows } = await client.query(
         `UPDATE privacy_data_requests
-         SET status = $2, updated_by = $3, updated_at = NOW(),
-             resolved_at = CASE WHEN $2 IN ('completed', 'rejected') THEN NOW() ELSE NULL END
+         SET status = $2,
+             assigned_to = $3,
+             escalation_level = $4,
+             resolution_code = $5,
+             updated_by = $6,
+             updated_at = NOW(),
+             resolved_at = CASE WHEN $2 IN ('completed', 'rejected') THEN COALESCE(resolved_at, NOW()) ELSE NULL END
          WHERE request_id = $1::uuid
-         RETURNING request_id, subject_id, request_type, status, created_by, updated_by,
-                   created_at, updated_at, resolved_at`,
-        [id, status, updatedBy],
+         RETURNING request_id, subject_id, request_type, status, channel, verification_method,
+                   assigned_to, escalation_level, resolution_code, due_at,
+                   created_by, updated_by, created_at, updated_at, resolved_at`,
+        [id, nextStatus, nextAssignedTo, nextEscalationLevel, nextResolutionCode, updatedBy],
       );
       await client.query("COMMIT");
-      return rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+      const updated = rows[0] ? mapPrivacyDataRequestRow(rows[0]) : null;
+      if (updated) {
+        await appendAuditEntry(this.auditLogPath, {
+          action: "privacy.data_request.update",
+          actorId: updatedBy,
+          actorRole: normalizeRole(options.actorRole || ROLES.ADMIN),
+          entityType: "privacy_data_request",
+          entityId: id,
+          metadata: {
+            previousStatus: current.status,
+            status: updated.status,
+            assignedTo: updated.assignedTo,
+            escalationLevel: updated.escalationLevel,
+            resolutionCode: updated.resolutionCode,
+          },
+        });
+      }
+      return updated;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+  }
+
+  async anonymizeUserAccount(userId, actorId = "system", actorRole = ROLES.ADMIN) {
+    const anonymized = await this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.id === userId);
+      if (!user) return null;
+      const shortId = String(user.id).slice(0, 8);
+      const now = new Date().toISOString();
+      user.name = "Tài khoản đã ẩn danh";
+      user.email = `deleted-${shortId}@anonymized.local`;
+      user.password = hashPassword(crypto.randomBytes(24).toString("hex"));
+      user.passwordAuthEnabled = false;
+      user.isActive = false;
+      user.studentType = "other";
+      user.studentId = "";
+      user.studentVerification = { status: STUDENT_VERIFICATION_STATUSES.PENDING };
+      user.customerInfo = {};
+      user.authProvider = null;
+      user.providerId = null;
+      user.socialAccounts = [];
+      delete user.passwordReset;
+      user.updatedBy = String(actorId || "system").trim() || "system";
+      user.updatedAt = now;
+      user.anonymizedAt = now;
+      return user;
+    });
+    if (anonymized) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "privacy.account.anonymize",
+        actorId,
+        actorRole: normalizeRole(actorRole),
+        entityType: "user",
+        entityId: userId,
+        metadata: { anonymized: true },
+      });
+    }
+    return anonymized;
   }
 
   async getStats(_ordersPathOverride, totalBaseBooks = 80) {

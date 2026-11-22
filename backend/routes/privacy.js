@@ -1,5 +1,10 @@
 const { appendAuditEntry } = require("../audit");
 const {
+  PRIVACY_ESCALATION_LEVELS,
+  PRIVACY_REQUEST_CHANNELS,
+  PRIVACY_RESOLUTION_CODES,
+} = require("../privacy-data-requests");
+const {
   EXPORT_FORMATS,
   buildPersonalDataExport,
 } = require("../privacy-export");
@@ -11,7 +16,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createPrivacyRoutes(dependencies) {
-  const { RequestError, allowedConsentPurposes, allowedConsentSources, allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses, allowedPrivacyDataRequestTypes: privacyDataRequestTypes, auditLogPath, db, getAuthUser, ordersPath, payloadSchemas, privacyExportLimit = 5, privacyExportStore, privacyExportWindowMs = 15 * 60 * 1000, rateLimitRequest, readJson, requireAdmin, requireJsonObject, requireRole, sanitizePlainText, sendJson, verifyPasswordReauthentication } = dependencies;
+  const { RequestError, allowedConsentPurposes, allowedConsentSources, allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses, allowedPrivacyDataRequestTypes: privacyDataRequestTypes, auditLogPath, db, getAuthUser, ordersPath, payloadSchemas, privacyExportLimit = 5, privacyExportStore, privacyExportWindowMs = 15 * 60 * 1000, rateLimitRequest, readJson, requireAdmin, requireJsonObject, requireRole, sanitizePlainText, sendJson, sessionStore, verifyPasswordReauthentication } = dependencies;
   return async function handleRoute(request, response, requestUrl) {
 if (
   requestUrl.pathname === "/api/privacy/consents" &&
@@ -108,15 +113,22 @@ if (
     await readJson(request),
     "Yêu cầu dữ liệu cá nhân không hợp lệ.",
     {
-      allowed: ["type"],
+      allowed: ["type", "channel"],
       required: ["type"],
-      types: { type: "string" },
+      types: { type: "string", channel: "string" },
     },
   );
   if (!privacyDataRequestTypes.has(payload.type)) {
     throw new RequestError(400, "Loại yêu cầu dữ liệu cá nhân không hợp lệ.");
   }
-  const dataRequest = await db.createPrivacyDataRequest(session.userId, payload.type);
+  const channel = payload.channel ? sanitizePlainText(payload.channel, 32) : "web_portal";
+  if (!PRIVACY_REQUEST_CHANNELS.includes(channel)) {
+    throw new RequestError(400, "Kênh tiếp nhận yêu cầu không hợp lệ.");
+  }
+  const dataRequest = await db.createPrivacyDataRequest(session.userId, payload.type, {
+    channel,
+    verificationMethod: "session_token",
+  });
   if (!dataRequest) {
     throw new RequestError(409, "Đã có yêu cầu cùng loại đang được xử lý.");
   }
@@ -132,8 +144,28 @@ if (
   if (typeof db.getAllPrivacyDataRequests !== "function") {
     throw new RequestError(503, "Kho dữ liệu chưa hỗ trợ yêu cầu dữ liệu cá nhân.");
   }
-  const requests = await db.getAllPrivacyDataRequests();
-  sendJson(response, 200, { requests });
+  const allRequests = await db.getAllPrivacyDataRequests();
+  const statusFilter = requestUrl.searchParams.get("status");
+  const typeFilter = requestUrl.searchParams.get("type");
+  const escalationFilter = requestUrl.searchParams.get("escalationLevel");
+  const overdueFilter = requestUrl.searchParams.get("overdue");
+  const requests = allRequests.filter((item) => {
+    if (statusFilter && item.status !== statusFilter) return false;
+    if (typeFilter && item.type !== typeFilter) return false;
+    if (escalationFilter && item.escalationLevel !== escalationFilter) return false;
+    if (overdueFilter === "true" && !item.overdue) return false;
+    if (overdueFilter === "false" && item.overdue) return false;
+    return true;
+  });
+  const summary = {
+    total: allRequests.length,
+    pending: allRequests.filter((item) => item.status === "pending").length,
+    processing: allRequests.filter((item) => item.status === "processing").length,
+    completed: allRequests.filter((item) => item.status === "completed").length,
+    rejected: allRequests.filter((item) => item.status === "rejected").length,
+    overdue: allRequests.filter((item) => item.overdue).length,
+  };
+  sendJson(response, 200, { requests, summary });
   return true;
 }
 
@@ -149,18 +181,67 @@ if (updatePrivacyDataRequestMatch && request.method === "PATCH") {
     await readJson(request),
     "Trạng thái yêu cầu dữ liệu cá nhân không hợp lệ.",
     {
-      allowed: ["status"],
-      required: ["status"],
-      types: { status: "string" },
+      allowed: ["status", "assignedTo", "escalationLevel", "resolutionCode", "executeAnonymization"],
+      types: {
+        status: "string",
+        assignedTo: "string",
+        escalationLevel: "string",
+        resolutionCode: "string",
+        executeAnonymization: "boolean",
+      },
+      minProperties: 1,
     },
   );
-  if (!privacyDataRequestStatuses.has(payload.status)) {
+  if (payload.status !== undefined && !privacyDataRequestStatuses.has(payload.status)) {
     throw new RequestError(400, "Trạng thái yêu cầu dữ liệu cá nhân không hợp lệ.");
   }
+  if (
+    payload.escalationLevel !== undefined &&
+    !PRIVACY_ESCALATION_LEVELS.includes(payload.escalationLevel)
+  ) {
+    throw new RequestError(400, "Cấp chuyển xử lý không hợp lệ.");
+  }
+  if (
+    payload.resolutionCode !== undefined &&
+    !PRIVACY_RESOLUTION_CODES.includes(payload.resolutionCode)
+  ) {
+    throw new RequestError(400, "Mã kết quả xử lý không hợp lệ.");
+  }
+
+  const requestId = updatePrivacyDataRequestMatch[1];
+  if (payload.executeAnonymization === true) {
+    const existingList = typeof db.getAllPrivacyDataRequests === "function"
+      ? await db.getAllPrivacyDataRequests()
+      : [];
+    const target = existingList.find((entry) => entry.id === requestId);
+    if (!target) {
+      throw new RequestError(404, "Không tìm thấy yêu cầu dữ liệu cá nhân.");
+    }
+    if (target.type !== "delete" || payload.status !== "completed") {
+      throw withErrorCode(
+        new RequestError(
+          400,
+          "Chỉ có thể ẩn danh tài khoản khi hoàn tất yêu cầu xóa dữ liệu.",
+        ),
+        "ANONYMIZATION_NOT_ALLOWED",
+      );
+    }
+  }
+
   const dataRequest = await db.updatePrivacyDataRequest(
-    updatePrivacyDataRequestMatch[1],
+    requestId,
     payload.status,
     actor.userId,
+    {
+      assignedTo: payload.assignedTo !== undefined
+        ? sanitizePlainText(payload.assignedTo, 120)
+        : undefined,
+      escalationLevel: payload.escalationLevel,
+      resolutionCode: payload.resolutionCode !== undefined
+        ? payload.resolutionCode
+        : (payload.executeAnonymization ? "anonymized" : undefined),
+      actorRole: actor.role,
+    },
   );
   if (!dataRequest) {
     throw new RequestError(404, "Không tìm thấy yêu cầu dữ liệu cá nhân.");
@@ -168,7 +249,19 @@ if (updatePrivacyDataRequestMatch && request.method === "PATCH") {
   if (dataRequest.conflict) {
     throw new RequestError(409, "Không thể chuyển trạng thái yêu cầu dữ liệu cá nhân.");
   }
-  sendJson(response, 200, { request: dataRequest });
+
+  let anonymized = false;
+  if (payload.executeAnonymization === true && typeof db.anonymizeUserAccount === "function") {
+    const result = await db.anonymizeUserAccount(dataRequest.subjectId, actor.userId, actor.role);
+    anonymized = Boolean(result);
+    if (anonymized && sessionStore && typeof sessionStore.destroyUserSessions === "function") {
+      await sessionStore.destroyUserSessions(dataRequest.subjectId);
+    }
+  }
+
+  sendJson(response, 200, payload.executeAnonymization === true
+    ? { request: dataRequest, anonymized }
+    : { request: dataRequest });
   return true;
 }
 

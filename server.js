@@ -2170,6 +2170,7 @@ function createServer({
     requireRole,
     sanitizePlainText,
     sendJson,
+    sessionStore,
     verifyPasswordReauthentication,
   });
   const handleCustomerRoute = createCustomerRoutes({

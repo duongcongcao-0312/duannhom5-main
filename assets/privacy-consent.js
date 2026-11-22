@@ -1,7 +1,13 @@
 (function () {
   const POLICY_VERSION = '2026-01';
   const CONSENT_PURPOSES = new Set(['order', 'service', 'marketing']);
-  const REQUEST_TYPES = new Set(['access', 'update', 'delete']);
+  const REQUEST_TYPES = new Set(['access', 'update', 'export', 'delete']);
+  const REQUEST_TYPE_LABELS = {
+    access: 'Truy cập dữ liệu',
+    update: 'Cập nhật dữ liệu',
+    export: 'Xuất dữ liệu',
+    delete: 'Xóa / ẩn danh dữ liệu'
+  };
   const REQUEST_STATUS_LABELS = {
     pending: 'Đang chờ xử lý',
     processing: 'Đang xử lý',
@@ -95,7 +101,10 @@
       list.replaceChildren();
       for (const item of result.requests || []) {
         const entry = document.createElement('li');
-        entry.textContent = `${item.type}: ${REQUEST_STATUS_LABELS[item.status] || item.status}`;
+        const typeLabel = REQUEST_TYPE_LABELS[item.type] || item.type;
+        const statusLabel = REQUEST_STATUS_LABELS[item.status] || item.status;
+        const dueSuffix = item.dueAt && !item.resolvedAt ? ` (hạn dự kiến: ${item.dueAt})` : '';
+        entry.textContent = `${typeLabel}: ${statusLabel}${dueSuffix}`;
         list.appendChild(entry);
       }
     }

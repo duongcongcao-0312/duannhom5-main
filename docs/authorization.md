@@ -104,3 +104,21 @@ are enforced by `GET/POST /api/privacy/exports` and
   is allowed per account (`409 EXPORT_ALREADY_ACTIVE`), plus rate limiting.
   `privacy.export.create` and `privacy.export.download` log only metadata
   (format, counts, byte length, confirmation method), never PII or tokens.
+
+## Data-subject request workflow (DSAR)
+
+Policy and workflow helpers live in `backend/privacy-data-requests.js`,
+documented operationally in `docs/privacy-request-procedure.md` and publicly
+in `privacy.html#privacyRequestProcedure`.
+
+- **Types & internal SLA:** `access`, `update`, `export` (48h) and `delete`
+  (72h). Each request records `channel`, `verificationMethod`, `dueAt`,
+  `overdue`, `assignedTo`, `escalationLevel` (`l1_support` →
+  `l2_privacy_lead` → `l3_legal_admin`), and structured `resolutionCode`.
+- **Admin queue (`GET/PATCH /api/admin/privacy/data-requests`):** requires
+  `read:privacy` / `write:privacy`, supports filtering by `status`, `type`,
+  `escalationLevel`, and `overdue`, and never stores free-text PII `details`.
+- **Approved anonymization:** completing a `delete` request with
+  `executeAnonymization: true` anonymizes personal account fields, disables
+  login, and revokes all active sessions for that user while keeping historical
+  order records intact for accounting reconciliation.

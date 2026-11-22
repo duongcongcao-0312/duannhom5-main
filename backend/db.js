@@ -13,6 +13,12 @@ const { DEFAULT_COUPONS, getCouponUnavailableReason } = require("./coupons");
 const { pickSelfServiceFields } = require("./profile-update");
 const {
   PRIVACY_DATA_REQUEST_TYPES,
+  PRIVACY_ESCALATION_LEVELS,
+  PRIVACY_REQUEST_CHANNELS,
+  PRIVACY_RESOLUTION_CODES,
+  PRIVACY_VERIFICATION_METHODS,
+  computePrivacyRequestDueAt,
+  enrichPrivacyDataRequest,
   isPrivacyDataRequestTransitionAllowed,
 } = require("./privacy-data-requests");
 const {
@@ -1726,21 +1732,30 @@ class Database {
     const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
     return requests
       .filter((request) => request.subjectId === subjectId)
-      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .map((request) => enrichPrivacyDataRequest(request));
   }
 
   async getAllPrivacyDataRequests() {
     const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
-    return requests.sort(
-      (left, right) => String(right.createdAt).localeCompare(String(left.createdAt)),
-    );
+    return requests
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .map((request) => enrichPrivacyDataRequest(request));
   }
 
-  async createPrivacyDataRequest(subjectId, requestType) {
+  async createPrivacyDataRequest(subjectId, requestType, options = {}) {
     if (!PRIVACY_DATA_REQUEST_TYPES.includes(requestType)) {
       throw new CustomerError(400, "Loại yêu cầu dữ liệu cá nhân không hợp lệ.");
     }
-    return this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
+    const channel = options.channel || "web_portal";
+    const verificationMethod = options.verificationMethod || "session_token";
+    if (!PRIVACY_REQUEST_CHANNELS.includes(channel)) {
+      throw new CustomerError(400, "Kênh tiếp nhận yêu cầu không hợp lệ.");
+    }
+    if (!PRIVACY_VERIFICATION_METHODS.includes(verificationMethod)) {
+      throw new CustomerError(400, "Phương thức xác minh không hợp lệ.");
+    }
+    const created = await this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
       const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
       if (requests.some((request) =>
         request.subjectId === subjectId &&
@@ -1755,6 +1770,12 @@ class Database {
         subjectId,
         type: requestType,
         status: "pending",
+        channel,
+        verificationMethod,
+        assignedTo: null,
+        escalationLevel: "l1_support",
+        resolutionCode: null,
+        dueAt: computePrivacyRequestDueAt(requestType, now),
         createdBy: subjectId,
         updatedBy: null,
         createdAt: now,
@@ -1766,29 +1787,137 @@ class Database {
         this.privacyDataRequestsPath,
         JSON.stringify(requests, null, 2),
       );
-      return request;
+      return enrichPrivacyDataRequest(request);
     });
+    if (created) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "privacy.data_request.create",
+        actorId: subjectId,
+        actorRole: ROLES.USER,
+        entityType: "privacy_data_request",
+        entityId: created.id,
+        metadata: {
+          type: created.type,
+          channel: created.channel,
+          verificationMethod: created.verificationMethod,
+          dueAt: created.dueAt,
+        },
+      });
+    }
+    return created;
   }
 
-  async updatePrivacyDataRequest(id, status, updatedBy) {
-    return this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
+  async updatePrivacyDataRequest(id, status, updatedBy, options = {}) {
+    if (
+      options.escalationLevel !== undefined &&
+      !PRIVACY_ESCALATION_LEVELS.includes(options.escalationLevel)
+    ) {
+      throw new CustomerError(400, "Cấp chuyển xử lý không hợp lệ.");
+    }
+    if (
+      options.resolutionCode !== undefined &&
+      options.resolutionCode !== null &&
+      !PRIVACY_RESOLUTION_CODES.includes(options.resolutionCode)
+    ) {
+      throw new CustomerError(400, "Mã kết quả xử lý không hợp lệ.");
+    }
+    const result = await this.enqueueFileWrite(this.privacyDataRequestsPath, async () => {
       const requests = await readJsonCollection(this.privacyDataRequestsPath, []);
       const request = requests.find((entry) => entry.id === id);
       if (!request) return null;
-      if (!isPrivacyDataRequestTransitionAllowed(request.status, status)) {
-        return { conflict: true };
+      const previousStatus = request.status;
+      if (status !== undefined && status !== request.status) {
+        if (!isPrivacyDataRequestTransitionAllowed(request.status, status)) {
+          return { conflict: true };
+        }
+        request.status = status;
+      } else if (status !== undefined && !isPrivacyDataRequestTransitionAllowed(request.status, status)) {
+        // Explicit same-status transition on terminal state is a conflict unless only metadata changed
+        if (["completed", "rejected"].includes(request.status)) {
+          return { conflict: true };
+        }
+      }
+      if (options.assignedTo !== undefined) {
+        request.assignedTo = options.assignedTo
+          ? sanitizeTextValue(options.assignedTo, { maxLength: 120, allowEmpty: true, fieldName: "Người phụ trách" }) || null
+          : null;
+      }
+      if (options.escalationLevel !== undefined) {
+        request.escalationLevel = options.escalationLevel;
+      }
+      if (options.resolutionCode !== undefined) {
+        request.resolutionCode = options.resolutionCode;
       }
       const now = new Date().toISOString();
-      request.status = status;
       request.updatedBy = updatedBy;
       request.updatedAt = now;
-      request.resolvedAt = ["completed", "rejected"].includes(status) ? now : null;
+      if (["completed", "rejected"].includes(request.status)) {
+        request.resolvedAt = request.resolvedAt || now;
+      } else {
+        request.resolvedAt = null;
+      }
       await atomicWriteFile(
         this.privacyDataRequestsPath,
         JSON.stringify(requests, null, 2),
       );
-      return request;
+      return {
+        previousStatus,
+        record: enrichPrivacyDataRequest(request),
+      };
     });
+    if (!result || result.conflict) return result;
+    await appendAuditEntry(this.auditLogPath, {
+      action: "privacy.data_request.update",
+      actorId: updatedBy,
+      actorRole: normalizeRole(options.actorRole || ROLES.ADMIN),
+      entityType: "privacy_data_request",
+      entityId: id,
+      metadata: {
+        previousStatus: result.previousStatus,
+        status: result.record.status,
+        assignedTo: result.record.assignedTo,
+        escalationLevel: result.record.escalationLevel,
+        resolutionCode: result.record.resolutionCode,
+      },
+    });
+    return result.record;
+  }
+
+  async anonymizeUserAccount(userId, actorId = "system", actorRole = ROLES.ADMIN) {
+    const anonymized = await this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === userId);
+      if (!user) return null;
+      const shortId = String(user.id).slice(0, 8);
+      const now = new Date().toISOString();
+      user.name = "Tài khoản đã ẩn danh";
+      user.email = `deleted-${shortId}@anonymized.local`;
+      user.password = hashPassword(crypto.randomBytes(24).toString("hex"));
+      user.passwordAuthEnabled = false;
+      user.isActive = false;
+      user.studentType = "other";
+      user.studentId = "";
+      user.studentVerification = { status: STUDENT_VERIFICATION_STATUSES.PENDING };
+      user.customerInfo = {};
+      user.authProvider = null;
+      user.providerId = null;
+      user.socialAccounts = [];
+      delete user.passwordReset;
+      user.updatedBy = String(actorId || "system").trim() || "system";
+      user.updatedAt = now;
+      user.anonymizedAt = now;
+      return user;
+    });
+    if (anonymized) {
+      await appendAuditEntry(this.auditLogPath, {
+        action: "privacy.account.anonymize",
+        actorId,
+        actorRole: normalizeRole(actorRole),
+        entityType: "user",
+        entityId: userId,
+        metadata: { anonymized: true },
+      });
+    }
+    return anonymized;
   }
 
   async getStats(ordersPathOverride, totalBaseBooks = 80) {

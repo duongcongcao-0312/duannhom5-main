@@ -19,7 +19,7 @@
 | --- | --- |
 | `POST /api/auth/register`, `/login`, `/social`, `/password-reset*` | Public entry points; credentials or social identity are verified server-side. |
 | `GET /api/auth/me`, `PATCH /api/auth/customer-info`, `/api/auth/logout` | Authenticated session; profile changes apply only to that session's user. See [Personal data updates](#personal-data-updates). |
-| `/api/privacy/consents*` | Authenticated session; consent records use the session user ID. |
+| `/api/privacy/consents*`, `/api/privacy/data-requests`, `/api/privacy/exports*` | Authenticated session; consent, request, and personal data export records are strictly scoped to the session user ID. See [Personal data export](#personal-data-export). |
 | `GET /api/books`, `GET /api/coupons/:code`, `POST /api/services`, `POST /api/orders/quote` | Public catalog, coupon lookup, service request, or quote. |
 | `POST /api/orders` | Guest or authenticated checkout. Authenticated order ownership is assigned from the session; client `userId` is rejected. |
 | `GET /api/orders` | Authenticated; returns only orders owned by the session user. |
@@ -80,3 +80,27 @@ Policy lives in `backend/profile-update.js` and is enforced by
   (`ordersUpdated: 0`); new orders use the updated profile.
 - Audit: `user.customer_info.update` records only `changedFields` and the
   `confirmation` method (`none`, `password`, `recent_login`), never values.
+
+## Personal data export
+
+Policy and short-lived download store live in `backend/privacy-export.js` and
+are enforced by `GET/POST /api/privacy/exports` and
+`GET /api/privacy/exports/:id/download`. The public description is in
+`privacy.html#profileExportPolicy`.
+
+- **Identity & ownership verification:** requires an authenticated session plus
+  `currentPassword` re-authentication (rate limited), or a login within 10
+  minutes for social-only accounts. Forged target IDs are rejected.
+- **Included scope (UTF-8 JSON):** account profile, saved `customerInfo`,
+  orders strictly matching `order.userId === session.userId`, consent records,
+  and privacy data requests.
+- **Excluded data:** passwords, reset/session tokens, raw social `providerId`,
+  other users' and guest orders, anonymous service requests, internal CRM
+  records/notes, staff actor IDs, and admin audit logs.
+- **Download protection & expiry:** downloads require both the owner's bearer
+  session and the one-time `X-Export-Token` header. Payloads expire after 15
+  minutes (returning `410 EXPORT_EXPIRED` and purging payload bytes).
+- **Duplicate prevention & minimal audit:** only one active non-expired export
+  is allowed per account (`409 EXPORT_ALREADY_ACTIVE`), plus rate limiting.
+  `privacy.export.create` and `privacy.export.download` log only metadata
+  (format, counts, byte length, confirmation method), never PII or tokens.

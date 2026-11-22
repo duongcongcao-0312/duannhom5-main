@@ -66,6 +66,10 @@ const {
   PRIVACY_DATA_REQUEST_STATUSES,
   PRIVACY_DATA_REQUEST_TYPES,
 } = require("./backend/privacy-data-requests");
+const {
+  EXPORT_DOWNLOAD_TTL_MS,
+  PrivacyExportStore,
+} = require("./backend/privacy-export");
 const { createFirebaseIdTokenVerifier } = require("./backend/firebase-auth");
 const {
   CUSTOMER_ROLE_PERMISSIONS,
@@ -1383,6 +1387,9 @@ function createServer({
   refreshTtlMs = Number.isFinite(Number(process.env.SESSION_REFRESH_TTL_MS))
     ? Number(process.env.SESSION_REFRESH_TTL_MS)
     : SESSION_REFRESH_TTL_MS,
+  privacyExportTtlMs = Number.isFinite(Number(process.env.PRIVACY_EXPORT_TTL_MS))
+    ? Number(process.env.PRIVACY_EXPORT_TTL_MS)
+    : EXPORT_DOWNLOAD_TTL_MS,
   passwordResetMailer = createEmailMailer(),
   socialTokenVerifier = createFirebaseIdTokenVerifier(),
   appBaseUrl = process.env.PUBLIC_APP_URL,
@@ -1557,6 +1564,9 @@ function createServer({
     sessionTtlMs,
     refreshTtlMs,
     cleanupIntervalMs: 60 * 1000,
+  });
+  const privacyExportStore = new PrivacyExportStore({
+    ttlMs: privacyExportTtlMs,
   });
   const loginAttemptLimit = 5;
   const loginAttemptWindowMs = 15 * 60 * 1000;
@@ -1877,6 +1887,7 @@ function createServer({
       pathname === "/api/auth/customer-info" ||
       pathname.startsWith("/api/privacy/consents") ||
       pathname.startsWith("/api/privacy/data-requests") ||
+      pathname.startsWith("/api/privacy/exports") ||
       /^\/api\/auth\/social\/(?:link|unlink)$/.test(pathname);
     if (!isSensitiveRequest) return;
 
@@ -2146,15 +2157,20 @@ function createServer({
     allowedConsentSources,
     allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses,
     allowedPrivacyDataRequestTypes: privacyDataRequestTypes,
+    auditLogPath,
     db,
     getAuthUser,
+    ordersPath,
     payloadSchemas,
+    privacyExportStore,
+    rateLimitRequest,
     readJson,
     requireAdmin,
     requireJsonObject,
     requireRole,
     sanitizePlainText,
     sendJson,
+    verifyPasswordReauthentication,
   });
   const handleCustomerRoute = createCustomerRoutes({
     RequestError,
@@ -2256,7 +2272,7 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code, X-Export-Token",
       });
       response.end();
       return;
@@ -2390,6 +2406,7 @@ function createServer({
   });
   server.once("close", () => {
     sessionStore.close();
+    privacyExportStore.close();
     if (typeof db.close !== "function") return;
     try {
       Promise.resolve(db.close()).catch((error) => {

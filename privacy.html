@@ -52,6 +52,15 @@
       <li>Nhật ký hệ thống chỉ ghi tên trường đã thay đổi, thời điểm, người thực hiện và cách xác nhận; không ghi giá trị cũ hoặc mới.</li>
     </ul>
 
+    <h2 id="profileExportPolicy">6. Xuất dữ liệu cá nhân</h2>
+    <ul>
+      <li>Chỉ chủ tài khoản đang đăng nhập mới có thể tạo và tải bản xuất dữ liệu của chính mình sau khi xác minh danh tính (nhập mật khẩu hiện tại, hoặc đăng nhập lại trong vòng 10 phút với tài khoản chỉ đăng nhập social).</li>
+      <li>Phạm vi xuất ở định dạng JSON (UTF-8): thông tin tài khoản, thông tin liên hệ đã lưu, đơn hàng gắn với tài khoản, lịch sử consent và lịch sử yêu cầu dữ liệu cá nhân.</li>
+      <li>Loại trừ khỏi bản xuất tự động: mật khẩu, mã khôi phục/token, mã định danh nhà cung cấp social, đơn hàng khách vãng lai hoặc của tài khoản khác, yêu cầu dịch vụ ẩn danh không gắn tài khoản, ghi chú CRM nội bộ, mã nhân viên xử lý và nhật ký quản trị.</li>
+      <li>Tệp tải xuống được bảo vệ bằng phiên đăng nhập của chủ tài khoản kèm mã tải xuống chỉ cấp một lần qua header <code>X-Export-Token</code>, có hiệu lực tối đa 15 phút và tự hủy dữ liệu sau khi hết hạn.</li>
+      <li>Mỗi tài khoản chỉ có một bản xuất đang còn hiệu lực tại một thời điểm để tránh tạo trùng lặp. Nhật ký chỉ ghi thời điểm tạo/tải, dung lượng và số lượng bản ghi; không ghi nội dung dữ liệu cá nhân hay mã tải xuống.</li>
+    </ul>
+
     <section id="consentManagement" aria-labelledby="consentHeading">
       <h2 id="consentHeading">Quản lý consent của tài khoản</h2>
       <p id="consentStatus" aria-live="polite">Đăng nhập để xem và quản lý consent.</p>
@@ -90,7 +99,20 @@
       <ul id="privacyDataRequestList"></ul>
     </section>
 
-    <h2>5. Bảo vệ thông tin</h2>
+    <section id="privacyExportSection" aria-labelledby="privacyExportHeading">
+      <h2 id="privacyExportHeading">Xuất dữ liệu cá nhân (JSON)</h2>
+      <p>Xác nhận mật khẩu hiện tại (tài khoản chỉ dùng social cần đăng nhập lại trong vòng 10 phút) để tạo tệp JSON dữ liệu của riêng bạn. Liên kết tải xuống có hiệu lực trong 15 phút.</p>
+      <form id="privacyExportForm">
+        <label for="privacyExportPassword">Mật khẩu hiện tại (bỏ trống nếu tài khoản chỉ đăng nhập social)</label>
+        <input id="privacyExportPassword" name="currentPassword" type="password" autocomplete="current-password">
+        <button type="submit">Tạo bản xuất dữ liệu</button>
+      </form>
+      <p id="privacyExportStatus" aria-live="polite">Đăng nhập để tạo và tải bản xuất dữ liệu.</p>
+      <button type="button" id="privacyExportDownloadButton" hidden>Tải xuống tệp JSON</button>
+      <ul id="privacyExportList"></ul>
+    </section>
+
+    <h2>7. Bảo vệ thông tin</h2>
     <p>Mật khẩu tài khoản được băm ở backend. Không có cam kết rằng toàn bộ dữ liệu khác được mã hóa ở cấp ứng dụng khi lưu trữ; biện pháp bảo vệ còn phụ thuộc cấu hình hosting, database, quyền truy cập, HTTPS, backup và quản lý secret của môi trường triển khai. Không coi ứng dụng mẫu là hệ thống đã được chứng nhận hoặc sẵn sàng xử lý dữ liệu nhạy cảm.</p>
 
     <p><a href="index.html">Về trang chủ</a></p>

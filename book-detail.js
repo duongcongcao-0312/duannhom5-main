@@ -48,6 +48,8 @@ function getBookDetailsUrl(book) {
 		author: book.author,
 		price: String(book.price),
 		category: book.category,
+		publisher: book.publisher || '',
+		publisherId: book.publisherId || '',
 		image: getBookImage(book)
 	});
 	return `book.html?${params.toString()}`;
@@ -104,6 +106,7 @@ if (!book) {
 				<p class="eyebrow">${escapeHtml(categoryLabels[book.category] || 'BookNest')}</p>
 				<h1>${escapeHtml(book.title)}</h1>
 				<p class="detail-author">Tác giả: <strong>${escapeHtml(book.author)}</strong></p>
+				${book.publisher ? `<p class="detail-publisher">Nhà xuất bản: <strong>${escapeHtml(book.publisher)}</strong></p>` : ''}
 				<p class="detail-price">${formatPrice(book.price)}</p>
 				<p class="detail-description">${escapeHtml(getBookDescription(book))}</p>
 				<div class="detail-actions"><button class="primary-button" id="buyBook" type="button">Mua ngay</button><a class="secondary-button" href="index.html#books">Chọn sách khác</a></div>

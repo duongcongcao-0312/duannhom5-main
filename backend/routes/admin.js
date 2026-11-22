@@ -1,5 +1,5 @@
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
   const serializeAdminOrder = (order) => {
     const { accessCodeHash, ...safeOrder } = order;
     return safeOrder;
@@ -278,6 +278,281 @@ if (
   return true;
 }
 
+// --- Admin API: Author Management ---
+if (
+  requestUrl.pathname === "/api/admin/authors" &&
+  request.method === "GET"
+) {
+  await requireRole(request, "read:books");
+  sendJson(response, 200, await getBookAuthors());
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/admin/authors" &&
+  request.method === "POST"
+) {
+  await requireRole(request, "write:books");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu tác giả không hợp lệ.",
+  );
+  const name = sanitizePlainText(payload.name || payload.displayName, 200);
+  const slug = normalizeAuthorSlug(payload.slug || payload.id || name);
+  if (!name || !slug) {
+    throw new RequestError(400, "Tên tác giả và định danh là bắt buộc.");
+  }
+  const authors = await getBookAuthors();
+  if (authors.some((author) =>
+    author.slug === slug ||
+    String(author.name).toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+  )) {
+    throw new RequestError(409, "Tác giả hoặc định danh đã tồn tại.");
+  }
+  const now = new Date().toISOString();
+  const author = {
+    id: slug,
+    slug,
+    name,
+    displayName: sanitizePlainText(payload.displayName || name, 200),
+    status: payload.status === "inactive" ? "inactive" : "active",
+    bio: sanitizePlainText(payload.bio || "", 1000),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const saved = await saveBookAuthors([...authors, author]);
+  sendJson(response, 201, saved.find((entry) => entry.slug === slug));
+  return true;
+}
+
+const adminAuthorMatch = requestUrl.pathname.match(/^\/api\/admin\/authors\/([a-z0-9-]+)$/);
+if (
+  adminAuthorMatch &&
+  ["PUT", "PATCH", "DELETE"].includes(request.method)
+) {
+  await requireRole(request, "write:books");
+  const slug = adminAuthorMatch[1];
+  const authors = await getBookAuthors();
+  const existing = authors.find((author) => author.slug === slug);
+  if (!existing) {
+    throw new RequestError(404, "Không tìm thấy tác giả.");
+  }
+
+  if (request.method === "DELETE") {
+    const linkedBooks = (await getCatalogBookList()).filter((book) =>
+      (Array.isArray(book.authorIds) && book.authorIds.includes(slug)) ||
+      String(book.author || "").split(/\s*[,;&]\s*|(?:\svà\s)/i).some((name) =>
+        [existing.name, existing.displayName].some((candidate) =>
+          candidate && name.trim().toLocaleLowerCase("vi") === candidate.toLocaleLowerCase("vi")
+        )
+      )
+    );
+    if (linkedBooks.length) {
+      throw new RequestError(409, "Không thể xóa tác giả đang liên kết với sách.");
+    }
+    await saveBookAuthors(authors.filter((author) => author.slug !== slug));
+    sendJson(response, 200, { success: true });
+    return true;
+  }
+
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu cập nhật tác giả không hợp lệ.",
+  );
+  const name = sanitizePlainText(payload.name || payload.displayName || existing.name, 200);
+  if (!name) {
+    throw new RequestError(400, "Tên tác giả không được để trống.");
+  }
+  const requestedSlug = normalizeAuthorSlug(payload.slug || payload.id);
+  const nextSlug = requestedSlug || slug;
+  if (
+    nextSlug !== slug &&
+    authors.some((author) => author.slug === nextSlug)
+  ) {
+    throw new RequestError(409, "Định danh tác giả đã tồn tại.");
+  }
+  if (
+    String(payload.name || payload.displayName || existing.name).trim().toLocaleLowerCase("vi") !==
+      existing.name.toLocaleLowerCase("vi") &&
+    authors.some((author) =>
+      author.slug !== slug &&
+      author.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+    )
+  ) {
+    throw new RequestError(409, "Tên tác giả đã tồn tại.");
+  }
+  const updated = {
+    ...existing,
+    id: nextSlug,
+    slug: nextSlug,
+    name,
+    displayName: sanitizePlainText(payload.displayName || name, 200),
+    status: payload.status !== undefined
+      ? (payload.status === "inactive" ? "inactive" : "active")
+      : existing.status,
+    bio: payload.bio !== undefined
+      ? sanitizePlainText(payload.bio, 1000)
+      : existing.bio,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const linkedBooks = (await getCatalogBookList()).filter((book) =>
+    (Array.isArray(book.authorIds) && book.authorIds.includes(slug)) ||
+    String(book.author || "").split(/\s*[,;&]\s*|(?:\svà\s)/i).some((authorName) =>
+      [existing.name, existing.displayName].some((candidate) =>
+        candidate && authorName.trim().toLocaleLowerCase("vi") === candidate.toLocaleLowerCase("vi")
+      )
+    )
+  );
+  for (const book of linkedBooks) {
+    let updatedAuthor = String(book.author || "");
+    for (const candidate of [existing.displayName, existing.name]) {
+      if (!candidate) continue;
+      updatedAuthor = updatedAuthor.replace(
+        new RegExp(candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+        updated.displayName || name,
+      );
+    }
+    const authorIds = Array.isArray(book.authorIds)
+      ? book.authorIds.map((id) => id === slug ? nextSlug : id)
+      : [];
+    const authors = Array.isArray(book.authors)
+      ? book.authors.map((authorName) =>
+          [existing.name, existing.displayName].includes(authorName)
+            ? updated.displayName || name
+            : authorName
+        )
+      : [];
+    if (book.isCustom) {
+      await db.updateCustomBook(book.id, { author: updatedAuthor, authorIds, authors }, book.updatedAt);
+    } else {
+      await db.updateCatalogBook(book.id, { ...book, author: updatedAuthor, authorIds, authors }, book.updatedAt, book);
+    }
+  }
+
+  await saveBookAuthors(authors.map((author) => author.slug === slug ? updated : author));
+  sendJson(response, 200, updated);
+  return true;
+}
+
+// --- Admin API: Publisher Management ---
+if (
+  requestUrl.pathname === "/api/admin/publishers" &&
+  request.method === "GET"
+) {
+  await requireRole(request, "read:books");
+  sendJson(response, 200, await getBookPublishers());
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/admin/publishers" &&
+  request.method === "POST"
+) {
+  await requireRole(request, "write:books");
+  const payload = requireJsonObject(await readJson(request), "Dữ liệu nhà xuất bản không hợp lệ.");
+  const name = sanitizePlainText(payload.name || payload.displayName, 200);
+  const slug = normalizePublisherSlug(payload.slug || payload.id || name);
+  if (!name || !slug) {
+    throw new RequestError(400, "Tên nhà xuất bản và định danh là bắt buộc.");
+  }
+  const publishers = await getBookPublishers();
+  if (publishers.some((publisher) =>
+    publisher.slug === slug ||
+    publisher.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+  )) {
+    throw new RequestError(409, "Nhà xuất bản hoặc định danh đã tồn tại.");
+  }
+  const now = new Date().toISOString();
+  const publisher = {
+    id: slug,
+    slug,
+    name,
+    displayName: sanitizePlainText(payload.displayName || name, 200),
+    status: payload.status === "inactive" ? "inactive" : "active",
+    address: sanitizePlainText(payload.address || "", 300),
+    website: sanitizePlainText(payload.website || "", 500),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const saved = await saveBookPublishers([...publishers, publisher]);
+  sendJson(response, 201, saved.find((entry) => entry.slug === slug));
+  return true;
+}
+
+const adminPublisherMatch = requestUrl.pathname.match(/^\/api\/admin\/publishers\/([a-z0-9-]+)$/);
+if (
+  adminPublisherMatch &&
+  ["PUT", "PATCH", "DELETE"].includes(request.method)
+) {
+  await requireRole(request, "write:books");
+  const slug = adminPublisherMatch[1];
+  const publishers = await getBookPublishers();
+  const existing = publishers.find((publisher) => publisher.slug === slug);
+  if (!existing) throw new RequestError(404, "Không tìm thấy nhà xuất bản.");
+
+  if (request.method === "DELETE") {
+    const linked = (await getCatalogBookList()).some((book) =>
+      book.publisherId === slug ||
+      [existing.name, existing.displayName].some((name) =>
+        name && String(book.publisher || "").toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+      )
+    );
+    if (linked) throw new RequestError(409, "Không thể xóa nhà xuất bản đang được sách tham chiếu.");
+    await saveBookPublishers(publishers.filter((publisher) => publisher.slug !== slug));
+    sendJson(response, 200, { success: true });
+    return true;
+  }
+
+  const payload = requireJsonObject(await readJson(request), "Dữ liệu cập nhật nhà xuất bản không hợp lệ.");
+  const name = sanitizePlainText(payload.name || payload.displayName || existing.name, 200);
+  if (!name) throw new RequestError(400, "Tên nhà xuất bản không được để trống.");
+  const nextSlug = normalizePublisherSlug(payload.slug || payload.id) || slug;
+  if (
+    nextSlug !== slug &&
+    publishers.some((publisher) => publisher.slug === nextSlug)
+  ) throw new RequestError(409, "Định danh nhà xuất bản đã tồn tại.");
+  if (
+    name.toLocaleLowerCase("vi") !== existing.name.toLocaleLowerCase("vi") &&
+    publishers.some((publisher) =>
+      publisher.slug !== slug &&
+      publisher.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+    )
+  ) throw new RequestError(409, "Tên nhà xuất bản đã tồn tại.");
+
+  const updated = {
+    ...existing,
+    id: nextSlug,
+    slug: nextSlug,
+    name,
+    displayName: sanitizePlainText(payload.displayName || name, 200),
+    status: payload.status !== undefined
+      ? (payload.status === "inactive" ? "inactive" : "active")
+      : existing.status,
+    address: payload.address !== undefined ? sanitizePlainText(payload.address, 300) : existing.address,
+    website: payload.website !== undefined ? sanitizePlainText(payload.website, 500) : existing.website,
+    updatedAt: new Date().toISOString(),
+  };
+
+  for (const book of (await getCatalogBookList()).filter((entry) =>
+    entry.publisherId === slug ||
+    [existing.name, existing.displayName].some((candidate) =>
+      candidate && String(entry.publisher || "").toLocaleLowerCase("vi") === candidate.toLocaleLowerCase("vi")
+    )
+  )) {
+    const update = {
+      publisherId: nextSlug,
+      publisher: updated.displayName || name,
+    };
+    if (book.isCustom) await db.updateCustomBook(book.id, update, book.updatedAt);
+    else await db.updateCatalogBook(book.id, { ...book, ...update }, book.updatedAt, book);
+  }
+
+  await saveBookPublishers(publishers.map((publisher) => publisher.slug === slug ? updated : publisher));
+  sendJson(response, 200, updated);
+  return true;
+}
+
 // --- Admin API: Coupon Management ---
 if (
   requestUrl.pathname === "/api/admin/coupons" &&
@@ -357,6 +632,29 @@ if (
     "Dữ liệu sách không hợp lệ.",
     payloadSchemas.book,
   );
+  if (payload.publisherId || payload.publisher) {
+    const publishers = await getBookPublishers();
+    const publisher = publishers.find((entry) =>
+      entry.slug === normalizePublisherSlug(payload.publisherId) ||
+      entry.name.toLocaleLowerCase("vi") === String(payload.publisher || "").toLocaleLowerCase("vi")
+    );
+    if (!publisher) throw new RequestError(400, "Nhà xuất bản liên kết không hợp lệ.");
+    payload.publisherId = publisher.slug;
+    payload.publisher = publisher.displayName || publisher.name;
+  }
+  if (Array.isArray(payload.authorIds) || Array.isArray(payload.authors)) {
+    const authors = await getBookAuthors();
+    const resolved = (Array.isArray(payload.authorIds) ? payload.authorIds : []).map((slug) =>
+      authors.find((author) => author.slug === normalizeAuthorSlug(slug))
+    ).filter(Boolean).map((author) => author.displayName || author.name);
+    if (!resolved.length && Array.isArray(payload.authors)) {
+      resolved.push(...payload.authors.map((name) => sanitizePlainText(name, 200)).filter(Boolean));
+    }
+    if (!resolved.length && !sanitizePlainText(payload.author, 200)) {
+      throw new RequestError(400, "Tác giả liên kết không hợp lệ.");
+    }
+    if (resolved.length) payload.author = resolved.join(", ");
+  }
   const newBook = await enqueueOrderWrite(ordersPath, async () => {
     const newBookData = normalizeAdminBook(payload);
     await assertUniqueBookTitle(newBookData.title);
@@ -386,6 +684,29 @@ if (
     "Dữ liệu cập nhật sách không hợp lệ.",
     payloadSchemas.bookUpdate,
   );
+  if (payload.publisherId || payload.publisher) {
+    const publishers = await getBookPublishers();
+    const publisher = publishers.find((entry) =>
+      entry.slug === normalizePublisherSlug(payload.publisherId) ||
+      entry.name.toLocaleLowerCase("vi") === String(payload.publisher || "").toLocaleLowerCase("vi")
+    );
+    if (!publisher) throw new RequestError(400, "Nhà xuất bản liên kết không hợp lệ.");
+    payload.publisherId = publisher.slug;
+    payload.publisher = publisher.displayName || publisher.name;
+  }
+  if (Array.isArray(payload.authorIds) || Array.isArray(payload.authors)) {
+    const authors = await getBookAuthors();
+    const resolved = (Array.isArray(payload.authorIds) ? payload.authorIds : []).map((slug) =>
+      authors.find((author) => author.slug === normalizeAuthorSlug(slug))
+    ).filter(Boolean).map((author) => author.displayName || author.name);
+    if (!resolved.length && Array.isArray(payload.authors)) {
+      resolved.push(...payload.authors.map((name) => sanitizePlainText(name, 200)).filter(Boolean));
+    }
+    if (!resolved.length && !sanitizePlainText(payload.author, 200)) {
+      throw new RequestError(400, "Tác giả liên kết không hợp lệ.");
+    }
+    if (resolved.length) payload.author = resolved.join(", ");
+  }
   const updatedBook = await enqueueOrderWrite(ordersPath, async () => {
     await waitForCatalogReady();
     const isCatalogBook = catalogBookById.has(id);

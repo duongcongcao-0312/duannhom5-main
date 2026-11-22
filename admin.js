@@ -168,6 +168,8 @@
         orders: document.getElementById('viewOrders'),
         books: document.getElementById('viewBooks'),
         categories: document.getElementById('viewCategories'),
+        authors: document.getElementById('viewAuthors'),
+        publishers: document.getElementById('viewPublishers'),
         coupons: document.getElementById('viewCoupons'),
         services: document.getElementById('viewServices'),
         users: document.getElementById('viewUsers')
@@ -204,6 +206,8 @@
         else if (activeView === 'orders') loadOrders();
         else if (activeView === 'books') loadBooks();
         else if (activeView === 'categories') loadCategories();
+        else if (activeView === 'authors') loadAuthors();
+        else if (activeView === 'publishers') loadPublishers();
         else if (activeView === 'coupons') loadCoupons();
         else if (activeView === 'services') loadServices();
         else if (activeView === 'users') loadUsers();
@@ -438,6 +442,14 @@
             if (categoryRes.ok) {
                 syncCategoryControls(await categoryRes.json());
             }
+            const authorRes = await apiFetch('/api/admin/authors');
+            if (authorRes.ok) {
+                syncAuthorControls(await authorRes.json());
+            }
+            const publisherRes = await apiFetch('/api/admin/publishers');
+            if (publisherRes.ok) {
+                syncPublisherControls(await publisherRes.json());
+            }
             const res = await apiFetch('/api/admin/books');
             if (res.ok) {
                 allBooks = await res.json();
@@ -516,6 +528,9 @@
                 document.getElementById('bookIdInput').value = book.id || book.title;
                 bookForm.elements['title'].value = book.title;
                 bookForm.elements['author'].value = book.author;
+                bookForm.elements['authorIds'].value = JSON.stringify(book.authorIds || []);
+                bookForm.elements['publisher'].value = book.publisher || '';
+                bookForm.elements['publisherId'].value = book.publisherId || '';
                 bookForm.elements['category'].value = book.category;
                 bookForm.elements['price'].value = book.price;
                 bookForm.elements['stock'].value = book.stock !== undefined ? book.stock : 12;
@@ -569,6 +584,26 @@
         const payload = {
             title: data.get('title'),
             author: data.get('author'),
+            publisher: data.get('publisher'),
+            publisherId: data.get('publisherId') || (() => {
+                const name = String(data.get('publisher') || '').trim();
+                return allPublishers.find((publisher) =>
+                    (publisher.displayName || publisher.name).toLowerCase() === name.toLowerCase()
+                )?.slug || '';
+            })(),
+            authorIds: (() => {
+                try {
+                    const ids = JSON.parse(data.get('authorIds') || '[]');
+                    if (Array.isArray(ids)) return ids;
+                } catch {}
+                const names = String(data.get('author') || '').split(/\s*[,;&]\s*|\svà\s/i)
+                    .map((name) => name.trim()).filter(Boolean);
+                return names.map((name) =>
+                    allAuthors.find((author) =>
+                        (author.displayName || author.name).toLowerCase() === name.toLowerCase()
+                    )?.slug
+                ).filter(Boolean);
+            })(),
             category: data.get('category'),
             price: Number(data.get('price')),
             stock: Number(data.get('stock')),
@@ -707,6 +742,252 @@
             showToast(slug ? 'Đã cập nhật danh mục.' : 'Đã tạo danh mục.');
             categoryModal.close();
             await loadCategories();
+        } catch (error) {
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    });
+
+    let allAuthors = [];
+
+    function syncAuthorControls(authors) {
+        allAuthors = authors;
+        const datalist = document.getElementById('authorSuggestions');
+        if (datalist) {
+            datalist.innerHTML = authors
+                .filter((author) => author.status !== 'inactive')
+                .map((author) => `<option value="${escapeHtml(author.displayName || author.name)}"></option>`)
+                .join('');
+        }
+    }
+
+    function escapeSearchText(value) {
+        return String(value || '').normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/g, 'd')
+            .replace(/Đ/g, 'D')
+            .toLowerCase();
+    }
+
+    async function loadAuthors() {
+        const tbody = document.getElementById('authorsTableBody');
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải tác giả...</td></tr>';
+        try {
+            const res = await apiFetch('/api/admin/authors');
+            if (!res.ok) throw new Error('Không thể tải danh sách tác giả.');
+            allAuthors = await res.json();
+            renderFilteredAuthors();
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải tác giả.</td></tr>';
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    }
+
+    function renderFilteredAuthors() {
+        const tbody = document.getElementById('authorsTableBody');
+        const query = escapeSearchText(document.getElementById('authorSearchInput')?.value);
+        const filtered = allAuthors.filter((author) =>
+            !query ||
+            escapeSearchText(author.name).includes(query) ||
+            escapeSearchText(author.displayName).includes(query) ||
+            escapeSearchText(author.slug).includes(query)
+        );
+        if (!filtered.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không tìm thấy tác giả nào.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = filtered.map((author) => `
+            <tr>
+                <td><b>${escapeHtml(author.displayName || author.name)}</b></td>
+                <td><code>${escapeHtml(author.slug)}</code></td>
+                <td><span class="payment-badge">${author.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}</span></td>
+                <td>${escapeHtml(author.bio || '—')}</td>
+                <td>
+                    <button class="btn-sm btn-edit edit-author-btn" data-slug="${escapeHtml(author.slug)}" type="button">Sửa</button>
+                    <button class="btn-sm btn-delete delete-author-btn" data-slug="${escapeHtml(author.slug)}" type="button">Xóa</button>
+                </td>
+            </tr>
+        `).join('');
+
+        tbody.querySelectorAll('.edit-author-btn').forEach((button) => {
+            button.addEventListener('click', () => openAuthorModal(
+                allAuthors.find((author) => author.slug === button.dataset.slug)
+            ));
+        });
+        tbody.querySelectorAll('.delete-author-btn').forEach((button) => {
+            button.addEventListener('click', async () => {
+                if (!confirm('Xóa tác giả này? Tác giả đang liên kết với sách sẽ không thể xóa.')) return;
+                const res = await apiFetch(`/api/admin/authors/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                const result = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showToast(result.error || 'Không thể xóa tác giả.', 'error');
+                    return;
+                }
+                showToast('Đã xóa tác giả.');
+                await loadAuthors();
+            });
+        });
+    }
+
+    const authorModal = document.getElementById('authorModal');
+    const authorForm = document.getElementById('authorForm');
+
+    function openAuthorModal(author = null) {
+        authorForm.reset();
+        document.getElementById('authorModalTitle').textContent = author ? 'Cập nhật tác giả' : 'Thêm tác giả';
+        authorForm.elements.slug.value = author?.slug || '';
+        authorForm.elements.name.value = author?.name || '';
+        authorForm.elements.displayName.value = author?.displayName || author?.name || '';
+        authorForm.elements.authorSlug.value = author?.slug || '';
+        authorForm.elements.status.value = author?.status || 'active';
+        authorForm.elements.bio.value = author?.bio || '';
+        authorModal.showModal();
+    }
+
+    document.getElementById('openAddAuthorBtn')?.addEventListener('click', () => openAuthorModal());
+    document.getElementById('closeAuthorModal')?.addEventListener('click', () => authorModal.close());
+    document.getElementById('cancelAuthorModal')?.addEventListener('click', () => authorModal.close());
+    document.getElementById('authorSearchInput')?.addEventListener('input', renderFilteredAuthors);
+    authorForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const data = new FormData(authorForm);
+        const slug = data.get('slug');
+        const payload = {
+            name: data.get('name'),
+            displayName: data.get('displayName') || data.get('name'),
+            slug: data.get('authorSlug'),
+            status: data.get('status'),
+            bio: data.get('bio')
+        };
+        try {
+            const res = await apiFetch(
+                slug ? `/api/admin/authors/${encodeURIComponent(slug)}` : '/api/admin/authors',
+                { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
+            );
+            const result = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(result.error || 'Không thể lưu tác giả.');
+            showToast(slug ? 'Đã cập nhật tác giả.' : 'Đã tạo tác giả.');
+            authorModal.close();
+            await loadAuthors();
+            await loadBooks();
+        } catch (error) {
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    });
+
+    let allPublishers = [];
+
+    function syncPublisherControls(publishers) {
+        allPublishers = publishers;
+        const datalist = document.getElementById('publisherSuggestions');
+        if (datalist) {
+            datalist.innerHTML = publishers
+                .filter((publisher) => publisher.status !== 'inactive')
+                .map((publisher) => `<option value="${escapeHtml(publisher.displayName || publisher.name)}"></option>`)
+                .join('');
+        }
+    }
+
+    async function loadPublishers() {
+        const tbody = document.getElementById('publishersTableBody');
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải nhà xuất bản...</td></tr>';
+        try {
+            const res = await apiFetch('/api/admin/publishers');
+            if (!res.ok) throw new Error('Không thể tải danh sách nhà xuất bản.');
+            allPublishers = await res.json();
+            syncPublisherControls(allPublishers);
+            renderFilteredPublishers();
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải nhà xuất bản.</td></tr>';
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    }
+
+    function renderFilteredPublishers() {
+        const tbody = document.getElementById('publishersTableBody');
+        const query = escapeSearchText(document.getElementById('publisherSearchInput')?.value);
+        const filtered = allPublishers.filter((publisher) =>
+            !query ||
+            escapeSearchText(publisher.name).includes(query) ||
+            escapeSearchText(publisher.displayName).includes(query) ||
+            escapeSearchText(publisher.slug).includes(query)
+        );
+        if (!filtered.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không tìm thấy nhà xuất bản nào.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = filtered.map((publisher) => `
+            <tr>
+                <td><b>${escapeHtml(publisher.displayName || publisher.name)}</b></td>
+                <td><code>${escapeHtml(publisher.slug)}</code></td>
+                <td><span class="payment-badge">${publisher.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}</span></td>
+                <td>${escapeHtml(publisher.address || '—')}</td>
+                <td>
+                    <button class="btn-sm btn-edit edit-publisher-btn" data-slug="${escapeHtml(publisher.slug)}" type="button">Sửa</button>
+                    <button class="btn-sm btn-delete delete-publisher-btn" data-slug="${escapeHtml(publisher.slug)}" type="button">Xóa</button>
+                </td>
+            </tr>
+        `).join('');
+        tbody.querySelectorAll('.edit-publisher-btn').forEach((button) => {
+            button.addEventListener('click', () => openPublisherModal(
+                allPublishers.find((publisher) => publisher.slug === button.dataset.slug)
+            ));
+        });
+        tbody.querySelectorAll('.delete-publisher-btn').forEach((button) => {
+            button.addEventListener('click', async () => {
+                if (!confirm('Xóa nhà xuất bản này? Nhà xuất bản đang được sách tham chiếu sẽ không thể xóa.')) return;
+                const res = await apiFetch(`/api/admin/publishers/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                const result = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showToast(result.error || 'Không thể xóa nhà xuất bản.', 'error');
+                    return;
+                }
+                showToast('Đã xóa nhà xuất bản.');
+                await loadPublishers();
+            });
+        });
+    }
+
+    const publisherModal = document.getElementById('publisherModal');
+    const publisherForm = document.getElementById('publisherForm');
+    function openPublisherModal(publisher = null) {
+        publisherForm.reset();
+        document.getElementById('publisherModalTitle').textContent = publisher ? 'Cập nhật nhà xuất bản' : 'Thêm nhà xuất bản';
+        publisherForm.elements.slug.value = publisher?.slug || '';
+        publisherForm.elements.name.value = publisher?.name || '';
+        publisherForm.elements.displayName.value = publisher?.displayName || publisher?.name || '';
+        publisherForm.elements.publisherSlug.value = publisher?.slug || '';
+        publisherForm.elements.status.value = publisher?.status || 'active';
+        publisherForm.elements.address.value = publisher?.address || '';
+        publisherForm.elements.website.value = publisher?.website || '';
+        publisherModal.showModal();
+    }
+    document.getElementById('openAddPublisherBtn')?.addEventListener('click', () => openPublisherModal());
+    document.getElementById('closePublisherModal')?.addEventListener('click', () => publisherModal.close());
+    document.getElementById('cancelPublisherModal')?.addEventListener('click', () => publisherModal.close());
+    document.getElementById('publisherSearchInput')?.addEventListener('input', renderFilteredPublishers);
+    publisherForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const data = new FormData(publisherForm);
+        const slug = data.get('slug');
+        const payload = {
+            name: data.get('name'),
+            displayName: data.get('displayName') || data.get('name'),
+            slug: data.get('publisherSlug'),
+            status: data.get('status'),
+            address: data.get('address'),
+            website: data.get('website')
+        };
+        try {
+            const res = await apiFetch(
+                slug ? `/api/admin/publishers/${encodeURIComponent(slug)}` : '/api/admin/publishers',
+                { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
+            );
+            const result = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(result.error || 'Không thể lưu nhà xuất bản.');
+            showToast(slug ? 'Đã cập nhật nhà xuất bản.' : 'Đã tạo nhà xuất bản.');
+            publisherModal.close();
+            await loadPublishers();
+            await loadBooks();
         } catch (error) {
             showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
         }

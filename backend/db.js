@@ -234,6 +234,8 @@ class Database {
     this.servicesPath = options.servicesPath || path.join(dataDir, "service-requests.jsonl");
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
     this.categoriesPath = options.categoriesPath || path.join(dataDir, "categories.json");
+    this.authorsPath = options.authorsPath || path.join(dataDir, "authors.json");
+    this.publishersPath = options.publishersPath || path.join(dataDir, "publishers.json");
     this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
     this.customerInteractionsPath = options.customerInteractionsPath ||
       path.join(dataDir, "customer-interactions.json");
@@ -1569,6 +1571,34 @@ class Database {
     });
   }
 
+  async getAuthors(fallback = []) {
+    await this.init();
+    const stored = await readJsonCollection(this.authorsPath, null);
+    return Array.isArray(stored) ? stored : fallback;
+  }
+
+  async saveAuthors(authors) {
+    await this.init();
+    return this.enqueueFileWrite(this.authorsPath, async () => {
+      await atomicWriteFile(this.authorsPath, JSON.stringify(authors, null, 2));
+      return authors;
+    });
+  }
+
+  async getPublishers(fallback = []) {
+    await this.init();
+    const stored = await readJsonCollection(this.publishersPath, null);
+    return Array.isArray(stored) ? stored : fallback;
+  }
+
+  async savePublishers(publishers) {
+    await this.init();
+    return this.enqueueFileWrite(this.publishersPath, async () => {
+      await atomicWriteFile(this.publishersPath, JSON.stringify(publishers, null, 2));
+      return publishers;
+    });
+  }
+
   async updateCatalogBook(id, book, expectedUpdatedAt, baseBook) {
     return this.enqueueFileWrite(this.booksPath, async () => {
       const records = await this.readBookRecords();
@@ -1609,6 +1639,10 @@ class Database {
         stock: Number.isInteger(book.stock) ? book.stock : 12,
         cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
         description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
+        authorIds: Array.isArray(book.authorIds) ? book.authorIds : [],
+        authors: Array.isArray(book.authors) ? book.authors : [],
+        publisher: sanitizeTextValue(book.publisher || "", { maxLength: 200, allowEmpty: true, fieldName: "Nhà xuất bản" }),
+        publisherId: sanitizeTextValue(book.publisherId || "", { maxLength: 64, allowEmpty: true, fieldName: "Định danh nhà xuất bản" }),
         ...(book.isActive !== undefined ? { isActive: Boolean(book.isActive) } : {}),
         ...(book.discontinued !== undefined ? { discontinued: Boolean(book.discontinued) } : {}),
         ...(typeof book.status === "string" && book.status ? { status: book.status } : {}),

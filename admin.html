@@ -23,6 +23,8 @@
                 <button class="nav-tab" data-view="orders" type="button">📦 Đơn hàng</button>
                 <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
                 <button class="nav-tab" data-view="categories" type="button">🗂️ Danh mục</button>
+                <button class="nav-tab" data-view="authors" type="button">✍️ Tác giả</button>
+                <button class="nav-tab" data-view="publishers" type="button">🏛️ Nhà xuất bản</button>
                 <button class="nav-tab" data-view="coupons" type="button">🏷️ Coupon</button>
                 <button class="nav-tab" data-view="services" type="button">🤝 Yêu cầu dịch vụ</button>
                 <button class="nav-tab" data-view="users" type="button">👥 Thành viên & nhân viên</button>
@@ -268,6 +270,58 @@
                 </div>
             </section>
 
+            <!-- VIEW: AUTHORS -->
+            <section id="viewAuthors" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý tác giả</h1>
+                        <p class="subtitle">Chuẩn hóa tên hiển thị, định danh và liên kết tác giả với sách</p>
+                    </div>
+                    <button class="btn-primary" id="openAddAuthorBtn" type="button">➕ Thêm tác giả</button>
+                </div>
+                <div class="filter-actions" style="margin-bottom: 1rem;">
+                    <input id="authorSearchInput" class="form-input" type="search" placeholder="Tìm theo tên tác giả hoặc slug...">
+                </div>
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Tên hiển thị</th>
+                                <th>Định danh</th>
+                                <th>Trạng thái</th>
+                                <th>Tiểu sử</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="authorsTableBody">
+                            <tr><td colspan="5" class="text-center">Đang tải tác giả...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- VIEW: PUBLISHERS -->
+            <section id="viewPublishers" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý nhà xuất bản</h1>
+                        <p class="subtitle">Chuẩn hóa nhà xuất bản và liên kết chính xác với từng cuốn sách</p>
+                    </div>
+                    <button class="btn-primary" id="openAddPublisherBtn" type="button">➕ Thêm nhà xuất bản</button>
+                </div>
+                <div class="filter-actions" style="margin-bottom: 1rem;">
+                    <input id="publisherSearchInput" class="form-input" type="search" placeholder="Tìm theo tên hoặc slug nhà xuất bản...">
+                </div>
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead><tr><th>Tên hiển thị</th><th>Slug</th><th>Trạng thái</th><th>Địa chỉ</th><th>Thao tác</th></tr></thead>
+                        <tbody id="publishersTableBody">
+                            <tr><td colspan="5" class="text-center">Đang tải nhà xuất bản...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <!-- VIEW: COUPONS -->
             <section id="viewCoupons" class="admin-view">
                 <div class="view-header">
@@ -449,10 +503,18 @@
                 </label>
                 <label class="form-group">
                     <span>Tác giả *</span>
-                    <input type="text" name="author" class="form-input" required placeholder="Ví dụ: Yuval Noah Harari">
+                    <input type="text" name="author" class="form-input" list="authorSuggestions" required placeholder="Ví dụ: Yuval Noah Harari">
+                    <datalist id="authorSuggestions"></datalist>
+                    <input type="hidden" name="authorIds">
                 </label>
             </div>
             <div class="form-row">
+                <label class="form-group">
+                    <span>Nhà xuất bản</span>
+                    <input type="text" name="publisher" class="form-input" list="publisherSuggestions" placeholder="Chọn hoặc nhập nhà xuất bản">
+                    <datalist id="publisherSuggestions"></datalist>
+                    <input type="hidden" name="publisherId">
+                </label>
                 <label class="form-group">
                     <span>Thể loại *</span>
                     <select name="category" class="form-select" required>
@@ -522,6 +584,65 @@
             <div class="dialog-footer">
                 <button type="button" id="cancelCategoryModal" class="btn-secondary">Hủy</button>
                 <button type="submit" class="btn-primary">Lưu danh mục</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- MODAL: CREATE / EDIT AUTHOR -->
+    <dialog id="authorModal" class="admin-dialog">
+        <div class="dialog-header">
+            <h2 id="authorModalTitle">Thêm tác giả</h2>
+            <button id="closeAuthorModal" class="btn-close" type="button">×</button>
+        </div>
+        <form id="authorForm" class="dialog-form">
+            <input type="hidden" name="slug">
+            <label class="form-group">
+                <span>Tên tác giả *</span>
+                <input type="text" name="name" class="form-input" required maxlength="200" placeholder="Ví dụ: Yuval Noah Harari">
+            </label>
+            <label class="form-group">
+                <span>Tên hiển thị</span>
+                <input type="text" name="displayName" class="form-input" maxlength="200" placeholder="Tên hiển thị trên sách">
+            </label>
+            <label class="form-group">
+                <span>Định danh (slug)</span>
+                <input type="text" name="authorSlug" class="form-input" maxlength="64" pattern="[a-z0-9-]+" placeholder="Tự tạo khi để trống">
+            </label>
+            <label class="form-group">
+                <span>Trạng thái</span>
+                <select name="status" class="form-select">
+                    <option value="active">Đang sử dụng</option>
+                    <option value="inactive">Ngừng sử dụng</option>
+                </select>
+            </label>
+            <label class="form-group">
+                <span>Tiểu sử</span>
+                <textarea name="bio" class="form-textarea" rows="3" maxlength="1000"></textarea>
+            </label>
+            <div class="dialog-footer">
+                <button type="button" id="cancelAuthorModal" class="btn-secondary">Hủy</button>
+                <button type="submit" class="btn-primary">Lưu tác giả</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- MODAL: CREATE / EDIT PUBLISHER -->
+    <dialog id="publisherModal" class="admin-dialog">
+        <div class="dialog-header">
+            <h2 id="publisherModalTitle">Thêm nhà xuất bản</h2>
+            <button id="closePublisherModal" class="btn-close" type="button">×</button>
+        </div>
+        <form id="publisherForm" class="dialog-form">
+            <input type="hidden" name="slug">
+            <label class="form-group"><span>Tên nhà xuất bản *</span><input type="text" name="name" class="form-input" required maxlength="200"></label>
+            <label class="form-group"><span>Tên hiển thị</span><input type="text" name="displayName" class="form-input" maxlength="200"></label>
+            <label class="form-group"><span>Định danh (slug)</span><input type="text" name="publisherSlug" class="form-input" maxlength="64" pattern="[a-z0-9-]+" placeholder="Tự tạo khi để trống"></label>
+            <label class="form-group"><span>Trạng thái</span><select name="status" class="form-select"><option value="active">Đang sử dụng</option><option value="inactive">Ngừng sử dụng</option></select></label>
+            <label class="form-group"><span>Địa chỉ</span><input type="text" name="address" class="form-input" maxlength="300"></label>
+            <label class="form-group"><span>Website</span><input type="url" name="website" class="form-input" maxlength="500"></label>
+            <div class="dialog-footer">
+                <button type="button" id="cancelPublisherModal" class="btn-secondary">Hủy</button>
+                <button type="submit" class="btn-primary">Lưu nhà xuất bản</button>
             </div>
         </form>
     </dialog>

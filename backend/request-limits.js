@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { resolveApiVersion } = require("./api-versioning");
 
 const MAX_URL_LENGTH = 2048;
 
@@ -90,7 +91,8 @@ function normalizePositiveLimit(value, fallback) {
 }
 
 function resolveRequestBodyLimit(pathname, { contentType = "", overrides = {} } = {}) {
-  const safePath = typeof pathname === "string" ? pathname : "/";
+  const versionInfo = resolveApiVersion(typeof pathname === "string" ? pathname : "/");
+  const safePath = versionInfo.canonicalPath;
   const normalizedContentType = String(contentType || "").split(";")[0].trim().toLowerCase();
 
   const limits = {

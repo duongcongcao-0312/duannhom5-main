@@ -1,6 +1,9 @@
+const { resolveApiVersion } = require("./api-versioning");
+
 const routes = [
   { name: "health", method: "GET", match: (path) => path === "/health" },
   { name: "ready", method: "GET", match: (path) => path === "/ready" },
+  { name: "version", method: "GET", match: (path) => path === "/api/version" },
   { name: "coupon:get", method: "GET", match: (path) => /^\/api\/coupons\/[A-Za-z0-9_-]+$/.test(path) },
   { name: "auth", match: (path) => path.startsWith("/api/auth/") },
   { name: "customers", match: (path) => /^\/api\/(?:admin\/)?customers(?:\/[0-9a-f-]{36})?$/.test(path) },
@@ -50,14 +53,24 @@ const routes = [
   { name: "admin:customer:interaction:delete", permission: "delete:customers", method: "DELETE", match: (path) => /^\/api\/admin\/customers\/[0-9a-f-]{36}\/interactions\/[0-9a-f-]{36}$/i.test(path) },
 ];
 
+function normalizeRoutePath(pathname) {
+  const versionInfo = resolveApiVersion(pathname);
+  if (versionInfo.unsupportedVersion) return null;
+  return versionInfo.canonicalPath;
+}
+
 function findRoute(pathname, method) {
-  return routes.find((route) => route.match(pathname) && (!route.method || route.method === method)) || null;
+  const normalizedPath = normalizeRoutePath(pathname);
+  if (!normalizedPath) return null;
+  return routes.find((route) => route.match(normalizedPath) && (!route.method || route.method === method)) || null;
 }
 
 function getAdminPermission(pathname, method) {
+  const normalizedPath = normalizeRoutePath(pathname);
+  if (!normalizedPath) return null;
   const candidates = routes.filter((route) => (
     route.permission &&
-    route.match(pathname) &&
+    route.match(normalizedPath) &&
     (!route.method || route.method === method)
   ));
   return candidates.find((route) => route.method === method)?.permission

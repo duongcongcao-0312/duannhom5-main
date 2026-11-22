@@ -11,9 +11,14 @@
   },
   "x-api-versioning": {
     "currentVersion": "0.1.0",
-    "scheme": "semver",
-    "basePrefix": "/api",
-    "backwardCompatibility": "Additive fields and new endpoints are non-breaking; breaking changes require a new major version prefix.",
+    "majorVersion": "v1",
+    "supportedVersions": ["v1"],
+    "scheme": "url-path-prefix",
+    "pathPrefix": "/api/v1",
+    "legacyAliasPrefix": "/api",
+    "minSupportWindowDays": 180,
+    "legacyAliasSunset": "Thu, 01 Jul 2027 00:00:00 GMT",
+    "backwardCompatibility": "Additive fields and new endpoints are non-breaking; breaking changes require a new major version prefix (/api/v2/*).",
     "deprecationNoticeDays": 30
   },
   "x-request-body-limits": {
@@ -61,7 +66,7 @@
   "servers": [
     {
       "url": "http://127.0.0.1:8000",
-      "description": "Local development"
+      "description": "Local development (canonical versioned prefix: /api/v1/*; legacy compatibility alias: /api/*)"
     }
   ],
   "tags": [
@@ -99,6 +104,18 @@
           "503": {
             "description": "Kho dữ liệu chưa sẵn sàng",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadinessStatus" } } }
+          }
+        }
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Thông tin phiên bản API hiện hành, danh sách phiên bản hỗ trợ và chính sách deprecation (hỗ trợ cả /api/v1/version)",
+        "responses": {
+          "200": {
+            "description": "Chính sách phiên bản API",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
           }
         }
       }

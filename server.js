@@ -38,6 +38,11 @@ const {
 } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
+  SUPPORTED_API_VERSIONS,
+  applyApiVersionHeaders,
+  resolveApiVersion,
+} = require("./backend/api-versioning");
+const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
   REQUEST_LIMIT_POLICY,
@@ -1974,7 +1979,10 @@ function createServer({
   async function auditAdminRequestFailure(request, requestId, status) {
     let pathname = "";
     try {
-      pathname = new URL(request.url || "/", "http://localhost").pathname;
+      const parsedPath = new URL(request.url || "/", "http://localhost").pathname;
+      const versionInfo = resolveApiVersion(parsedPath);
+      if (versionInfo.unsupportedVersion) return;
+      pathname = versionInfo.canonicalPath;
     } catch {
       return;
     }
@@ -2510,7 +2518,7 @@ function createServer({
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Vary", "Origin");
-      response.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
+      response.setHeader("Access-Control-Expose-Headers", "X-Request-Id, X-API-Version, Deprecation, Sunset, Link");
     }
 
     if (request.method === "OPTIONS") {
@@ -2520,6 +2528,20 @@ function createServer({
       });
       response.end();
       return;
+    }
+
+    const versionInfo = resolveApiVersion(requestUrl.pathname);
+    if (versionInfo.isApi) {
+      applyApiVersionHeaders(response, versionInfo);
+      if (versionInfo.unsupportedVersion) {
+        const versionError = new RequestError(
+          404,
+          `Phiên bản API "${versionInfo.unsupportedVersion}" không được hỗ trợ. Phiên bản hiện hành: ${SUPPORTED_API_VERSIONS.join(", ")}.`,
+        );
+        versionError.errorCode = "UNSUPPORTED_API_VERSION";
+        throw versionError;
+      }
+      requestUrl.pathname = versionInfo.canonicalPath;
     }
 
     assertRequestSizeHeaders(request, requestUrl.pathname, requestLimitOverrides);

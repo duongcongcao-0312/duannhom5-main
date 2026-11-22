@@ -20,6 +20,11 @@ const { readAuditEntries } = require("./audit");
 const { hashOrderRequest } = require("./order-idempotency");
 const { getAdminPermission } = require("./router");
 const {
+  SUPPORTED_API_VERSIONS,
+  applyApiVersionHeaders,
+  resolveApiVersion,
+} = require("./api-versioning");
+const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
   RequestLimitError,
@@ -2075,6 +2080,20 @@ function createServer({
       });
       response.end();
       return;
+    }
+
+    const versionInfo = resolveApiVersion(requestUrl.pathname);
+    if (versionInfo.isApi) {
+      applyApiVersionHeaders(response, versionInfo);
+      if (versionInfo.unsupportedVersion) {
+        const versionError = new RequestError(
+          404,
+          `Phiên bản API "${versionInfo.unsupportedVersion}" không được hỗ trợ. Phiên bản hiện hành: ${SUPPORTED_API_VERSIONS.join(", ")}.`,
+        );
+        versionError.errorCode = "UNSUPPORTED_API_VERSION";
+        throw versionError;
+      }
+      requestUrl.pathname = versionInfo.canonicalPath;
     }
 
     assertRequestSizeHeaders(request, requestUrl.pathname);

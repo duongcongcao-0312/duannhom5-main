@@ -5,6 +5,7 @@ const { REFUND_POLICY } = require("../refund-policy");
 const { RETURN_POLICY } = require("../return-policy");
 const { SHIPPING_POLICY } = require("../shipping-policy");
 const { TERMS_POLICY } = require("../terms-policy");
+const { API_VERSION_POLICY } = require("../api-versioning");
 const { resolveSafeStoredUploadPath } = require("../request-limits");
 
 function createPublicRoutes({
@@ -45,6 +46,11 @@ function createPublicRoutes({
         );
         sendJson(response, 503, { status: "not_ready", service: "booknest" }, request.method);
       }
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/version" && request.method === "GET") {
+      sendJson(response, 200, API_VERSION_POLICY);
       return true;
     }
 

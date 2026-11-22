@@ -22,6 +22,7 @@
                 <button class="nav-tab active" data-view="dashboard" type="button">📊 Tổng quan</button>
                 <button class="nav-tab" data-view="orders" type="button">📦 Đơn hàng</button>
                 <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
+                <button class="nav-tab" data-view="categories" type="button">🗂️ Danh mục</button>
                 <button class="nav-tab" data-view="coupons" type="button">🏷️ Coupon</button>
                 <button class="nav-tab" data-view="services" type="button">🤝 Yêu cầu dịch vụ</button>
                 <button class="nav-tab" data-view="users" type="button">👥 Thành viên & nhân viên</button>
@@ -235,6 +236,33 @@
                         </thead>
                         <tbody id="booksTableBody">
                             <tr><td colspan="8" class="text-center">Đang tải danh mục sách...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- VIEW: CATEGORIES -->
+            <section id="viewCategories" class="admin-view">
+                <div class="view-header">
+                    <div>
+                        <h1>Quản lý danh mục sách</h1>
+                        <p class="subtitle">Tạo, cập nhật và ngừng sử dụng các danh mục trên storefront</p>
+                    </div>
+                    <button class="btn-primary" id="openAddCategoryBtn" type="button">➕ Thêm danh mục</button>
+                </div>
+                <div class="table-responsive card">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Tên danh mục</th>
+                                <th>Slug</th>
+                                <th>Trạng thái</th>
+                                <th>Mô tả</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="categoriesTableBody">
+                            <tr><td colspan="5" class="text-center">Đang tải danh mục...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -460,6 +488,40 @@
             <div class="dialog-footer">
                 <button type="button" id="cancelBookModal" class="btn-secondary">Hủy</button>
                 <button type="submit" class="btn-primary">Lưu cuốn sách</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- MODAL: CREATE / EDIT CATEGORY -->
+    <dialog id="categoryModal" class="admin-dialog">
+        <div class="dialog-header">
+            <h2 id="categoryModalTitle">Thêm danh mục</h2>
+            <button id="closeCategoryModal" class="btn-close" type="button">×</button>
+        </div>
+        <form id="categoryForm" class="dialog-form">
+            <input type="hidden" name="slug">
+            <label class="form-group">
+                <span>Tên danh mục *</span>
+                <input type="text" name="name" class="form-input" required maxlength="120" placeholder="Ví dụ: Triết học">
+            </label>
+            <label class="form-group">
+                <span>Slug</span>
+                <input type="text" name="categorySlug" class="form-input" maxlength="64" pattern="[a-z0-9-]+" placeholder="tu-dong-tao-tu-ten-khi-de-trong">
+            </label>
+            <label class="form-group">
+                <span>Trạng thái</span>
+                <select name="status" class="form-select">
+                    <option value="active">Đang sử dụng</option>
+                    <option value="inactive">Ngừng sử dụng</option>
+                </select>
+            </label>
+            <label class="form-group">
+                <span>Mô tả</span>
+                <textarea name="description" class="form-textarea" rows="3" maxlength="500"></textarea>
+            </label>
+            <div class="dialog-footer">
+                <button type="button" id="cancelCategoryModal" class="btn-secondary">Hủy</button>
+                <button type="submit" class="btn-primary">Lưu danh mục</button>
             </div>
         </form>
     </dialog>

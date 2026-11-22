@@ -167,6 +167,7 @@
         dashboard: document.getElementById('viewDashboard'),
         orders: document.getElementById('viewOrders'),
         books: document.getElementById('viewBooks'),
+        categories: document.getElementById('viewCategories'),
         coupons: document.getElementById('viewCoupons'),
         services: document.getElementById('viewServices'),
         users: document.getElementById('viewUsers')
@@ -202,6 +203,7 @@
         if (activeView === 'dashboard') loadDashboard();
         else if (activeView === 'orders') loadOrders();
         else if (activeView === 'books') loadBooks();
+        else if (activeView === 'categories') loadCategories();
         else if (activeView === 'coupons') loadCoupons();
         else if (activeView === 'services') loadServices();
         else if (activeView === 'users') loadUsers();
@@ -432,6 +434,10 @@
         const tbody = document.getElementById('booksTableBody');
         tbody.innerHTML = '<tr><td colspan="8" class="text-center">Đang tải danh mục sách...</td></tr>';
         try {
+            const categoryRes = await apiFetch('/api/admin/categories');
+            if (categoryRes.ok) {
+                syncCategoryControls(await categoryRes.json());
+            }
             const res = await apiFetch('/api/admin/books');
             if (res.ok) {
                 allBooks = await res.json();
@@ -599,6 +605,113 @@
     });
 
     // --- VIEW: COUPONS ---
+    let allCategories = [];
+
+    function syncCategoryControls(categories) {
+        allCategories = categories;
+        const activeCategories = categories.filter((category) => category.status !== 'inactive');
+        const options = activeCategories.map((category) =>
+            `<option value="${escapeHtml(category.slug)}">${escapeHtml(category.label || category.name)}</option>`
+        ).join('');
+        const filter = document.getElementById('bookCategoryFilter');
+        if (filter) {
+            filter.innerHTML = '<option value="all">Tất cả thể loại</option>' + options;
+        }
+        const formSelect = bookForm?.elements?.category;
+        if (formSelect) formSelect.innerHTML = options;
+        const labels = Object.fromEntries(categories.map((category) =>
+            [category.slug, category.label || category.name]
+        ));
+        categoryLabels && Object.assign(categoryLabels, labels);
+    }
+
+    async function loadCategories() {
+        const tbody = document.getElementById('categoriesTableBody');
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải danh mục...</td></tr>';
+        try {
+            const res = await apiFetch('/api/admin/categories');
+            if (!res.ok) throw new Error('Không thể tải danh mục.');
+            const categories = await res.json();
+            syncCategoryControls(categories);
+            tbody.innerHTML = categories.map((category) => `
+                <tr>
+                    <td><b>${escapeHtml(category.label || category.name)}</b></td>
+                    <td><code>${escapeHtml(category.slug)}</code></td>
+                    <td><span class="payment-badge">${category.status === 'inactive' ? 'Ngừng sử dụng' : 'Đang sử dụng'}</span></td>
+                    <td>${escapeHtml(category.description || '—')}</td>
+                    <td>
+                        <button class="btn-sm btn-edit edit-category-btn" data-slug="${escapeHtml(category.slug)}" type="button">Sửa</button>
+                        <button class="btn-sm btn-delete delete-category-btn" data-slug="${escapeHtml(category.slug)}" type="button">Xóa</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            tbody.querySelectorAll('.edit-category-btn').forEach((button) => {
+                button.addEventListener('click', () => openCategoryModal(
+                    categories.find((category) => category.slug === button.dataset.slug)
+                ));
+            });
+            tbody.querySelectorAll('.delete-category-btn').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    if (!confirm('Xóa danh mục này? Danh mục có sách liên kết sẽ không thể xóa.')) return;
+                    const res = await apiFetch(`/api/admin/categories/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                    const result = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        showToast(result.error || 'Không thể xóa danh mục.', 'error');
+                        return;
+                    }
+                    showToast('Đã xóa danh mục.');
+                    await loadCategories();
+                });
+            });
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải danh mục.</td></tr>';
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    }
+
+    const categoryModal = document.getElementById('categoryModal');
+    const categoryForm = document.getElementById('categoryForm');
+
+    function openCategoryModal(category = null) {
+        categoryForm.reset();
+        document.getElementById('categoryModalTitle').textContent = category ? 'Cập nhật danh mục' : 'Thêm danh mục';
+        categoryForm.elements.slug.value = category?.slug || '';
+        categoryForm.elements.categorySlug.value = category?.slug || '';
+        categoryForm.elements.name.value = category?.name || '';
+        categoryForm.elements.status.value = category?.status || 'active';
+        categoryForm.elements.description.value = category?.description || '';
+        categoryModal.showModal();
+    }
+
+    document.getElementById('openAddCategoryBtn')?.addEventListener('click', () => openCategoryModal());
+    document.getElementById('closeCategoryModal')?.addEventListener('click', () => categoryModal.close());
+    document.getElementById('cancelCategoryModal')?.addEventListener('click', () => categoryModal.close());
+    categoryForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const data = new FormData(categoryForm);
+        const slug = data.get('slug');
+        const payload = {
+            name: data.get('name'),
+            slug: data.get('categorySlug'),
+            status: data.get('status'),
+            description: data.get('description')
+        };
+        try {
+            const res = await apiFetch(
+                slug ? `/api/admin/categories/${encodeURIComponent(slug)}` : '/api/admin/categories',
+                { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
+            );
+            const result = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(result.error || 'Không thể lưu danh mục.');
+            showToast(slug ? 'Đã cập nhật danh mục.' : 'Đã tạo danh mục.');
+            categoryModal.close();
+            await loadCategories();
+        } catch (error) {
+            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+        }
+    });
+
     const couponModal = document.getElementById('couponModal');
     const couponForm = document.getElementById('couponForm');
 

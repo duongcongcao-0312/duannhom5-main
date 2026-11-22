@@ -1,5 +1,5 @@
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
   const serializeAdminOrder = (order) => {
     const { accessCodeHash, ...safeOrder } = order;
     return safeOrder;
@@ -16,6 +16,111 @@ if (
     "Bộ lọc sách không hợp lệ.",
   );
   sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/admin/categories" &&
+  request.method === "GET"
+) {
+  await requireRole(request, "read:books");
+  sendJson(response, 200, await getBookCategories());
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/admin/categories" &&
+  request.method === "POST"
+) {
+  await requireRole(request, "write:books");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu danh mục không hợp lệ.",
+  );
+  const slug = normalizeCategorySlug(payload.slug || payload.value || payload.name || payload.label);
+  const name = sanitizePlainText(payload.name || payload.label, 120);
+  if (!slug || !name) {
+    throw new RequestError(400, "Tên và slug danh mục là bắt buộc.");
+  }
+  const categories = await getBookCategories();
+  if (categories.some((category) => category.slug === slug)) {
+    throw new RequestError(409, "Slug danh mục đã tồn tại.");
+  }
+  const now = new Date().toISOString();
+  const category = {
+    id: slug,
+    slug,
+    name,
+    label: sanitizePlainText(payload.label || name, 120),
+    status: payload.status === "inactive" ? "inactive" : "active",
+    description: sanitizePlainText(payload.description || "", 500),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const saved = await saveBookCategories([...categories, category]);
+  sendJson(response, 201, saved.find((entry) => entry.slug === slug));
+  return true;
+}
+
+const adminCategoryMatch = requestUrl.pathname.match(/^\/api\/admin\/categories\/([a-z0-9-]+)$/);
+if (
+  adminCategoryMatch &&
+  ["PUT", "PATCH", "DELETE"].includes(request.method)
+) {
+  await requireRole(request, request.method === "DELETE" ? "write:books" : "write:books");
+  const slug = adminCategoryMatch[1];
+  const categories = await getBookCategories();
+  const existing = categories.find((category) => category.slug === slug);
+  if (!existing) {
+    throw new RequestError(404, "Không tìm thấy danh mục.");
+  }
+
+  if (request.method === "DELETE") {
+    const linkedBooks = (await getCatalogBookList()).filter((book) => book.category === slug);
+    if (linkedBooks.length) {
+      throw new RequestError(409, "Không thể xóa danh mục đang có sách liên kết.");
+    }
+    await saveBookCategories(categories.filter((category) => category.slug !== slug));
+    sendJson(response, 200, { success: true });
+    return true;
+  }
+
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu cập nhật danh mục không hợp lệ.",
+  );
+  const requestedSlug = normalizeCategorySlug(payload.slug || payload.value);
+  if (requestedSlug && requestedSlug !== slug) {
+    const linkedBooks = (await getCatalogBookList()).filter((book) => book.category === slug);
+    if (linkedBooks.length) {
+      throw new RequestError(409, "Không thể đổi slug danh mục đang có sách liên kết.");
+    }
+    if (categories.some((category) => category.slug === requestedSlug)) {
+      throw new RequestError(409, "Slug danh mục đã tồn tại.");
+    }
+  }
+  const nextSlug = requestedSlug || slug;
+  const name = sanitizePlainText(payload.name || payload.label || existing.name, 120);
+  if (!name) {
+    throw new RequestError(400, "Tên danh mục không được để trống.");
+  }
+  const status = payload.status !== undefined
+    ? (payload.status === "inactive" || payload.status === "disabled" ? "inactive" : "active")
+    : existing.status;
+  const updated = {
+    ...existing,
+    id: nextSlug,
+    slug: nextSlug,
+    name,
+    label: sanitizePlainText(payload.label || name, 120),
+    status,
+    description: payload.description !== undefined
+      ? sanitizePlainText(payload.description, 500)
+      : existing.description,
+    updatedAt: new Date().toISOString(),
+  };
+  await saveBookCategories(categories.map((category) => category.slug === slug ? updated : category));
+  sendJson(response, 200, updated);
   return true;
 }
 
@@ -246,6 +351,7 @@ if (
   request.method === "POST"
 ) {
   await requireRole(request, "write:books");
+  await getBookCategories();
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu sách không hợp lệ.",
@@ -273,6 +379,7 @@ if (
   (request.method === "PUT" || request.method === "PATCH")
 ) {
   await requireRole(request, "write:books");
+  await getBookCategories();
   const id = adminBookMatch[1];
   const payload = requireJsonObject(
     await readJson(request),

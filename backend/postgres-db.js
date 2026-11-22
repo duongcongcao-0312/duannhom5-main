@@ -2096,6 +2096,29 @@ class PostgresDatabase {
     return (await this.readCollection("books")).filter((book) => book.catalogOverride);
   }
 
+  async getCategories(fallback = []) {
+    await this.init();
+    const { rows } = await this.pool.query(
+      `SELECT records FROM booknest_data WHERE collection = 'categories'`,
+    );
+    if (!rows.length) return fallback;
+    const records = rows[0].records;
+    return Array.isArray(records) ? records : fallback;
+  }
+
+  async saveCategories(categories) {
+    await this.init();
+    await this.pool.query(
+      `INSERT INTO booknest_data (collection, records, updated_at)
+       VALUES ('categories', $1::jsonb, NOW())
+       ON CONFLICT (collection) DO UPDATE SET
+         records = EXCLUDED.records,
+         updated_at = EXCLUDED.updated_at`,
+      [JSON.stringify(categories)],
+    );
+    return categories;
+  }
+
   async persistAdminBookUpdate(id, updateData, expectedUpdatedAt, catalogOverride, baseBook) {
     await this.init();
     const client = await this.pool.connect();

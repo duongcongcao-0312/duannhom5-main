@@ -226,6 +226,7 @@ class Database {
     this.customersPath = options.customersPath || path.join(dataDir, "customers.json");
     this.servicesPath = options.servicesPath || path.join(dataDir, "service-requests.jsonl");
     this.booksPath = options.booksPath || path.join(dataDir, "books.json");
+    this.categoriesPath = options.categoriesPath || path.join(dataDir, "categories.json");
     this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
     this.customerInteractionsPath = options.customerInteractionsPath ||
       path.join(dataDir, "customer-interactions.json");
@@ -1539,6 +1540,20 @@ class Database {
 
   async getCatalogBookOverrides() {
     return (await this.readBookRecords()).filter((book) => book.catalogOverride);
+  }
+
+  async getCategories(fallback = []) {
+    await this.init();
+    const stored = await readJsonCollection(this.categoriesPath, null);
+    return Array.isArray(stored) ? stored : fallback;
+  }
+
+  async saveCategories(categories) {
+    await this.init();
+    return this.enqueueFileWrite(this.categoriesPath, async () => {
+      await atomicWriteFile(this.categoriesPath, JSON.stringify(categories, null, 2));
+      return categories;
+    });
   }
 
   async updateCatalogBook(id, book, expectedUpdatedAt, baseBook) {

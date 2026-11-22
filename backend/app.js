@@ -109,6 +109,19 @@ let bookCatalog = new Map(
 );
 let catalogBookOverrides = new Map();
 const allowedBookCategories = new Set(books.map((book) => book.category));
+const defaultCategories = [
+  { id: "van-hoc", slug: "van-hoc", name: "Văn học", label: "Văn học", status: "active" },
+  { id: "ky-nang", slug: "ky-nang", name: "Kỹ năng sống", label: "Kỹ năng sống", status: "active" },
+  { id: "kinh-te", slug: "kinh-te", name: "Kinh tế", label: "Kinh tế", status: "active" },
+  { id: "khoa-hoc", slug: "khoa-hoc", name: "Khoa học", label: "Khoa học", status: "active" },
+  { id: "lich-su", slug: "lich-su", name: "Lịch sử", label: "Lịch sử", status: "active" },
+  { id: "thieu-nhi", slug: "thieu-nhi", name: "Thiếu nhi", label: "Thiếu nhi", status: "active" },
+  { id: "trinh-tham", slug: "trinh-tham", name: "Trinh thám", label: "Trinh thám", status: "active" },
+  { id: "tam-ly", slug: "tam-ly", name: "Tâm lý", label: "Tâm lý", status: "active" },
+  { id: "cong-nghe", slug: "cong-nghe", name: "Công nghệ", label: "Công nghệ", status: "active" },
+  { id: "ngoai-ngu", slug: "ngoai-ngu", name: "Ngoại ngữ", label: "Ngoại ngữ", status: "active" },
+];
+let bookCategories = defaultCategories.map((category) => ({ ...category }));
 const allowedDiscountRates = new Set([0, 0.05, 0.1]);
 const allowedServiceTypes = new Set(Object.values(SERVICE_TYPES));
 const allowedOrderStatuses = new Set(Object.values(ORDER_STATUSES));
@@ -1186,6 +1199,7 @@ function createServer({
   customersPath,
   servicesPath,
   booksPath,
+  categoriesPath,
   couponsPath,
   customerInteractionsPath,
   consentRecordsPath,
@@ -1243,6 +1257,7 @@ function createServer({
       customersPath,
       servicesPath,
       booksPath,
+      categoriesPath,
       couponsPath,
       customerInteractionsPath,
       consentRecordsPath,
@@ -1536,6 +1551,54 @@ function createServer({
     return requireRole(request, "read:dashboard");
   }
 
+  function normalizeCategorySlug(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/đ/g, "d")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+  }
+
+  let categoriesReady;
+  async function getBookCategories() {
+    if (!categoriesReady) {
+      categoriesReady = (async () => {
+        const stored = await db.getCategories(defaultCategories);
+        bookCategories = Array.isArray(stored) && stored.length
+          ? stored.map((category) => ({
+              id: String(category.id || category.slug || "").trim(),
+              slug: normalizeCategorySlug(category.slug || category.id || category.value),
+              name: sanitizePlainText(category.name || category.label || "", 120),
+              label: sanitizePlainText(category.label || category.name || "", 120),
+              status: ["active", "inactive"].includes(category.status) ? category.status : "active",
+              description: sanitizePlainText(category.description || "", 500),
+              createdAt: category.createdAt,
+              updatedAt: category.updatedAt,
+            })).filter((category) => category.slug)
+          : defaultCategories.map((category) => ({ ...category }));
+        for (const category of bookCategories) {
+          allowedBookCategories.add(category.slug);
+        }
+        return bookCategories;
+      })();
+    }
+    return categoriesReady;
+  }
+
+  async function saveBookCategories(categories) {
+    bookCategories = categories;
+    allowedBookCategories.clear();
+    for (const category of bookCategories) {
+      if (category.status !== "inactive") allowedBookCategories.add(category.slug);
+    }
+    await db.saveCategories(bookCategories);
+    categoriesReady = Promise.resolve(bookCategories);
+    return bookCategories;
+  }
+
   function applyCustomerFilters(customers, { search = "", status = "", page = 1, limit = 20 } = {}) {
     const normalizedSearch = String(search || "").trim().toLowerCase();
     const normalizedStatus = String(status || "").trim();
@@ -1622,6 +1685,7 @@ function createServer({
   const handlePublicRoute = createPublicRoutes({
     db,
     getCatalogBookList,
+    getBookCategories,
     logRequestError,
     paginateBookList: (records, filters) => paginateList(records, filters, "title"),
     sendJson,
@@ -1772,9 +1836,11 @@ function createServer({
     getBookCatalog: () => bookCatalog,
     getCatalogBookOverrides: () => catalogBookOverrides,
     getCatalogBookList,
+    getBookCategories,
     isPasswordValid,
     listQuerySchema,
     normalizeAdminBook,
+    normalizeCategorySlug,
     normalizeCoupon,
     ordersPath,
     paginateList,
@@ -1787,6 +1853,7 @@ function createServer({
     sanitizePlainText,
     sendJson,
     sendPaginatedJson,
+    saveBookCategories,
     sessionStore,
     validateQuery,
     waitForCatalogReady,

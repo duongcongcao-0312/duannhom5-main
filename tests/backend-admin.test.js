@@ -270,6 +270,71 @@ test("admin book catalog validates changes and persists stock and category updat
   assert.equal(publicCatalog.some((book) => book.id === customBook.id), false);
 });
 
+test("issue #213 - category CRUD protects linked books and storefront visibility", async (t) => {
+  configureTestAdmin();
+  const temporaryDirectory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "booknest-admin-categories-test-"),
+  );
+  const categoriesPath = path.join(temporaryDirectory, "categories.json");
+  const server = createServer({
+    ordersPath: path.join(temporaryDirectory, "orders.jsonl"),
+    usersPath: path.join(temporaryDirectory, "users.json"),
+    servicesPath: path.join(temporaryDirectory, "services.jsonl"),
+    booksPath: path.join(temporaryDirectory, "books.json"),
+    categoriesPath,
+  });
+
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(temporaryDirectory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.com", password: "local-test-admin-password-123" }),
+  });
+  const { token } = await login.json();
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const publicBefore = await (await fetch(`${baseUrl}/api/categories`)).json();
+  assert.ok(publicBefore.some((category) => category.slug === "van-hoc"));
+
+  const createdRes = await fetch(`${baseUrl}/api/admin/categories`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Triết học", slug: "triet-hoc", description: "Sách tư duy và triết học" }),
+  });
+  assert.equal(createdRes.status, 201);
+  const created = await createdRes.json();
+  assert.equal(created.slug, "triet-hoc");
+
+  const inactiveRes = await fetch(`${baseUrl}/api/admin/categories/triet-hoc`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ status: "inactive" }),
+  });
+  assert.equal(inactiveRes.status, 200);
+  const publicInactive = await (await fetch(`${baseUrl}/api/categories`)).json();
+  assert.equal(publicInactive.some((category) => category.slug === "triet-hoc"), false);
+
+  const linkedDeleteRes = await fetch(`${baseUrl}/api/admin/categories/van-hoc`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(linkedDeleteRes.status, 409);
+
+  const inactiveDeleteRes = await fetch(`${baseUrl}/api/admin/categories/triet-hoc`, {
+    method: "DELETE",
+    headers,
+  });
+  assert.equal(inactiveDeleteRes.status, 200);
+});
+
 test("admin coupons enforce dates, minimum spend, and redemption limits on the server", async (t) => {
   configureTestAdmin();
   const temporaryDirectory = await fsPromises.mkdtemp(

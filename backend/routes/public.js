@@ -8,6 +8,7 @@ function createPublicRoutes({
   sendJson,
   sendPaginatedJson,
   validateBookQuery,
+  getBookCategories,
 }) {
   return async function handlePublicRoute(request, response, requestUrl) {
     if (
@@ -61,6 +62,12 @@ function createPublicRoutes({
         await getCatalogBookList(),
         filters,
       ));
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/categories" && request.method === "GET") {
+      const categories = (await getBookCategories()).filter((category) => category.status !== "inactive");
+      sendJson(response, 200, categories);
       return true;
     }
     return false;

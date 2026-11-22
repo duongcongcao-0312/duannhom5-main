@@ -1,6 +1,6 @@
 const books = globalThis.BOOKNEST_BOOKS;
 
-const categories = [
+let categories = [
 	{ value: 'van-hoc', label: 'Văn học' },
 	{ value: 'ky-nang', label: 'Kỹ năng sống' },
 	{ value: 'kinh-te', label: 'Kinh tế' },
@@ -208,6 +208,19 @@ async function hydrateCatalog() {
 		if (!response.ok) throw new Error('Không thể tải danh mục sách.');
 		const remoteBooks = await response.json();
 		if (!Array.isArray(remoteBooks)) throw new Error('Danh mục sách trả về không hợp lệ.');
+		const categoryResponse = await window.booknestApiFetch('/api/categories');
+		if (categoryResponse.ok) {
+			const remoteCategories = await categoryResponse.json();
+			if (Array.isArray(remoteCategories)) {
+				categories = remoteCategories
+					.filter((category) => category.status !== 'inactive')
+					.map((category) => ({
+						value: category.slug || category.value,
+						label: category.label || category.name
+					}))
+					.filter((category) => category.value && category.label);
+			}
+		}
 		const savedCartTitles = state.cart.map((book) => book.title);
 		books.splice(0, books.length, ...remoteBooks.filter((book) =>
 			book && typeof book.title === 'string' && typeof book.author === 'string' &&

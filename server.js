@@ -235,14 +235,16 @@ const payloadSchemas = {
     preserveStrings: ["password"],
   },
   customerInfo: {
-    allowed: ["customerName", "name", "phone", "address"],
+    allowed: ["customerName", "name", "phone", "address", "currentPassword"],
     types: {
       customerName: "string",
       name: "string",
       phone: "string",
       address: "string",
+      currentPassword: "string",
     },
     minProperties: 1,
+    preserveStrings: ["currentPassword"],
   },
   customerInteraction: {
     allowed: ["type", "note"],
@@ -2307,7 +2309,11 @@ function createServer({
           (status < 500 || error instanceof RequestError) && isExpectedError
             ? error.message
             : "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.";
-        sendJson(response, status, { error: message });
+        const errorCode =
+          isExpectedError && status < 500 && typeof error.errorCode === "string"
+            ? error.errorCode
+            : undefined;
+        sendJson(response, status, errorCode ? { error: message, code: errorCode } : { error: message });
         return;
       }
       void sendHtmlError(response, status, status === 404 ? "404" : "500");

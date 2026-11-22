@@ -41,6 +41,17 @@
     <p>Chỉ bản ghi consent có <code>retentionDays</code> lớn hơn 0 mới đủ điều kiện được công cụ vận hành xóa sau khi hết hạn. Công cụ chạy ở chế độ xem trước theo mặc định; việc chạy định kỳ cần được nhà vận hành cấu hình. Giá trị 0 không tự hết hạn. Công cụ này không xóa đơn hàng, tài khoản hoặc yêu cầu dịch vụ.</p>
     <p>Thời hạn lưu giữ thống nhất và đầu mối liên hệ quyền riêng tư vẫn cần được đơn vị vận hành công bố trước khi dùng với người thật. Các yêu cầu phải được xem xét và thực hiện theo chính sách áp dụng; giao diện hiện chỉ ghi nhận trạng thái quy trình.</p>
 
+    <h2 id="profileUpdatePolicy">5. Cập nhật dữ liệu cá nhân</h2>
+    <ul>
+      <li>Bạn chỉ có thể cập nhật dữ liệu của chính tài khoản đang đăng nhập; hệ thống không nhận mã tài khoản từ yêu cầu.</li>
+      <li>Tự cập nhật được: họ tên, họ tên người nhận, số điện thoại và địa chỉ giao hàng. Dữ liệu được kiểm tra định dạng (số điện thoại 8–15 chữ số, địa chỉ 10–300 ký tự).</li>
+      <li>Thay số điện thoại đã lưu là thay đổi quan trọng: cần nhập mật khẩu hiện tại (tài khoản chỉ đăng nhập social cần đăng nhập lại trong vòng 10 phút).</li>
+      <li>Số điện thoại đang được tài khoản khác sử dụng sẽ không được chấp nhận; gửi lại cùng giá trị không tạo thay đổi mới.</li>
+      <li>Email đăng nhập, mật khẩu, thông tin học sinh/sinh viên, vai trò và liên kết social cần xác minh bổ sung qua quy trình riêng (khôi phục mật khẩu, liên kết tài khoản hoặc liên hệ hỗ trợ), hoặc gửi yêu cầu “Cập nhật dữ liệu” bên dưới.</li>
+      <li>Đơn hàng đã tạo giữ nguyên thông tin giao hàng tại thời điểm đặt để phục vụ đối soát; thay đổi chỉ áp dụng cho đơn hàng mới.</li>
+      <li>Nhật ký hệ thống chỉ ghi tên trường đã thay đổi, thời điểm, người thực hiện và cách xác nhận; không ghi giá trị cũ hoặc mới.</li>
+    </ul>
+
     <section id="consentManagement" aria-labelledby="consentHeading">
       <h2 id="consentHeading">Quản lý consent của tài khoản</h2>
       <p id="consentStatus" aria-live="polite">Đăng nhập để xem và quản lý consent.</p>

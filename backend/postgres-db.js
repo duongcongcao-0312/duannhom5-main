@@ -16,6 +16,7 @@ const { hashPassword } = require("./auth");
 const { verifyPasswordResetToken, secureHashPasswordResetToken } = require("./security");
 const { hashOrderRequest } = require("./order-idempotency");
 const { getCouponUnavailableReason } = require("./coupons");
+const { pickSelfServiceFields } = require("./profile-update");
 const {
   PRIVACY_DATA_REQUEST_TYPES,
   isPrivacyDataRequestTransitionAllowed,
@@ -1313,23 +1314,28 @@ class PostgresDatabase {
     }
   }
 
-  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER) {
+  async updateCustomerInfo(id, customerInfo, actorId = "system", actorRole = ROLES.USER, options = {}) {
+    const safeCustomerInfo = pickSelfServiceFields(customerInfo);
     const updatedUser = await this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === id);
       if (!user) return null;
-      user.customerInfo = { ...(user.customerInfo || {}), ...customerInfo };
+      user.customerInfo = { ...(user.customerInfo || {}), ...safeCustomerInfo };
       user.updatedBy = String(actorId || "system").trim() || "system";
       user.updatedAt = new Date().toISOString();
       return user;
     });
     if (updatedUser) {
+      // Minimal audit: field names and confirmation method only, never values.
       await appendAuditEntry(this.auditLogPath, {
         action: "user.customer_info.update",
         actorId,
         actorRole: normalizeRole(actorRole),
         entityType: "user",
         entityId: id,
-        metadata: { changedFields: Object.keys(customerInfo || {}) },
+        metadata: {
+          changedFields: Object.keys(safeCustomerInfo),
+          confirmation: typeof options.confirmation === "string" ? options.confirmation : "none",
+        },
       });
     }
     return updatedUser;

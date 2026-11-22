@@ -18,7 +18,7 @@
 | Endpoint | Access rule |
 | --- | --- |
 | `POST /api/auth/register`, `/login`, `/social`, `/password-reset*` | Public entry points; credentials or social identity are verified server-side. |
-| `GET /api/auth/me`, `PATCH /api/auth/customer-info`, `/api/auth/logout` | Authenticated session; profile changes apply only to that session's user. |
+| `GET /api/auth/me`, `PATCH /api/auth/customer-info`, `/api/auth/logout` | Authenticated session; profile changes apply only to that session's user. See [Personal data updates](#personal-data-updates). |
 | `/api/privacy/consents*` | Authenticated session; consent records use the session user ID. |
 | `GET /api/books`, `GET /api/coupons/:code`, `POST /api/services`, `POST /api/orders/quote` | Public catalog, coupon lookup, service request, or quote. |
 | `POST /api/orders` | Guest or authenticated checkout. Authenticated order ownership is assigned from the session; client `userId` is rejected. |
@@ -59,3 +59,24 @@ fields, credentials, and tokens.
 The audit file is selected with `auditLogPath` in tests or defaults to
 `data/admin-audit.jsonl` for the application. The admin audit endpoint requires
 the `read:users` permission.
+
+## Personal data updates
+
+Policy lives in `backend/profile-update.js` and is enforced by
+`PATCH /api/auth/customer-info`. The public description is in
+`privacy.html#profileUpdatePolicy`.
+
+| Field group | Fields | Rule |
+| --- | --- | --- |
+| Self-service | `customerName`, `name`, `phone`, `address` | Validated server-side (name 2–120, phone 8–15 digits, address 10–300). |
+| Confirmation required | replacing a saved `phone` | `currentPassword` re-authentication (rate limited), or a login within 10 minutes for social-only accounts. Otherwise `428` with `code` `REAUTH_REQUIRED` / `RECENT_LOGIN_REQUIRED`. |
+| Additional verification | `email`, `password`, `studentType`, `studentId`, `role`, social links, `userId` | Rejected with `403 VERIFICATION_REQUIRED`; use password reset, social link/unlink, support, or a privacy "update" data request. |
+
+- Ownership: the target account is always the session user; payload IDs are rejected.
+- Duplicates: a phone already stored on another active account returns
+  `409 PHONE_IN_USE`; resubmitting identical values (phone compared by digits)
+  is a no-op with no write or audit entry.
+- Orders: existing orders keep the delivery snapshot captured at checkout
+  (`ordersUpdated: 0`); new orders use the updated profile.
+- Audit: `user.customer_info.update` records only `changedFields` and the
+  `confirmation` method (`none`, `password`, `recent_login`), never values.

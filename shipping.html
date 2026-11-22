@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Chính sách vận chuyển và giao hàng của BookNest">
+  <title>Chính sách vận chuyển | BookNest</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+  <main class="legal-page">
+    <a class="brand" href="index.html"><span class="brand-mark">BN</span><span>BookNest</span></a>
+    <p class="eyebrow">Chính sách thương mại</p>
+    <h1>Chính sách vận chuyển &amp; giao hàng</h1>
+    <p>BookNest công khai phạm vi phục vụ, phương thức giao hàng, thời gian ước tính, biểu phí và cách xử lý các sự cố phát sinh trong quá trình vận chuyển. Trước khi vận hành kinh doanh chính thức, đơn vị vận hành cần xác minh lại biểu phí, tuyến giao và cam kết SLA thực tế với đối tác vận chuyển.</p>
+
+    <h2 id="shippingAreas">1. Khu vực phục vụ, phương thức, thời gian ước tính &amp; phí vận chuyển</h2>
+    <ul>
+      <li><strong>Nội thành TP.HCM &amp; Hà Nội:</strong> thời gian dự kiến <strong>1–2 ngày làm việc</strong>; phí tiêu chuẩn <strong>20.000 đ</strong> (miễn phí vận chuyển cho đơn từ <strong>300.000 đ</strong>).</li>
+      <li><strong>Các tỉnh/thành phố khác trên toàn quốc:</strong> thời gian dự kiến <strong>2–5 ngày làm việc</strong>; phí tiêu chuẩn <strong>30.000 đ</strong> (miễn phí vận chuyển cho đơn từ <strong>300.000 đ</strong>).</li>
+      <li><strong>Tuyến huyện đảo, vùng sâu vùng xa:</strong> thời gian dự kiến <strong>4–7 ngày làm việc</strong>; phí áp dụng theo biểu phí thực tế của đối tác vận chuyển (mức tham chiếu <strong>45.000 đ</strong>, thông báo trước khi giao).</li>
+      <li><strong>Phương thức giao hàng:</strong> giao hàng tiêu chuẩn toàn quốc (hỗ trợ chuyển khoản và COD) và giao nhanh nội thành khi đối tác hỗ trợ tại khu vực. Thời gian tính từ lúc đơn chuyển sang trạng thái <code>processing</code>, không tính Chủ nhật và ngày lễ.</li>
+    </ul>
+
+    <h2 id="shippingTracking">2. Cách tra cứu trạng thái đơn hàng</h2>
+    <ul>
+      <li>Sử dụng chức năng <strong>“Tra cứu đơn hàng”</strong> trên trang chủ bằng <strong>mã đơn hàng (UUID)</strong>.</li>
+      <li>Tài khoản đã đăng nhập có thể xem trực tiếp danh sách và chi tiết trạng thái các đơn thuộc quyền sở hữu của mình.</li>
+      <li>Đơn khách vãng lai sử dụng mã đơn hàng kèm <strong>mã truy cập đơn khách</strong> được hiển thị một lần ngay sau khi đặt hàng.</li>
+      <li>Các mốc trạng thái: <code>received</code> (đã tiếp nhận) → <code>processing</code> (đang đóng gói) → <code>shipping</code> (đang giao hàng) → <code>completed</code> (đã giao thành công) hoặc <code>cancelled</code> (đã hủy).</li>
+    </ul>
+
+    <h2 id="shippingExceptions">3. Xử lý giao thất bại, chậm trễ hoặc sai địa chỉ</h2>
+    <ul>
+      <li><strong>Giao thất bại (vắng mặt / không liên lạc được):</strong> đơn vị vận chuyển liên hệ giao lại tối đa <strong>3 lần</strong> trong vòng 3 ngày làm việc. Nếu vẫn không giao được, đơn được hoàn về kho và CSKH sẽ liên hệ để sắp xếp giao lại hoặc hủy đơn/hoàn tiền (nếu đã thanh toán).</li>
+      <li><strong>Giao hàng chậm trễ:</strong> khi đơn vượt quá thời gian ước tính, CSKH tra soát với đối tác vận chuyển và phản hồi trong vòng <strong>1 ngày làm việc</strong>. Nếu đơn tiếp tục trễ quá thời hạn cam kết bổ sung, khách có quyền hủy đơn và nhận hoàn tiền 100% theo <a href="refund.html">Chính sách hoàn tiền</a>.</li>
+      <li><strong>Sai hoặc thay đổi địa chỉ nhận hàng:</strong> khách được cập nhật địa chỉ miễn phí khi đơn ở trạng thái <code>received</code> hoặc <code>processing</code> (trước khi bàn giao vận chuyển). Khi đơn đã ở trạng thái <code>shipping</code>, việc chuyển tuyến phụ thuộc vào đối tác vận chuyển và có thể phát sinh phụ phí thực tế.</li>
+    </ul>
+
+    <h2 id="shippingSync">4. Đồng bộ với checkout, email thông báo &amp; hỗ trợ khách hàng</h2>
+    <p>Thông tin vận chuyển được công khai trước khi khách xác nhận đặt hàng tại màn hình thanh toán, đính kèm trong thông báo/email xác nhận đơn hàng (khi cấu hình nhà cung cấp email) và thống nhất với <a href="returns.html">Chính sách đổi trả hàng</a> (trách nhiệm phí ship hai chiều), <a href="refund.html">Chính sách hoàn tiền</a> và bộ phận CSKH.</p>
+
+    <p><a href="index.html">Về trang chủ</a> · <a href="returns.html">Chính sách đổi trả</a> · <a href="refund.html">Chính sách hoàn tiền</a> · <a href="terms.html">Điều khoản dịch vụ</a> · <a href="privacy.html">Chính sách bảo mật</a></p>
+  </main>
+</body>
+</html>

@@ -1,6 +1,7 @@
 const { getCouponUnavailableReason } = require("../coupons");
 const { REFUND_POLICY } = require("../refund-policy");
 const { RETURN_POLICY } = require("../return-policy");
+const { SHIPPING_POLICY } = require("../shipping-policy");
 
 function createPublicRoutes({
   db,
@@ -93,6 +94,11 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/policies/return" && request.method === "GET") {
       sendJson(response, 200, { policy: RETURN_POLICY });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/policies/shipping" && request.method === "GET") {
+      sendJson(response, 200, { policy: SHIPPING_POLICY });
       return true;
     }
     return false;

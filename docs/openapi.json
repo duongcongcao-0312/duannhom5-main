@@ -30,6 +30,13 @@
         }
       }
     },
+    "/api/policies/shipping": {
+      "get": {
+        "tags": ["Public"],
+        "summary": "Công khai chính sách vận chuyển (khu vực, biểu phí, thời gian dự kiến, tra cứu và xử lý sự cố)",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/policies/return": {
       "get": {
         "tags": ["Public"],

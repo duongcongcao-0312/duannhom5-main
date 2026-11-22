@@ -22,6 +22,8 @@ const routes = [
   { name: "admin:books", permission: "read:books", method: "GET", match: (path) => path === "/api/admin/books" },
   { name: "admin:books:create", permission: "write:books", method: "POST", match: (path) => path === "/api/admin/books" },
   { name: "admin:books", permission: "write:books", match: (path) => /^\/api\/admin\/books\/[A-Za-z0-9_-]+$/.test(path) },
+  { name: "admin:uploads:book-cover", permission: "write:books", method: "POST", match: (path) => path === "/api/admin/uploads/book-cover" },
+  { name: "uploads:book-cover", method: "GET", match: (path) => /^\/api\/uploads\/book-covers\/[0-9a-f-]{36}\.(jpg|png|webp)$/i.test(path) },
   { name: "admin:categories", permission: "read:books", method: "GET", match: (path) => path === "/api/admin/categories" },
   { name: "admin:categories:create", permission: "write:books", method: "POST", match: (path) => path === "/api/admin/categories" },
   { name: "admin:categories", permission: "write:books", match: (path) => /^\/api\/admin\/categories\/[A-Za-z0-9_-]+$/.test(path) },

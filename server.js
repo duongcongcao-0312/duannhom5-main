@@ -38,6 +38,16 @@ const {
 } = require("./backend/order-idempotency");
 const { getAdminPermission } = require("./backend/router");
 const {
+  ENDPOINT_BODY_LIMITS,
+  MAX_URL_LENGTH,
+  REQUEST_LIMIT_POLICY,
+  RequestLimitError,
+  UPLOAD_POLICY,
+  assertRequestSizeHeaders,
+  readBoundedBody,
+  resolveRequestBodyLimit,
+} = require("./backend/request-limits");
+const {
   createRateLimitBucketKey,
   getClientAddress,
   parseTrustedProxyIps,
@@ -535,7 +545,7 @@ const listQuerySchema = {
   order: { type: "string", maxLength: 4, values: ["asc", "desc"] },
 };
 const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
-const maxRequestBytes = 1024 * 1024;
+const maxRequestBytes = ENDPOINT_BODY_LIMITS.default;
 class RequestError extends Error {
   constructor(status, message, cause) {
     super(message);
@@ -700,13 +710,13 @@ async function sendHtmlError(response, status, pageName) {
   }
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes, limitOverrides = {}) {
   const contentType = String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   if (contentType !== "application/json") {
     throw new RequestError(415, "Yêu cầu phải gửi ở định dạng JSON.");
   }
 
-  const rawBody = await readRawBody(request);
+  const rawBody = await readRawBody(request, maxBytes, limitOverrides);
   let payload;
   try {
     payload = JSON.parse(rawBody.toString("utf8"));
@@ -716,15 +726,19 @@ async function readJson(request) {
   return payload;
 }
 
-async function readRawBody(request) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxRequestBytes) throw new RequestError(413, "Yêu cầu quá lớn.");
-    chunks.push(chunk);
+async function readRawBody(request, maxBytes, limitOverrides = {}) {
+  let pathname = "/";
+  try {
+    pathname = new URL(request.url || "/", "http://localhost").pathname;
+  } catch {
+    pathname = "/";
   }
-  return Buffer.concat(chunks);
+  const resolved = resolveRequestBodyLimit(pathname, {
+    contentType: request.headers?.["content-type"] || "",
+    overrides: limitOverrides,
+  });
+  const effectiveMax = Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : resolved.maxBytes;
+  return readBoundedBody(request, effectiveMax, { category: resolved.category });
 }
 
 function sanitizePlainText(value, maxLength = 0) {
@@ -1403,6 +1417,9 @@ function createServer({
   consentRecordsPath,
   privacyDataRequestsPath,
   auditLogPath = path.join(root, "data", "admin-audit.jsonl"),
+  uploadsDir = path.join(root, "data", "uploads", "book-covers"),
+  requestBodyLimits = {},
+  uploadMaxBytes = UPLOAD_POLICY.maxFileBytes,
   backupStatusFile = path.resolve(
     process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
   ),
@@ -2256,6 +2273,13 @@ function createServer({
     return [...baseBooks, ...customBooks];
   }
 
+  const requestLimitOverrides = {
+    ...(requestBodyLimits && typeof requestBodyLimits === "object" ? requestBodyLimits : {}),
+    ...(Number.isSafeInteger(uploadMaxBytes) && uploadMaxBytes > 0 ? { upload: uploadMaxBytes } : {}),
+  };
+  const readRequestRawBody = (request, maxBytes) => readRawBody(request, maxBytes, requestLimitOverrides);
+  const readRequestJson = (request, maxBytes) => readJson(request, maxBytes, requestLimitOverrides);
+
   const handlePublicRoute = createPublicRoutes({
     db,
     getCatalogBookList,
@@ -2266,6 +2290,7 @@ function createServer({
     paginateBookList: (records, filters) => paginateList(records, filters, "title"),
     sendJson,
     sendPaginatedJson,
+    uploadsDir,
     validateBookQuery: (requestUrl) => validateQuery(
       requestUrl,
       {
@@ -2282,7 +2307,7 @@ function createServer({
     ordersPath,
     paymentWebhookSecret,
     publicOrder,
-    readRawBody,
+    readRawBody: readRequestRawBody,
     sepayConfig: sepayConfiguration,
     sendJson,
   });
@@ -2311,7 +2336,7 @@ function createServer({
     randomUUID,
     rateLimitRequest,
     getClientAddress: getRequestClientAddress,
-    readJson,
+    readJson: readRequestJson,
     requireJsonObject,
     roundMoney,
     sanitizePlainText,
@@ -2342,7 +2367,7 @@ function createServer({
     clearRateLimit,
     getClientAddress: getRequestClientAddress,
     randomBytes,
-    readJson,
+    readJson: readRequestJson,
     registrationAttemptLimit,
     registrationAttemptWindowMs,
     requireJsonObject,
@@ -2367,7 +2392,7 @@ function createServer({
     payloadSchemas,
     privacyExportStore,
     rateLimitRequest,
-    readJson,
+    readJson: readRequestJson,
     requireAdmin,
     requireJsonObject,
     requireRole,
@@ -2384,7 +2409,7 @@ function createServer({
     db,
     paginateList,
     payloadSchemas,
-    readJson,
+    readJson: readRequestJson,
     requireCustomerPermission,
     requireJsonObject,
     sendJson,
@@ -2402,7 +2427,7 @@ function createServer({
     listQuerySchema,
     paginateList,
     payloadSchemas,
-    readJson,
+    readJson: readRequestJson,
     requireJsonObject,
     requireRole,
     sanitizePlainText,
@@ -2449,7 +2474,8 @@ function createServer({
     publicUser,
     readAuditEntries,
     readBackupStatus,
-    readJson,
+    readJson: readRequestJson,
+    readRawBody: readRequestRawBody,
     requireJsonObject,
     requireRole,
     sanitizePlainText,
@@ -2460,11 +2486,19 @@ function createServer({
     saveBookCategories,
     sessionStore,
     startedAt,
+    uploadMaxBytes,
+    uploadsDir,
     validateQuery,
     waitForCatalogReady,
   });
 
   async function handleRequest(request, response) {
+    if (typeof request.url === "string" && request.url.length > MAX_URL_LENGTH) {
+      throw new RequestLimitError(414, "Đường dẫn yêu cầu quá dài.", {
+        errorCode: "URI_TOO_LONG",
+        maxBytes: MAX_URL_LENGTH,
+      });
+    }
     let requestUrl;
     try {
       requestUrl = new URL(request.url, "http://localhost");
@@ -2482,11 +2516,13 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code, X-Export-Token",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code, X-Export-Token, X-File-Name",
       });
       response.end();
       return;
     }
+
+    assertRequestSizeHeaders(request, requestUrl.pathname, requestLimitOverrides);
 
     await auditSensitiveRequest(request, response, requestUrl);
     if (await handlePublicRoute(request, response, requestUrl)) return;
@@ -2569,7 +2605,9 @@ function createServer({
     });
     void withAuditRequestContext(requestId, () => handleRequest(request, response)).catch(async (error) => {
       const isExpectedError =
-        error instanceof RequestError || error instanceof CustomerError;
+        error instanceof RequestError ||
+        error instanceof RequestLimitError ||
+        error instanceof CustomerError;
       const status =
         isExpectedError &&
         Number.isInteger(error.status) &&
@@ -2590,6 +2628,9 @@ function createServer({
         response.destroy(error instanceof Error ? error : undefined);
         return;
       }
+      if (status === 413 && !request.complete) {
+        response.setHeader("Connection", "close");
+      }
       const isApiRequest = (() => {
         if (typeof request.url === "string" && request.url.startsWith("/api/")) {
           return true;
@@ -2602,14 +2643,19 @@ function createServer({
       })();
       if (isApiRequest) {
         const message =
-          (status < 500 || error instanceof RequestError) && isExpectedError
+          (status < 500 || error instanceof RequestError || error instanceof RequestLimitError) && isExpectedError
             ? error.message
             : "Máy chủ gặp lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.";
         const errorCode =
           isExpectedError && status < 500 && typeof error.errorCode === "string"
             ? error.errorCode
             : undefined;
-        sendJson(response, status, errorCode ? { error: message, code: errorCode } : { error: message });
+        const body = { error: message };
+        if (errorCode) body.code = errorCode;
+        if (isExpectedError && Number.isSafeInteger(error.maxBytes)) {
+          body.maxBytes = error.maxBytes;
+        }
+        sendJson(response, status, body);
         return;
       }
       void sendHtmlError(response, status, status === 404 ? "404" : "500");

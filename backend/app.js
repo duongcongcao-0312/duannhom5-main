@@ -1,4 +1,4 @@
-﻿const fs = require("node:fs/promises");
+const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
 const {
@@ -19,6 +19,14 @@ const { normalizeSePayConfig } = require("./sepay-config");
 const { readAuditEntries } = require("./audit");
 const { hashOrderRequest } = require("./order-idempotency");
 const { getAdminPermission } = require("./router");
+const {
+  ENDPOINT_BODY_LIMITS,
+  MAX_URL_LENGTH,
+  RequestLimitError,
+  assertRequestSizeHeaders,
+  readBoundedBody,
+  resolveRequestBodyLimit,
+} = require("./request-limits");
 const {
   hashPasswordResetToken,
   isPasswordValid,
@@ -483,7 +491,7 @@ const listQuerySchema = {
   order: { type: "string", maxLength: 4, values: ["asc", "desc"] },
 };
 const allowedServiceStatuses = new Set(Object.values(SERVICE_STATUSES));
-const maxRequestBytes = 1024 * 1024;
+const maxRequestBytes = ENDPOINT_BODY_LIMITS.default;
 class RequestError extends Error {
   constructor(status, message, cause) {
     super(message);
@@ -619,15 +627,18 @@ async function readJson(request) {
   return payload;
 }
 
-async function readRawBody(request) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxRequestBytes) throw new RequestError(413, "Yêu cầu quá lớn.");
-    chunks.push(chunk);
+async function readRawBody(request, maxBytes) {
+  let pathname = "/";
+  try {
+    pathname = new URL(request.url || "/", "http://localhost").pathname;
+  } catch {
+    pathname = "/";
   }
-  return Buffer.concat(chunks);
+  const resolved = resolveRequestBodyLimit(pathname, {
+    contentType: request.headers?.["content-type"] || "",
+  });
+  const effectiveMax = Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : resolved.maxBytes;
+  return readBoundedBody(request, effectiveMax, { category: resolved.category });
 }
 
 function sanitizePlainText(value, maxLength = 0) {
@@ -2037,6 +2048,12 @@ function createServer({
   });
 
   async function handleRequest(request, response) {
+    if (typeof request.url === "string" && request.url.length > MAX_URL_LENGTH) {
+      throw new RequestLimitError(414, "Đường dẫn yêu cầu quá dài.", {
+        errorCode: "URI_TOO_LONG",
+        maxBytes: MAX_URL_LENGTH,
+      });
+    }
     let requestUrl;
     try {
       requestUrl = new URL(request.url, "http://localhost");
@@ -2054,11 +2071,13 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-File-Name",
       });
       response.end();
       return;
     }
+
+    assertRequestSizeHeaders(request, requestUrl.pathname);
 
     if (await handlePublicRoute(request, response, requestUrl)) return;
     if (await handlePaymentRoute(request, response, requestUrl.pathname)) return;
@@ -2108,7 +2127,9 @@ function createServer({
     }
     void handleRequest(request, response).catch((error) => {
       const isExpectedError =
-        error instanceof RequestError || error instanceof CustomerError;
+        error instanceof RequestError ||
+        error instanceof RequestLimitError ||
+        error instanceof CustomerError;
       const status =
         isExpectedError &&
         Number.isInteger(error.status) &&

@@ -1,7 +1,13 @@
 const { AUDIT_POLICY, appendAuditEntry } = require("../audit");
+const {
+  UPLOAD_POLICY,
+  parseMultipartSingleFile,
+  storeSafeImageUpload,
+  validateImageUpload,
+} = require("../request-limits");
 
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
   async function recordAdminAudit(event) {
     if (!auditLogPath) return;
     await appendAuditEntry(auditLogPath, event);
@@ -1040,6 +1046,78 @@ if (adminUserMatch && request.method === "PATCH") {
   if (!updated) throw new RequestError(404, "Không tìm thấy tài khoản người dùng.");
   await sessionStore.destroyUserSessions(updated.id);
   sendJson(response, 200, publicUser(updated));
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/admin/uploads/book-cover" &&
+  request.method === "POST"
+) {
+  const actor = await requireRole(request, "write:books");
+  const contentTypeHeader = String(request.headers["content-type"] || "");
+  const mediaType = contentTypeHeader.split(";")[0].trim().toLowerCase();
+  const isMultipart = mediaType === "multipart/form-data";
+  const isAllowedBinary = UPLOAD_POLICY.allowedMimeTypes.includes(mediaType);
+  if (!isMultipart && !isAllowedBinary) {
+    throw new RequestError(
+      415,
+      "Định dạng tải lên không được hỗ trợ. Chỉ chấp nhận multipart/form-data hoặc ảnh JPEG, PNG, WebP.",
+    );
+  }
+  const effectiveUploadMax =
+    Number.isSafeInteger(uploadMaxBytes) && uploadMaxBytes > 0
+      ? uploadMaxBytes
+      : UPLOAD_POLICY.maxFileBytes;
+  const transportLimit = isMultipart
+    ? effectiveUploadMax + UPLOAD_POLICY.multipartOverheadBytes
+    : effectiveUploadMax;
+  const rawBody = await readRawBody(request, transportLimit);
+
+  let uploadCandidate;
+  if (isMultipart) {
+    uploadCandidate = parseMultipartSingleFile(rawBody, contentTypeHeader, effectiveUploadMax);
+  } else {
+    const rawHeaderFilename = request.headers["x-file-name"];
+    const filename = Array.isArray(rawHeaderFilename)
+      ? rawHeaderFilename[0]
+      : typeof rawHeaderFilename === "string"
+        ? rawHeaderFilename
+        : null;
+    uploadCandidate = {
+      buffer: rawBody,
+      declaredMime: mediaType,
+      filename,
+    };
+  }
+
+  const validated = validateImageUpload({
+    buffer: uploadCandidate.buffer,
+    declaredMime: uploadCandidate.declaredMime,
+    filename: uploadCandidate.filename,
+    maxFileBytes: effectiveUploadMax,
+  });
+  const stored = await storeSafeImageUpload(uploadsDir, validated);
+  await recordAdminAudit({
+    action: "book.cover.upload",
+    actorId: actor.userId,
+    actorRole: actor.role,
+    entityType: "upload",
+    entityId: stored.filename,
+    outcome: "success",
+    statusCode: 201,
+    metadata: {
+      mimeType: stored.mimeType,
+      size: stored.size,
+      sha256: stored.sha256,
+    },
+  });
+  sendJson(response, 201, {
+    filename: stored.filename,
+    mimeType: stored.mimeType,
+    size: stored.size,
+    sha256: stored.sha256,
+    url: stored.url,
+  });
   return true;
 }
 

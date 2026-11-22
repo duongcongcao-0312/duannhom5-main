@@ -1,9 +1,11 @@
+const fs = require("node:fs/promises");
 const { getCouponUnavailableReason } = require("../coupons");
 const { PRIVACY_POLICY } = require("../privacy-policy");
 const { REFUND_POLICY } = require("../refund-policy");
 const { RETURN_POLICY } = require("../return-policy");
 const { SHIPPING_POLICY } = require("../shipping-policy");
 const { TERMS_POLICY } = require("../terms-policy");
+const { resolveSafeStoredUploadPath } = require("../request-limits");
 
 function createPublicRoutes({
   db,
@@ -12,6 +14,7 @@ function createPublicRoutes({
   paginateBookList,
   sendJson,
   sendPaginatedJson,
+  uploadsDir,
   validateBookQuery,
   getBookCategories,
   getBookAuthors,
@@ -111,6 +114,35 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/policies/privacy" && request.method === "GET") {
       sendJson(response, 200, { policy: PRIVACY_POLICY });
+      return true;
+    }
+
+    if (requestUrl.pathname.startsWith("/api/uploads/book-covers/") && request.method === "GET") {
+      const filename = requestUrl.pathname.slice("/api/uploads/book-covers/".length);
+      const resolved = uploadsDir ? resolveSafeStoredUploadPath(uploadsDir, filename) : null;
+      if (!resolved) {
+        sendJson(response, 404, { error: "Không tìm thấy tệp ảnh." });
+        return true;
+      }
+      let contents;
+      try {
+        contents = await fs.readFile(resolved.filePath);
+      } catch (error) {
+        if (error && error.code === "ENOENT") {
+          sendJson(response, 404, { error: "Không tìm thấy tệp ảnh." });
+          return true;
+        }
+        throw error;
+      }
+      response.writeHead(200, {
+        "Content-Type": resolved.mimeType,
+        "Content-Length": contents.length,
+        "Content-Disposition": "inline",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cache-Control": "public, max-age=86400",
+      });
+      response.end(contents);
       return true;
     }
     return false;

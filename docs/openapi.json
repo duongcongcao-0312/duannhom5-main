@@ -463,6 +463,34 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "405": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/admin/uploads/book-cover": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Tải lên ảnh bìa sách an toàn (JPEG, PNG, WebP, tối đa 2 MiB, yêu cầu quyền write:books)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "201": { "$ref": "#/components/responses/Ok" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "415": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/uploads/book-covers/{filename}": {
+      "get": {
+        "tags": ["Catalog"],
+        "summary": "Tải ảnh bìa sách đã được kiểm tra và lưu trữ an toàn",
+        "parameters": [
+          { "name": "filename", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Nội dung ảnh bìa sách" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/admin/stats": { "get": { "tags": ["Admin"], "summary": "Thống kê quản trị", "security": [{ "bearerAuth": [] }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
     "/api/admin/orders": { "get": { "tags": ["Admin"], "summary": "Danh sách đơn hàng đầy đủ, có phân trang", "security": [{ "bearerAuth": [] }], "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "$ref": "#/components/parameters/OrderSort" }, { "$ref": "#/components/parameters/OrderDirection" }], "responses": { "200": { "$ref": "#/components/responses/PaginatedOk" } } } },
     "/api/admin/orders/{id}": {

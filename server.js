@@ -1085,6 +1085,15 @@ function createServer({
       ? "https://duongcongcao-0312.github.io"
       : "http://127.0.0.1:8000,http://localhost:8000"
   ),
+  loginAttemptLimit = 5,
+  loginAttemptWindowMs = 15 * 60 * 1000,
+  registrationAttemptLimit = 5,
+  registrationAttemptWindowMs = 15 * 60 * 1000,
+  passwordResetIpLimit = 30,
+  passwordResetEmailLimit = 5,
+  passwordResetWindowMs = 15 * 60 * 1000,
+  orderRequestLimit = 30,
+  orderRequestWindowMs = 15 * 60 * 1000,
 } = {}) {
   if (process.env.NODE_ENV === "production") {
     const adminEmail = String(process.env.ADMIN_EMAIL || "").trim();
@@ -1259,15 +1268,6 @@ function createServer({
   const privacyExportStore = new PrivacyExportStore({
     ttlMs: privacyExportTtlMs,
   });
-  const loginAttemptLimit = 5;
-  const loginAttemptWindowMs = 15 * 60 * 1000;
-  const registrationAttemptLimit = 5;
-  const registrationAttemptWindowMs = 15 * 60 * 1000;
-  const passwordResetIpLimit = 30;
-  const passwordResetEmailLimit = 5;
-  const passwordResetWindowMs = 15 * 60 * 1000;
-  const orderRequestLimit = 30;
-  const orderRequestWindowMs = 15 * 60 * 1000;
 
   function dispatchMonitoringAlert(alert, requestId) {
     const now = Date.now();

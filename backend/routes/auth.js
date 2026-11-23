@@ -124,6 +124,14 @@ if (
   requestUrl.pathname === "/api/auth/password-reset/confirm" &&
   request.method === "POST"
 ) {
+  await rateLimitRequest(
+    response,
+    "password-reset-confirm",
+    getClientAddress(request),
+    passwordResetIpLimit,
+    passwordResetWindowMs,
+    "Bạn đã thử đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau.",
+  );
   const payload = requireJsonObject(
     await readJson(request),
     "Yêu cầu đặt lại mật khẩu không hợp lệ.",
@@ -282,6 +290,14 @@ if (
   requestUrl.pathname === "/api/auth/social" &&
   request.method === "POST"
 ) {
+  await rateLimitRequest(
+    response,
+    "social-login",
+    getClientAddress(request),
+    loginAttemptLimit,
+    loginAttemptWindowMs,
+    "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+  );
   const payload = requireJsonObject(
     await readJson(request),
     "Dữ liệu xác thực không hợp lệ.",
@@ -602,6 +618,48 @@ if (
     customerInfo: pickSelfServiceFields(updatedUser.customerInfo),
     changedFields,
     ordersUpdated: 0,
+  });
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/auth/refresh" &&
+  request.method === "POST"
+) {
+  await rateLimitRequest(
+    response,
+    "auth-refresh",
+    getClientAddress(request),
+    loginAttemptLimit,
+    loginAttemptWindowMs,
+    "Bạn đã yêu cầu làm mới phiên quá nhiều lần. Vui lòng thử lại sau.",
+  );
+  const authHeader = request.headers["authorization"] || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    throw new RequestError(401, "Chưa đăng nhập.");
+  }
+  let refreshToken;
+  if (Number(request.headers["content-length"] || 0) > 0 || request.headers["content-type"]) {
+    const payload = requireJsonObject(
+      await readJson(request),
+      "Dữ liệu làm mới phiên không hợp lệ.",
+      {
+        allowed: ["refreshToken"],
+        types: { refreshToken: "string" },
+        preserveStrings: ["refreshToken"],
+      },
+    );
+    refreshToken = payload.refreshToken;
+  }
+  const refreshed = await sessionStore.refreshSession(token, refreshToken);
+  if (!refreshed) {
+    throw new RequestError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
+  }
+  sendJson(response, 200, {
+    token: refreshed.token,
+    expiresAt: refreshed.expiresAt,
+    refreshExpiresAt: refreshed.refreshExpiresAt,
   });
   return true;
 }

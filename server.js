@@ -1106,6 +1106,12 @@ function createServer({
   passwordResetWindowMs = 15 * 60 * 1000,
   passwordResetTtlMs = 60 * 60 * 1000,
   emailVerificationTtlMs = 24 * 60 * 60 * 1000,
+  apiRequestLimit = Number.isSafeInteger(Number(process.env.API_RATE_LIMIT)) && Number(process.env.API_RATE_LIMIT) > 0
+    ? Number(process.env.API_RATE_LIMIT)
+    : 300,
+  apiRequestWindowMs = Number.isSafeInteger(Number(process.env.API_RATE_WINDOW_MS)) && Number(process.env.API_RATE_WINDOW_MS) > 0
+    ? Number(process.env.API_RATE_WINDOW_MS)
+    : 15 * 60 * 1000,
   orderRequestLimit = 30,
   orderRequestWindowMs = 15 * 60 * 1000,
 } = {}) {
@@ -2229,6 +2235,17 @@ function createServer({
     }
 
     assertRequestSizeHeaders(request, requestUrl.pathname, requestLimitOverrides);
+
+    if (versionInfo.isApi) {
+      await rateLimitRequest(
+        response,
+        "api_global",
+        getRequestClientAddress(request),
+        apiRequestLimit,
+        apiRequestWindowMs,
+        "Bạn đã gửi quá nhiều yêu cầu API. Vui lòng thử lại sau.",
+      );
+    }
 
     await auditSensitiveRequest(request, response, requestUrl);
     if (await handlePublicRoute(request, response, requestUrl)) return;

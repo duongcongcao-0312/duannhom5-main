@@ -202,6 +202,10 @@ bắt buộc có credentials hợp lệ ngay từ lần khởi động đầu. T
 định cũ được hạ quyền và mật khẩu bị vô hiệu hóa khi khởi tạo dữ liệu.
 Phiên đăng nhập lưu trong bộ nhớ sẽ bị vô hiệu khi tiến trình khởi động lại.
 
+### Global API rate limit
+
+All `/api/*` requests except CORS preflight `OPTIONS` use a shared per-client limit of 300 requests per 15 minutes by default. Configure `API_RATE_LIMIT` and `API_RATE_WINDOW_MS` (milliseconds) to tune it. Endpoint-specific limits for authentication, orders, and sensitive operations still apply.
+
 ## Kiểm tra sau deploy
 
 ```sh

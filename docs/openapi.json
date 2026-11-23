@@ -238,9 +238,9 @@
     "/api/uploads/book-covers/{filename}": {
       "get": {
         "tags": ["Catalog"],
-        "summary": "Tải ảnh bìa sách đã được kiểm tra và lưu trữ an toàn",
+        "summary": "Tải ảnh bìa WebP đã tối ưu hoặc ảnh JPG/PNG cũ đã lưu",
         "parameters": [
-          { "name": "filename", "in": "path", "required": true, "description": "Tên tệp dạng UUID kèm phần mở rộng .jpg, .png hoặc .webp.", "schema": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp)$" } }
+          { "name": "filename", "in": "path", "required": true, "description": "Tên UUID WebP có thể kèm biến thể -320/-640, hoặc ảnh JPG/PNG đã lưu trước đây.", "schema": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-(?:320|640))?\\.webp$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png)$" } }
         ],
         "responses": {
           "200": {
@@ -1086,7 +1086,7 @@
     "/api/admin/uploads/book-cover": {
       "post": {
         "tags": ["Admin"],
-        "summary": "Tải lên ảnh bìa sách an toàn (JPEG, PNG, WebP, tối đa 2 MiB, yêu cầu quyền write:books)",
+        "summary": "Tải lên ảnh bìa, tự tối ưu WebP và tạo ba kích thước (JPEG, PNG, WebP đầu vào tối đa 2 MiB, yêu cầu quyền write:books)",
         "security": [{ "bearerAuth": [] }],
         "x-required-permission": "write:books",
         "x-allowed-roles": ["admin"],
@@ -1101,7 +1101,7 @@
                 "type": "object",
                 "required": ["file"],
                 "properties": {
-                  "file": { "type": "string", "format": "binary", "description": "Ảnh JPEG, PNG hoặc WebP tối đa 2 MiB." }
+                  "file": { "type": "string", "format": "binary", "description": "Ảnh JPEG, PNG hoặc WebP tối đa 2 MiB; lưu thành WebP tối ưu tối đa 1200×1800 và biến thể 640×960, 320×480." }
                 }
               }
             },
@@ -2046,13 +2046,22 @@
       },
       "UploadCoverResult": {
         "type": "object",
-        "required": ["filename", "mimeType", "size", "sha256", "url"],
+        "required": ["filename", "mimeType", "size", "originalSize", "sha256", "url", "variants"],
         "properties": {
-          "filename": { "type": "string", "example": "00000000-0000-4000-8000-000000000001.png" },
-          "mimeType": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp"], "example": "image/png" },
-          "size": { "type": "integer", "minimum": 1, "maximum": 2097152, "example": 24576 },
+          "filename": { "type": "string", "example": "00000000-0000-4000-8000-000000000001.webp" },
+          "mimeType": { "type": "string", "const": "image/webp" },
+          "size": { "type": "integer", "minimum": 1, "example": 24576 },
+          "originalSize": { "type": "integer", "minimum": 1, "maximum": 2097152, "example": 184320 },
           "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "url": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.png" }
+          "url": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.webp" },
+          "variants": {
+            "type": "object",
+            "required": ["small", "medium"],
+            "properties": {
+              "small": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001-320.webp" },
+              "medium": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001-640.webp" }
+            }
+          }
         }
       },
       "PaymentConfig": {
@@ -2200,8 +2209,29 @@
           "author": { "type": "string", "example": "Paulo Coelho" },
           "price": { "type": "number", "example": 79000 },
           "category": { "type": "string", "example": "van-hoc" },
-          "cover": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.png" },
-          "stock": { "type": "integer", "minimum": 0, "example": 25 }
+          "cover": { "type": "string", "example": "/api/uploads/book-covers/00000000-0000-4000-8000-000000000001.webp" },
+          "stock": { "type": "integer", "minimum": 0, "example": 25 },
+          "isbn": { "type": "string", "example": "9780306406157" },
+          "description": { "type": "string", "maxLength": 4000 },
+          "images": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "required": ["url", "alt"],
+              "properties": {
+                "url": { "type": "string" },
+                "alt": { "type": "string", "maxLength": 200 },
+                "variants": {
+                  "type": "object",
+                  "properties": {
+                    "small": { "type": "string" },
+                    "medium": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "Register": {

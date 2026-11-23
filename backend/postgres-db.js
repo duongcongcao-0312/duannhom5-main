@@ -2292,6 +2292,44 @@ class PostgresDatabase {
     return publishers;
   }
 
+  async getCatalogRecords(collection) {
+    if (!["reviews", "favorites", "history"].includes(collection)) {
+      throw new Error(`Unknown catalog collection: ${collection}`);
+    }
+    await this.init();
+    const { rows } = await this.pool.query(
+      "SELECT records FROM booknest_data WHERE collection = $1",
+      [collection],
+    );
+    return Array.isArray(rows[0]?.records) ? rows[0].records : [];
+  }
+
+  async updateCatalogRecords(collection, update) {
+    if (!["reviews", "favorites", "history"].includes(collection)) {
+      throw new Error(`Unknown catalog collection: ${collection}`);
+    }
+    return this.withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        `booknest_catalog_${collection}`,
+      ]);
+      const { rows } = await client.query(
+        "SELECT records FROM booknest_data WHERE collection = $1 FOR UPDATE",
+        [collection],
+      );
+      const records = Array.isArray(rows[0]?.records) ? rows[0].records : [];
+      const result = await update(records);
+      await client.query(
+        `INSERT INTO booknest_data (collection, records, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (collection) DO UPDATE SET
+           records = EXCLUDED.records,
+           updated_at = EXCLUDED.updated_at`,
+        [collection, JSON.stringify(records)],
+      );
+      return result;
+    });
+  }
+
   async persistAdminBookUpdate(id, updateData, expectedUpdatedAt, catalogOverride, baseBook) {
     await this.init();
     const client = await this.pool.connect();
@@ -2384,6 +2422,8 @@ class PostgresDatabase {
         price: Number(book.price) || 0,
         stock: Number.isInteger(book.stock) ? book.stock : 12,
         cover: String(book.cover || "").trim() || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
+        images: Array.isArray(book.images) ? book.images : [],
+        isbn: String(book.isbn || "").trim(),
         description: String(book.description || "").trim(),
         authorIds: Array.isArray(book.authorIds) ? book.authorIds : [],
         authors: Array.isArray(book.authors) ? book.authors : [],
@@ -2437,8 +2477,9 @@ class PostgresDatabase {
   async recordConsent(subjectId, data) {
     const { rows } = await this.pool.query(
       `INSERT INTO privacy_consents
-        (subject_id, purpose, consent, policy_version, data_source, retention_days, revoked_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, CASE WHEN $3 THEN NULL ELSE NOW() END)
+        (subject_id, purpose, consent, policy_version, data_source, retention_days, retain_until, revoked_at)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, NOW() + $6 * INTERVAL '1 day',
+               CASE WHEN $3 THEN NULL ELSE NOW() END)
        RETURNING id, subject_id, purpose, consent, policy_version, data_source,
                  retention_days, created_at, revoked_at`,
       [

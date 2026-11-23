@@ -1,3 +1,4 @@
+const { randomUUID } = require("node:crypto");
 const { AUDIT_POLICY, appendAuditEntry } = require("../audit");
 const {
   UPLOAD_POLICY,
@@ -7,7 +8,7 @@ const {
 } = require("../request-limits");
 
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getCatalogCacheSnapshot = () => ({}), invalidateCatalogCache = () => {}, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, privacyExportStore, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, assertUniqueBookIsbn, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getCatalogCacheSnapshot = () => ({}), invalidateCatalogCache = () => {}, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, privacyExportStore, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
   async function recordAdminAudit(event) {
     if (!auditLogPath) return;
     await appendAuditEntry(auditLogPath, event);
@@ -28,6 +29,48 @@ if (
     "Bộ lọc sách không hợp lệ.",
   );
   sendPaginatedJson(response, paginateList(await getCatalogBookList(), filters, "title"));
+  return true;
+}
+
+if (requestUrl.pathname === "/api/admin/reviews" && request.method === "GET") {
+  await requireRole(request, "read:books");
+  const filters = validateQuery(
+    requestUrl,
+    {
+      page: listQuerySchema.page,
+      limit: listQuerySchema.limit,
+      status: { type: "string", maxLength: 16, values: ["pending", "visible", "hidden", "rejected", "reported"] },
+    },
+    "Bộ lọc đánh giá không hợp lệ.",
+  );
+  const reviews = await db.getCatalogRecords("reviews");
+  const selected = filters.status === "reported"
+    ? reviews.filter((review) => Number(review.reportCount) > 0)
+    : filters.status
+      ? reviews.filter((review) => review.status === filters.status)
+    : reviews;
+  sendPaginatedJson(response, paginateList(selected, filters, "createdAt"));
+  return true;
+}
+
+const adminReviewMatch = requestUrl.pathname.match(/^\/api\/admin\/reviews\/([0-9a-f-]{36})$/i);
+if (adminReviewMatch && request.method === "PATCH") {
+  const actor = await requireRole(request, "write:books");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu kiểm duyệt đánh giá không hợp lệ.",
+    payloadSchemas.reviewModeration,
+  );
+  const review = await db.updateCatalogRecords("reviews", (reviews) => {
+    const entry = reviews.find((item) => item.id === adminReviewMatch[1]);
+    if (!entry) return null;
+    entry.status = payload.status;
+    entry.moderatedBy = actor.userId;
+    entry.updatedAt = new Date().toISOString();
+    return entry;
+  });
+  if (!review) throw new RequestError(404, "Không tìm thấy đánh giá.");
+  sendJson(response, 200, review);
   return true;
 }
 
@@ -731,6 +774,7 @@ if (
   const newBook = await enqueueOrderWrite(ordersPath, async () => {
     const newBookData = normalizeAdminBook(payload);
     await assertUniqueBookTitle(newBookData.title);
+    await assertUniqueBookIsbn(newBookData.isbn);
     const created = {
       ...(await db.addCustomBook(newBookData)),
       isCustom: true,
@@ -755,6 +799,20 @@ if (
     requestId: response.getHeader("X-Request-Id"),
   });
   sendJson(response, 201, newBook);
+  return true;
+}
+
+const adminBookHistoryMatch = requestUrl.pathname.match(
+  /^\/api\/admin\/books\/([A-Za-z0-9_-]{1,128})\/history$/,
+);
+if (adminBookHistoryMatch && request.method === "GET") {
+  await requireRole(request, "read:books");
+  const book = (await getCatalogBookList()).find((entry) => entry.id === adminBookHistoryMatch[1]);
+  if (!book) throw new RequestError(404, "Không tìm thấy sách.");
+  const history = (await db.getCatalogRecords("history"))
+    .filter((entry) => entry.bookId === book.id)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+  sendJson(response, 200, history);
   return true;
 }
 
@@ -806,6 +864,7 @@ if (
     if (!previous) throw new RequestError(404, "Không tìm thấy sách.");
     const updatedData = normalizeAdminBook(payload, previous);
     await assertUniqueBookTitle(updatedData.title, id);
+    await assertUniqueBookIsbn(updatedData.isbn, id);
     await assertStockCoversReservations(previous.title, updatedData.stock);
     const expectedUpdatedAt = request.headers["if-match"];
     const updated = isCatalogBook
@@ -813,6 +872,25 @@ if (
       : await db.updateCustomBook(id, updatedData, expectedUpdatedAt);
     if (!updated) throw new RequestError(404, "Không tìm thấy sách.");
     const result = { ...updated, isCustom: !isCatalogBook };
+    const changes = {};
+    for (const field of ["price", "stock", "status", "isActive", "discontinued"]) {
+      if (previous[field] !== result[field]) {
+        changes[field] = { before: previous[field] ?? null, after: result[field] ?? null };
+      }
+    }
+    if (Object.keys(changes).length) {
+      await db.updateCatalogRecords("history", (history) => {
+        history.push({
+          id: randomUUID(),
+          bookId: result.id,
+          title: result.title,
+          actorId: actor.userId,
+          actorRole: actor.role,
+          changes,
+          createdAt: new Date().toISOString(),
+        });
+      });
+    }
     if (previous?.title && previous.title !== updated.title) {
       getBookCatalog().delete(previous.title);
     }
@@ -1178,6 +1256,7 @@ if (
     metadata: {
       mimeType: stored.mimeType,
       size: stored.size,
+      originalSize: stored.originalSize,
       sha256: stored.sha256,
     },
   });
@@ -1185,8 +1264,10 @@ if (
     filename: stored.filename,
     mimeType: stored.mimeType,
     size: stored.size,
+    originalSize: stored.originalSize,
     sha256: stored.sha256,
     url: stored.url,
+    variants: stored.variants,
   });
   return true;
 }

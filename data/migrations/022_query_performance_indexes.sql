@@ -24,5 +24,34 @@ CREATE INDEX IF NOT EXISTS idx_customers_active_status_created
   WHERE is_active = TRUE;
 
 -- 6. Scheduled privacy consent retention pruning (WHERE retain_until <= $1)
+ALTER TABLE privacy_consents
+  ADD COLUMN IF NOT EXISTS retain_until TIMESTAMPTZ;
+
+UPDATE privacy_consents
+SET retain_until = created_at + retention_days * INTERVAL '1 day'
+WHERE retain_until IS NULL;
+
+CREATE OR REPLACE FUNCTION booknest_set_consent_retain_until()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' OR
+     NEW.retention_days IS DISTINCT FROM OLD.retention_days OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    NEW.retain_until := NEW.created_at + NEW.retention_days * INTERVAL '1 day';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_privacy_consents_retain_until ON privacy_consents;
+CREATE TRIGGER trg_privacy_consents_retain_until
+  BEFORE INSERT OR UPDATE OF retention_days, created_at
+  ON privacy_consents
+  FOR EACH ROW
+  EXECUTE FUNCTION booknest_set_consent_retain_until();
+
+ALTER TABLE privacy_consents
+  ALTER COLUMN retain_until SET NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_privacy_consents_retain_until
   ON privacy_consents (retain_until);

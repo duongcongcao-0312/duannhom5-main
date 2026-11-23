@@ -242,6 +242,21 @@
                         </tbody>
                     </table>
                 </div>
+                <section class="card review-moderation" aria-labelledby="reviewQueueTitle">
+                    <div class="view-header">
+                        <div>
+                            <h2 id="reviewQueueTitle">Đánh giá cần kiểm duyệt</h2>
+                            <p class="subtitle">Chỉ đánh giá đã duyệt mới xuất hiện công khai.</p>
+                        </div>
+                        <button class="btn-secondary" id="loadReviewQueue" type="button">Tải đánh giá</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="admin-table">
+                            <thead><tr><th>Sách</th><th>Khách hàng</th><th>Điểm</th><th>Nhận xét</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+                            <tbody id="reviewQueueBody"><tr><td colspan="6" class="text-center">Chọn “Tải đánh giá” để xem hàng chờ.</td></tr></tbody>
+                        </table>
+                    </div>
+                </section>
             </section>
 
             <!-- VIEW: CATEGORIES -->
@@ -541,13 +556,30 @@
                 </label>
             </div>
             <label class="form-group">
+                <span>ISBN (ISBN-10 hoặc ISBN-13)</span>
+                <input type="text" name="isbn" class="form-input" maxlength="20" inputmode="text" placeholder="Ví dụ: 978-0-306-40615-7">
+            </label>
+            <label class="form-group">
                 <span>Đường dẫn ảnh bìa (URL)</span>
                 <input type="url" name="cover" class="form-input" placeholder="https://images.unsplash.com/...">
             </label>
             <label class="form-group">
-                <span>Mô tả cuốn sách</span>
-                <textarea name="description" class="form-textarea" rows="3" placeholder="Giới thiệu nội dung nổi bật của cuốn sách..."></textarea>
+                <span>Tải ảnh lên (JPEG, PNG hoặc WebP; tự tối ưu WebP)</span>
+                <input id="bookImageUpload" class="form-input" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+                <small id="bookImageUploadStatus" role="status"></small>
             </label>
+            <label class="form-group">
+                <span>Ảnh sản phẩm (mỗi dòng: URL | mô tả ảnh, tối đa 8 ảnh)</span>
+                <textarea name="images" class="form-textarea" rows="3" maxlength="5000" placeholder="https://example.com/anh-1.jpg | Bìa trước&#10;https://example.com/anh-2.jpg | Bìa sau"></textarea>
+            </label>
+            <label class="form-group">
+                <span>Mô tả cuốn sách</span>
+                <textarea name="description" class="form-textarea" rows="4" maxlength="4000" placeholder="Giới thiệu nội dung nổi bật của cuốn sách..."></textarea>
+            </label>
+            <section id="bookHistoryPanel" class="book-history-panel" hidden aria-live="polite">
+                <h3>Lịch sử giá và trạng thái</h3>
+                <ol id="bookHistoryList"></ol>
+            </section>
             <div class="dialog-footer">
                 <button type="button" id="cancelBookModal" class="btn-secondary">Hủy</button>
                 <button type="submit" class="btn-primary">Lưu cuốn sách</button>

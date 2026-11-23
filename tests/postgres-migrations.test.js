@@ -112,10 +112,10 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     await runMigrations(client, migrationsDirectory);
 
     const customers = await client.query(
-      `SELECT customer_id, status, is_active, deleted_at, address, city
+      `SELECT customer_id, email, status, is_active, deleted_at, address, city
        FROM customers ORDER BY email`,
     );
-    assert.equal(customers.rowCount, 2);
+    assert.equal(customers.rowCount, 3);
     assert.equal(customers.rows[0].customer_id, activeCustomerId);
     assert.equal(customers.rows[0].status, "customer");
     assert.equal(customers.rows[0].is_active, true);
@@ -125,6 +125,8 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     assert.equal(customers.rows[1].customer_id, inactiveCustomerId);
     assert.equal(customers.rows[1].is_active, false);
     assert.ok(customers.rows[1].deleted_at);
+    assert.equal(customers.rows[2].email, "migrated-customer@example.com");
+    assert.equal(customers.rows[2].status, "new");
 
     await client.query(
       "UPDATE customers SET address = NULL, city = NULL WHERE customer_id = $1",
@@ -245,15 +247,15 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
           'book_inventory'::regclass
         )
     `);
-    assert.equal(relationalForeignKeys.rowCount, 4);
+    assert.equal(relationalForeignKeys.rowCount, 5);
     assert.deepEqual(
       relationalForeignKeys.rows.map((row) => row.confdeltype).sort(),
-      ["c", "c", "n", "r"],
+      ["c", "c", "n", "n", "r"],
     );
 
     await client.query(
       `INSERT INTO customers (full_name, phone, email, source)
-       VALUES ('New CRM Customer', '+84901111111', 'new@example.com', 'api')`,
+       VALUES ('New CRM Customer', '+84902222222', 'new@example.com', 'api')`,
     );
 
     const dsar = await client.query(

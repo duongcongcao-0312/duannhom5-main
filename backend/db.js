@@ -236,6 +236,10 @@ class Database {
     this.categoriesPath = options.categoriesPath || path.join(dataDir, "categories.json");
     this.authorsPath = options.authorsPath || path.join(dataDir, "authors.json");
     this.publishersPath = options.publishersPath || path.join(dataDir, "publishers.json");
+    const userDataDir = path.dirname(path.resolve(this.usersPath));
+    this.catalogReviewsPath = options.catalogReviewsPath || path.join(userDataDir, "book-reviews.json");
+    this.catalogFavoritesPath = options.catalogFavoritesPath || path.join(userDataDir, "book-favorites.json");
+    this.catalogHistoryPath = options.catalogHistoryPath || path.join(userDataDir, "book-history.json");
     this.couponsPath = options.couponsPath || path.join(dataDir, "coupons.json");
     this.customerInteractionsPath = options.customerInteractionsPath ||
       path.join(dataDir, "customer-interactions.json");
@@ -1675,6 +1679,33 @@ class Database {
     });
   }
 
+  getCatalogCollectionPath(collection) {
+    const paths = {
+      reviews: this.catalogReviewsPath,
+      favorites: this.catalogFavoritesPath,
+      history: this.catalogHistoryPath,
+    };
+    const collectionPath = paths[collection];
+    if (!collectionPath) throw new Error(`Unknown catalog collection: ${collection}`);
+    return collectionPath;
+  }
+
+  async getCatalogRecords(collection) {
+    await this.init();
+    return readJsonCollection(this.getCatalogCollectionPath(collection), []);
+  }
+
+  async updateCatalogRecords(collection, update) {
+    await this.init();
+    const collectionPath = this.getCatalogCollectionPath(collection);
+    return this.enqueueFileWrite(collectionPath, async () => {
+      const records = await readJsonCollection(collectionPath, []);
+      const result = await update(records);
+      await atomicWriteFile(collectionPath, JSON.stringify(records, null, 2));
+      return result;
+    });
+  }
+
   async updateCatalogBook(id, book, expectedUpdatedAt, baseBook) {
     return this.enqueueFileWrite(this.booksPath, async () => {
       const records = await this.readBookRecords();
@@ -1714,7 +1745,9 @@ class Database {
         price: Number(book.price) || 0,
         stock: Number.isInteger(book.stock) ? book.stock : 12,
         cover: sanitizeTextValue(book.cover || "", { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80",
-        description: sanitizeTextValue(book.description || "", { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" }),
+        images: Array.isArray(book.images) ? book.images : [],
+        isbn: sanitizeTextValue(book.isbn || "", { maxLength: 20, allowEmpty: true, fieldName: "ISBN" }),
+        description: sanitizeTextValue(book.description || "", { maxLength: 4000, allowEmpty: true, fieldName: "Mô tả" }),
         authorIds: Array.isArray(book.authorIds) ? book.authorIds : [],
         authors: Array.isArray(book.authors) ? book.authors : [],
         publisher: sanitizeTextValue(book.publisher || "", { maxLength: 200, allowEmpty: true, fieldName: "Nhà xuất bản" }),
@@ -1745,7 +1778,7 @@ class Database {
       if (safeUpdate.title !== undefined) safeUpdate.title = sanitizeTextValue(safeUpdate.title, { maxLength: 200, fieldName: "Tên sách" });
       if (safeUpdate.author !== undefined) safeUpdate.author = sanitizeTextValue(safeUpdate.author, { maxLength: 200, fieldName: "Tác giả" });
       if (safeUpdate.category !== undefined) safeUpdate.category = sanitizeTextValue(safeUpdate.category, { maxLength: 64, allowEmpty: true, fieldName: "Thể loại" }) || "van-hoc";
-      if (safeUpdate.description !== undefined) safeUpdate.description = sanitizeTextValue(safeUpdate.description, { maxLength: 1000, allowEmpty: true, fieldName: "Mô tả" });
+      if (safeUpdate.description !== undefined) safeUpdate.description = sanitizeTextValue(safeUpdate.description, { maxLength: 4000, allowEmpty: true, fieldName: "Mô tả" });
       if (safeUpdate.cover !== undefined) safeUpdate.cover = sanitizeTextValue(safeUpdate.cover, { maxLength: 500, allowEmpty: true, fieldName: "Link ảnh bìa" }) || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=400&q=80";
       records[index] = {
         ...current,

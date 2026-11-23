@@ -21,6 +21,7 @@ const {
   validateCustomerData,
 } = require("./backend/db");
 const { PostgresDatabase } = require("./backend/postgres-db");
+const { isValidIsbn, normalizeBookImages, normalizeIsbn } = require("./backend/catalog");
 const { normalizeSePayConfig } = require("./backend/sepay-config");
 const {
   appendAuditEntry,
@@ -511,6 +512,25 @@ function normalizeAdminBook(payload, existing) {
     : sanitizePlainText(payload.category, 64);
   const price = payload.price === undefined ? existing?.price : payload.price;
   const stock = payload.stock === undefined ? existing?.stock : payload.stock;
+  const isbn = normalizeIsbn(payload.isbn === undefined ? existing?.isbn : payload.isbn);
+  if (!isValidIsbn(isbn)) {
+    throw new RequestError(400, "Mã ISBN không đúng định dạng hoặc checksum.");
+  }
+  const images = normalizeBookImages(
+    payload.images === undefined ? existing?.images : payload.images,
+    payload.cover === undefined ? existing?.cover || "" : sanitizePlainText(payload.cover, 500),
+    title || "",
+    sanitizePlainText,
+  );
+  if (images.length > 8 || images.some((image) =>
+    !image.url ||
+    (!/^\/api\/uploads\/book-covers\/[A-Za-z0-9._-]+$/.test(image.url) && !/^https:\/\//i.test(image.url))
+  )) {
+    throw new RequestError(400, "Danh sách ảnh không hợp lệ.");
+  }
+  const cover = payload.cover === undefined
+    ? (payload.images !== undefined ? images[0]?.url || existing?.cover || "" : existing?.cover || "")
+    : sanitizePlainText(payload.cover, 500);
   const status = payload.status === undefined
     ? existing?.status
     : sanitizePlainText(payload.status, 32).toLowerCase();
@@ -548,12 +568,12 @@ function normalizeAdminBook(payload, existing) {
     category,
     price,
     stock,
-    cover: payload.cover === undefined
-      ? existing?.cover || ""
-      : sanitizePlainText(payload.cover, 500),
+    cover,
+    images,
+    isbn,
     description: payload.description === undefined
       ? existing?.description || ""
-      : sanitizePlainText(payload.description, 1000),
+      : sanitizePlainText(payload.description, 4000),
   };
   if (payload.isActive !== undefined || existing?.isActive !== undefined) {
     normalized.isActive = payload.isActive !== undefined
@@ -1053,6 +1073,9 @@ function createServer({
   categoriesPath,
   authorsPath,
   publishersPath,
+  catalogReviewsPath,
+  catalogFavoritesPath,
+  catalogHistoryPath,
   couponsPath,
   customerInteractionsPath,
   consentRecordsPath,
@@ -1183,6 +1206,9 @@ function createServer({
     categoriesPath ||
     authorsPath ||
     publishersPath ||
+    catalogReviewsPath ||
+    catalogFavoritesPath ||
+    catalogHistoryPath ||
     couponsPath ||
     customerInteractionsPath ||
     consentRecordsPath,
@@ -1199,6 +1225,9 @@ function createServer({
       categoriesPath,
       authorsPath,
       publishersPath,
+      catalogReviewsPath,
+      catalogFavoritesPath,
+      catalogHistoryPath,
       couponsPath,
       customerInteractionsPath,
       consentRecordsPath,
@@ -1878,10 +1907,18 @@ function createServer({
     }
   }
 
+  async function assertUniqueBookIsbn(isbn, excludedId) {
+    if (!isbn) return;
+    const duplicate = (await getCatalogBookList()).find((book) =>
+      book.id !== excludedId && normalizeIsbn(book.isbn) === isbn
+    );
+    if (duplicate) throw new RequestError(409, "ISBN đã được sử dụng cho một sách khác.");
+  }
+
   async function assertStockCoversReservations(title, stock) {
     const orders = await db.getAllOrders(ordersPath);
     const reserved = orders
-      .filter((order) => order.status !== "cancelled")
+      .filter((order) => !["cancelled", "completed"].includes(order.status))
       .reduce(
         (total, order) =>
           total +
@@ -1964,7 +2001,9 @@ function createServer({
   const readRequestJson = (request, maxBytes) => readJson(request, maxBytes, requestLimitOverrides);
 
   const handlePublicRoute = createPublicRoutes({
+    RequestError,
     db,
+    getAuthUser,
     getDatabaseMonitoringStatus,
     getCatalogBookList,
     getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
@@ -1975,12 +2014,20 @@ function createServer({
     paginateBookList: (records, filters) => paginateList(records, filters, "title"),
     sendJson,
     sendPaginatedJson,
+    readJson: readRequestJson,
+    requireJsonObject,
+    payloadSchemas,
+    sanitizePlainText,
     uploadsDir,
     validateBookQuery: (requestUrl) => validateQuery(
       requestUrl,
       {
         ...listQuerySchema,
-        sort: { type: "string", maxLength: 32, values: ["title", "price", "category"] },
+        search: { type: "string", maxLength: 100 },
+        category: { type: "string", maxLength: 64 },
+        minPrice: { type: "integer", maxLength: 12, min: 0, max: 1_000_000_000_000 },
+        maxPrice: { type: "integer", maxLength: 12, min: 0, max: 1_000_000_000_000 },
+        sort: { type: "string", maxLength: 32, values: ["title", "price", "category", "createdAt", "popularity"] },
       },
       "Bộ lọc sách không hợp lệ.",
     ),
@@ -2154,6 +2201,7 @@ function createServer({
     allowedServiceStatuses,
     assertStockCoversReservations,
     assertUniqueBookTitle,
+    assertUniqueBookIsbn,
     auditLogPath,
     backupStatusFile,
     bookCount: books.length,

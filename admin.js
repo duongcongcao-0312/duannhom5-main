@@ -436,6 +436,10 @@
     // --- VIEW: BOOKS ---
     const bookModal = document.getElementById('bookModal');
     const bookForm = document.getElementById('bookForm');
+    const bookImageUpload = document.getElementById('bookImageUpload');
+    const bookImageUploadStatus = document.getElementById('bookImageUploadStatus');
+    const uploadedBookImageVariants = new Map();
+    const bookImagesField = bookForm?.elements?.images;
 
     async function loadBooks() {
         const tbody = document.getElementById('booksTableBody');
@@ -538,7 +542,21 @@
                 bookForm.elements['price'].value = book.price;
                 bookForm.elements['stock'].value = book.stock !== undefined ? book.stock : 12;
                 bookForm.elements['cover'].value = book.cover || '';
+                bookForm.elements['isbn'].value = book.isbn || '';
+                bookForm.elements['images'].value = (Array.isArray(book.images) ? book.images : [])
+                    .map((image) => typeof image === 'string'
+                        ? image
+                        : `${image.url}${image.alt ? ` | ${image.alt}` : ''}`)
+                    .filter(Boolean)
+                    .join('\n');
+                uploadedBookImageVariants.clear();
+                (Array.isArray(book.images) ? book.images : []).forEach((image) => {
+                    if (typeof image !== 'string' && image.variants) {
+                        uploadedBookImageVariants.set(image.url, image.variants);
+                    }
+                });
                 bookForm.elements['description'].value = book.description || '';
+                void loadBookHistory(book.id || book.title);
                 bookModal.showModal();
             });
         });
@@ -567,15 +585,133 @@
     document.getElementById('bookSortFilter')?.addEventListener('change', renderFilteredBooks);
     document.getElementById('bookSearchInput')?.addEventListener('input', renderFilteredBooks);
 
+    async function loadBookHistory(bookId) {
+        const panel = document.getElementById('bookHistoryPanel');
+        const list = document.getElementById('bookHistoryList');
+        if (!panel || !list || !bookId) return;
+        panel.hidden = false;
+        list.innerHTML = '<li>Đang tải lịch sử...</li>';
+        try {
+            const response = await apiFetch(`/api/admin/books/${encodeURIComponent(bookId)}/history`);
+            if (!response.ok) throw new Error('Không thể tải lịch sử sách.');
+            const history = await response.json();
+            list.innerHTML = history.length
+                ? history.map((entry) => {
+                    const changes = Object.entries(entry.changes || {})
+                        .map(([field, change]) => `${escapeHtml(field)}: ${escapeHtml(change.before)} → ${escapeHtml(change.after)}`)
+                        .join('; ');
+                    return `<li><time>${escapeHtml(new Date(entry.createdAt).toLocaleString('vi-VN'))}</time> · ${escapeHtml(entry.actorRole || 'staff')} · ${changes}</li>`;
+                }).join('')
+                : '<li>Chưa có thay đổi giá hoặc trạng thái.</li>';
+        } catch (error) {
+            list.innerHTML = `<li>${escapeHtml(error.message || 'Không thể tải lịch sử sách.')}</li>`;
+        }
+    }
+
+    async function loadReviewQueue() {
+        const tbody = document.getElementById('reviewQueueBody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Đang tải đánh giá...</td></tr>';
+        try {
+            const response = await apiFetch('/api/admin/reviews?limit=100');
+            if (!response.ok) throw new Error('Không thể tải hàng chờ đánh giá.');
+            const reviews = await response.json();
+            tbody.innerHTML = reviews.length
+                ? reviews.filter((review) => review.status === 'pending' || Number(review.reportCount) > 0).map((review) => `<tr>
+                    <td>${escapeHtml(review.bookTitle)}</td>
+                    <td>${escapeHtml(review.userName)}</td>
+                    <td>${escapeHtml(review.rating)} / 5</td>
+                    <td>${escapeHtml(review.content)}</td>
+                    <td>${escapeHtml(review.status)}${Number(review.reportCount) ? ` · ${escapeHtml(review.reportCount)} báo cáo` : ''}</td>
+                    <td>${review.status === 'visible'
+                        ? `<button class="btn-sm btn-delete" data-review-id="${escapeHtml(review.id)}" data-review-status="hidden" type="button">Ẩn</button>`
+                        : `<button class="btn-sm btn-edit" data-review-id="${escapeHtml(review.id)}" data-review-status="visible" type="button">Duyệt</button> <button class="btn-sm btn-delete" data-review-id="${escapeHtml(review.id)}" data-review-status="rejected" type="button">Từ chối</button>`}</td>
+                </tr>`).join('')
+                : '<tr><td colspan="6" class="text-center">Không có đánh giá chờ duyệt.</td></tr>';
+        } catch (error) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center">${escapeHtml(error.message || 'Không thể tải đánh giá.')}</td></tr>`;
+        }
+    }
+
+    document.getElementById('loadReviewQueue')?.addEventListener('click', loadReviewQueue);
+    document.getElementById('reviewQueueBody')?.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-review-id]');
+        if (!button) return;
+        try {
+            const response = await apiFetch(`/api/admin/reviews/${encodeURIComponent(button.dataset.reviewId)}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: button.dataset.reviewStatus })
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Không thể cập nhật đánh giá.');
+            }
+            await loadReviewQueue();
+        } catch (error) {
+            showToast(error.message || 'Không thể cập nhật đánh giá.', 'error');
+        }
+    });
+
     document.getElementById('openAddBookBtn')?.addEventListener('click', () => {
         document.getElementById('bookModalTitle').textContent = 'Thêm sách mới vào kho';
         bookForm.reset();
+        uploadedBookImageVariants.clear();
+        if (bookImageUploadStatus) bookImageUploadStatus.textContent = '';
         document.getElementById('bookIdInput').value = '';
+        document.getElementById('bookHistoryPanel').hidden = true;
         bookModal.showModal();
     });
 
     document.getElementById('closeBookModal')?.addEventListener('click', () => bookModal.close());
     document.getElementById('cancelBookModal')?.addEventListener('click', () => bookModal.close());
+
+    bookImageUpload?.addEventListener('change', async () => {
+        const files = Array.from(bookImageUpload.files || []);
+        const existingCount = String(bookImagesField?.value || '')
+            .split(/\r?\n/)
+            .filter((line) => line.trim()).length;
+        const availableSlots = Math.max(0, 8 - existingCount);
+        if (files.length > availableSlots) {
+            showToast(`Chỉ còn ${availableSlots} vị trí ảnh.`, 'error');
+        }
+        const selectedFiles = files.slice(0, availableSlots);
+        bookImageUpload.disabled = true;
+        if (bookImageUploadStatus) bookImageUploadStatus.textContent = 'Đang tối ưu ảnh...';
+        try {
+            for (const file of selectedFiles) {
+                const response = await apiFetch('/api/admin/uploads/book-cover', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': file.type,
+                        'X-File-Name': file.name,
+                    },
+                    body: file,
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || `Không thể tải ảnh ${file.name}.`);
+                }
+                const currentLines = String(bookImagesField?.value || '').trim();
+                if (bookImagesField) {
+                    bookImagesField.value = `${currentLines ? `${currentLines}\n` : ''}${result.url}`;
+                }
+                uploadedBookImageVariants.set(result.url, result.variants);
+            }
+            if (bookImageUploadStatus) {
+                bookImageUploadStatus.textContent = selectedFiles.length
+                    ? `Đã tối ưu ${selectedFiles.length} ảnh. Kiểm tra mô tả ảnh trước khi lưu.`
+                    : '';
+            }
+        } catch (error) {
+            if (bookImageUploadStatus) {
+                bookImageUploadStatus.textContent = error.message || 'Không thể tải ảnh.';
+            }
+            showToast(error.message || 'Không thể tải ảnh.', 'error');
+        } finally {
+            bookImageUpload.disabled = false;
+            bookImageUpload.value = '';
+        }
+    });
 
     bookForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -611,6 +747,24 @@
             price: Number(data.get('price')),
             stock: Number(data.get('stock')),
             cover: data.get('cover'),
+            isbn: data.get('isbn'),
+            images: String(data.get('images') || '')
+                .split(/\r?\n/)
+                .map((line) => {
+                    const [url, ...altParts] = line.split('|');
+                    const normalizedUrl = url.trim();
+                    const existingImage = currentBook?.images?.find((image) =>
+                        (typeof image === 'string' ? image : image.url) === normalizedUrl
+                    );
+                    return {
+                        url: normalizedUrl,
+                        alt: altParts.join('|').trim() || existingImage?.alt || '',
+                        ...((uploadedBookImageVariants.get(normalizedUrl) || existingImage?.variants)
+                            ? { variants: uploadedBookImageVariants.get(normalizedUrl) || existingImage.variants }
+                            : {}),
+                    };
+                })
+                .filter((image) => image.url),
             description: data.get('description')
         };
 

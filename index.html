@@ -107,7 +107,7 @@
                 <div class="toolbar">
                     <label class="search-box">
                         <span>Tìm sách</span>
-                        <input id="searchInput" type="search" placeholder="Tên sách hoặc tác giả">
+                        <input id="searchInput" type="search" placeholder="Tên sách, tác giả hoặc ISBN">
                     </label>
                     <select id="categoryFilter" aria-label="Lọc theo thể loại">
                         <option value="all">Tất cả thể loại</option>
@@ -141,6 +141,8 @@
                         <option value="price-desc">Giá cao đến thấp</option>
                         <option value="title">Tên A-Z</option>
                         <option value="title-desc">Tên Z-A</option>
+                        <option value="newest">Mới nhất</option>
+                        <option value="popular">Bán chạy</option>
                     </select>
                     <button class="secondary-button favorites-filter" id="favoritesFilter" type="button" aria-pressed="false">♡ Yêu thích</button>
                     <button class="secondary-button" id="resetFiltersBtn" type="button" title="Đặt lại bộ lọc" hidden>↻ Đặt lại</button>
@@ -148,6 +150,11 @@
             </div>
             <div class="book-grid" id="bookGrid"></div>
             <p class="empty-state" id="emptyState" hidden>Không tìm thấy cuốn sách phù hợp.</p>
+            <nav class="catalog-pagination" id="catalogPagination" aria-label="Phân trang sách" hidden>
+                <button class="secondary-button" id="previousBooksPage" type="button">Trang trước</button>
+                <span id="booksPageStatus" aria-live="polite"></span>
+                <button class="secondary-button" id="nextBooksPage" type="button">Trang sau</button>
+            </nav>
         </section>
 
         <section class="category-band" id="categories">

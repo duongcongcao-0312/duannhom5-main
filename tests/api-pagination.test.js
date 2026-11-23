@@ -23,7 +23,17 @@ test("book list pagination returns stable metadata and rejects unsupported sorti
   assert.equal(pagination.order, "asc");
   assert.ok(books[0].title.localeCompare(books[1].title, "vi") <= 0);
 
-  const invalidSort = await fetch(`${baseUrl}/api/books?sort=createdAt`);
+  const secondPageResponse = await fetch(
+    `${baseUrl}/api/books?page=2&limit=2&sort=title&order=asc`,
+  );
+  assert.equal(secondPageResponse.status, 200);
+  const secondPageBooks = await secondPageResponse.json();
+  const secondPageMeta = JSON.parse(secondPageResponse.headers.get("x-pagination"));
+  assert.equal(secondPageMeta.page, 2);
+  assert.equal(secondPageMeta.total, pagination.total);
+  assert.ok(secondPageBooks.every((book) => !books.some((firstPageBook) => firstPageBook.id === book.id)));
+
+  const invalidSort = await fetch(`${baseUrl}/api/books?sort=unsupported`);
   assert.equal(invalidSort.status, 400);
   const oversizedPage = await fetch(`${baseUrl}/api/books?limit=101`);
   assert.equal(oversizedPage.status, 400);

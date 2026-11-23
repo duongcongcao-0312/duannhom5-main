@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { Readable } = require("node:stream");
 const test = require("node:test");
+const sharp = require("sharp");
 const { createServer } = require("../server");
 const {
   ENDPOINT_BODY_LIMITS,
@@ -25,14 +26,14 @@ const {
   validateUploadFilename,
 } = require("../backend/request-limits");
 
-const VALID_PNG = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-]);
-const VALID_JPEG = Buffer.from([
-  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,
-  0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
-]);
+const VALID_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWOQiCgCAAFuAOPsHdh/AAAAAElFTkSuQmCC",
+  "base64",
+);
+const VALID_JPEG = Buffer.from(
+  "/9j/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAUAAoDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCagFASQAB//9k=",
+  "base64",
+);
 const VALID_WEBP = Buffer.concat([
   Buffer.from("RIFF", "ascii"),
   Buffer.from([0x24, 0x00, 0x00, 0x00]),
@@ -292,7 +293,30 @@ test("upload validators inspect magic bytes, filenames, and isolate storage safe
   assert.equal(resolveSafeStoredUploadPath(tempUploads, "../escape.png"), null);
   assert.equal(resolveSafeStoredUploadPath(tempUploads, "my-book-cover.png"), null);
   const safePath = resolveSafeStoredUploadPath(tempUploads, stored.filename);
-  assert.ok(safePath && safePath.mimeType === "image/png");
+  assert.ok(safePath && safePath.mimeType === "image/webp");
+  assert.ok(stored.size < validated.size);
+  assert.ok(stored.variants.small && stored.variants.medium);
+  assert.equal((await sharp(await fs.readFile(safePath.filePath)).metadata()).format, "webp");
+  assert.ok(resolveSafeStoredUploadPath(tempUploads, `${stored.filename.slice(0, -5)}-320.webp`));
+  const detailedJpeg = await sharp({
+    create: { width: 1600, height: 2400, channels: 3, background: { r: 24, g: 88, b: 114 } },
+  }).jpeg({ quality: 95 }).toBuffer();
+  const optimizedBookCover = await storeSafeImageUpload(
+    tempUploads,
+    validateImageUpload({ buffer: detailedJpeg, declaredMime: "image/jpeg" }),
+  );
+  const coverId = optimizedBookCover.filename.slice(0, -5);
+  const dimensions = await Promise.all([
+    sharp(await fs.readFile(path.join(tempUploads, optimizedBookCover.filename))).metadata(),
+    sharp(await fs.readFile(path.join(tempUploads, `${coverId}-640.webp`))).metadata(),
+    sharp(await fs.readFile(path.join(tempUploads, `${coverId}-320.webp`))).metadata(),
+  ]);
+  assert.deepEqual(dimensions.map(({ width, height }) => [width, height]), [
+    [1200, 1800],
+    [640, 960],
+    [320, 480],
+  ]);
+  assert.ok(optimizedBookCover.size < detailedJpeg.length);
 });
 
 test("HTTP server enforces per-endpoint limits, exact boundaries, and early rejection before expensive work", async (t) => {
@@ -527,17 +551,27 @@ test("admin book cover upload enforces auth, MIME allowlist, magic bytes, safe f
   assert.equal(validRawRes.status, 201);
   const uploadedRaw = await validRawRes.json();
   assert.match(uploadedRaw.filename, UPLOAD_POLICY.storageFilenamePattern);
-  assert.equal(uploadedRaw.mimeType, "image/png");
-  assert.equal(uploadedRaw.size, uploadMaxBytes);
+  assert.equal(uploadedRaw.mimeType, "image/webp");
+  assert.equal(uploadedRaw.originalSize, uploadMaxBytes);
+  assert.ok(uploadedRaw.size < uploadedRaw.originalSize);
+  assert.ok(uploadedRaw.variants.small && uploadedRaw.variants.medium);
 
   // Stored file is served safely with nosniff + sandbox CSP
   const served = await fetch(`${baseUrl}${uploadedRaw.url}`);
   assert.equal(served.status, 200);
-  assert.equal(served.headers.get("content-type"), "image/png");
+  assert.equal(served.headers.get("content-type"), "image/webp");
   assert.equal(served.headers.get("x-content-type-options"), "nosniff");
   assert.equal(served.headers.get("content-security-policy"), "default-src 'none'; sandbox");
   const servedBuf = Buffer.from(await served.arrayBuffer());
-  assert.deepEqual(servedBuf, exactPng);
+  assert.equal(servedBuf.length, uploadedRaw.size);
+  assert.equal((await sharp(servedBuf).metadata()).format, "webp");
+  for (const variantUrl of Object.values(uploadedRaw.variants)) {
+    const variantResponse = await fetch(`${baseUrl}${variantUrl}`);
+    assert.equal(variantResponse.status, 200);
+    assert.equal(variantResponse.headers.get("content-type"), "image/webp");
+    const variantBuffer = Buffer.from(await variantResponse.arrayBuffer());
+    assert.equal((await sharp(variantBuffer).metadata()).format, "webp");
+  }
 
   // Valid multipart/form-data JPEG upload succeeds
   const boundary = "----BookNestMultipartTest";
@@ -554,10 +588,10 @@ test("admin book cover upload enforces auth, MIME allowlist, magic bytes, safe f
     },
     body: multipartValid,
   });
-  assert.equal(validMpRes.status, 201);
+  assert.equal(validMpRes.status, 201, await validMpRes.clone().text());
   const uploadedMp = await validMpRes.json();
-  assert.equal(uploadedMp.mimeType, "image/jpeg");
-  assert.ok(uploadedMp.filename.endsWith(".jpg"));
+  assert.equal(uploadedMp.mimeType, "image/webp");
+  assert.ok(uploadedMp.filename.endsWith(".webp"));
 
   // Oversized multipart file (> uploadMaxBytes) rejected with 413
   const multipartOversized = buildMultipartBody(boundary, {
@@ -584,7 +618,7 @@ test("admin book cover upload enforces auth, MIME allowlist, magic bytes, safe f
     assert.ok([400, 404].includes(res.status), `${badPath} should return 400 or 404`);
   }
 
-  // Verify only the 2 valid files were written to disk
+  // Verify the two valid uploads each produced exactly three optimized variants.
   const storedFiles = await fs.readdir(uploadsDir);
-  assert.equal(storedFiles.length, 2);
+  assert.equal(storedFiles.length, 6);
 });

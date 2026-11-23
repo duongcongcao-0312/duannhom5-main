@@ -269,6 +269,28 @@ footer { align-items: center; color: var(--muted); display: flex; gap: 20px; jus
 .google-badge { background: #fce8e6; color: #c5221f; }
 .fb-badge { background: #e7f0ff; color: #1877f2; }
 
+.detail-gallery-thumbnails { display: flex; gap: 10px; justify-content: center; padding: 10px; }
+.detail-gallery-thumbnails button { background: var(--paper); border: 2px solid transparent; border-radius: 6px; cursor: pointer; height: 88px; padding: 3px; width: 66px; }
+.detail-gallery-thumbnails button[aria-pressed="true"] { border-color: var(--green-light); }
+.detail-gallery-thumbnails button:focus-visible, .review-form button:focus-visible, .book-review button:focus-visible { outline: 3px solid var(--green); outline-offset: 3px; }
+.detail-gallery-thumbnails img { aspect-ratio: auto; border-radius: 3px; height: 100%; object-fit: cover; width: 100%; }
+.book-reviews { border-top: 1px solid var(--line); margin-top: 52px; max-width: 760px; padding-top: 34px; }
+.book-reviews h2 { font-size: 2rem; margin-bottom: 12px; }
+.review-summary { color: var(--muted); margin: 0 0 20px; }
+.review-list { display: grid; gap: 14px; }
+.book-review { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.book-review > span { color: var(--green); font-weight: 700; margin-left: 12px; }
+.book-review p { line-height: 1.7; overflow-wrap: anywhere; }
+.book-review button { background: transparent; border: 1px solid var(--line); border-radius: 5px; color: var(--green); cursor: pointer; font: inherit; padding: 7px 10px; }
+.review-form { display: grid; gap: 16px; margin-top: 28px; max-width: 620px; }
+.review-form label { color: var(--ink); display: grid; font-weight: 700; gap: 8px; }
+.review-form select, .review-form textarea { background: #fff; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: inherit; font-size: 16px; min-width: 0; padding: 11px 12px; width: 100%; }
+.review-form textarea { line-height: 1.6; min-height: 120px; resize: vertical; }
+.review-form button { background: var(--green); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; font-weight: 700; justify-self: start; min-height: 44px; padding: 10px 18px; }
+.review-form button:disabled { cursor: wait; opacity: .65; }
+.review-form-message { color: var(--muted); margin: 0; }
+.related-book-card > img { aspect-ratio: 3 / 4; border-radius: 4px; object-fit: cover; width: 100%; }
+
 /* Issue #39 - Book tags & filter states */
 .book-tag {
 	position: absolute;

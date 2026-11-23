@@ -25,9 +25,9 @@ test("PostgreSQL migrations never use floating-point types for money and use tim
   }
 });
 
-test("migration 025 standardizes timestamps and idempotent updated_at triggers without destructive DDL", async () => {
+test("migration 026 standardizes timestamps and idempotent updated_at triggers without destructive DDL", async () => {
   const mig025 = await fs.readFile(
-    path.join(__dirname, "..", "data", "migrations", "025_schema_normalization_timestamps.sql"),
+    path.join(__dirname, "..", "data", "migrations", "026_schema_normalization_timestamps.sql"),
     "utf8",
   );
   assert.match(mig025, /ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);

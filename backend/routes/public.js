@@ -1,4 +1,5 @@
 const fs = require("node:fs/promises");
+const { randomUUID } = require("node:crypto");
 const { getCouponUnavailableReason } = require("../coupons");
 const { PRIVACY_POLICY } = require("../privacy-policy");
 const { REFUND_POLICY } = require("../refund-policy");
@@ -14,8 +15,10 @@ const { API_VERSION_POLICY } = require("../api-versioning");
 const { resolveSafeStoredUploadPath } = require("../request-limits");
 
 function createPublicRoutes({
+  RequestError,
   db,
-    getDatabaseMonitoringStatus,
+  getAuthUser,
+  getDatabaseMonitoringStatus,
   getCatalogBookList,
   logRequestError,
   paginateBookList,
@@ -23,6 +26,10 @@ function createPublicRoutes({
   sendPaginatedJson,
   uploadsDir,
   validateBookQuery,
+  readJson,
+  requireJsonObject,
+  payloadSchemas,
+  sanitizePlainText,
   getBookCategories,
   getBookAuthors,
   getBookPublishers,
@@ -88,10 +95,228 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/books" && request.method === "GET") {
       const filters = validateBookQuery(requestUrl);
-      sendPaginatedJson(response, paginateBookList(
-        await getCatalogBookList(),
-        filters,
-      ));
+      if (filters.minPrice !== undefined && filters.maxPrice !== undefined &&
+          filters.minPrice > filters.maxPrice) {
+        throw new RequestError(400, "Khoảng giá không hợp lệ.");
+      }
+      let records = await getCatalogBookList();
+      const normalizeSearch = (value) => String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/gi, "d")
+        .toLocaleLowerCase("vi")
+        .trim();
+      const search = normalizeSearch(filters.search);
+      if (search) {
+        const normalizedIsbn = search.replace(/[\s-]/g, "");
+        records = records.filter((book) => (
+          normalizeSearch(`${book.title} ${book.author}`).includes(search) ||
+          (normalizedIsbn && String(book.isbn || "").replace(/[\s-]/g, "").toLowerCase().includes(normalizedIsbn))
+        ));
+      }
+      if (filters.category) {
+        records = records.filter((book) => book.category === filters.category);
+      }
+      if (filters.minPrice !== undefined) {
+        records = records.filter((book) => Number(book.price) >= filters.minPrice);
+      }
+      if (filters.maxPrice !== undefined) {
+        records = records.filter((book) => Number(book.price) <= filters.maxPrice);
+      }
+      const orderCounts = new Map();
+      if (filters.sort === "popularity") {
+        const orders = await db.getAllOrders();
+        for (const order of orders) {
+          if (order.status === "cancelled") continue;
+          for (const item of order.items || []) {
+            orderCounts.set(item.title, (orderCounts.get(item.title) || 0) + Number(item.quantity || 0));
+          }
+        }
+      }
+      const catalog = records.map((book) => ({
+        ...book,
+        availability: Number(book.stock) > 0 ? "in_stock" : "out_of_stock",
+        ...(filters.sort === "popularity"
+          ? { popularity: orderCounts.get(book.title) || 0 }
+          : {}),
+      }));
+      sendPaginatedJson(response, paginateBookList(catalog, filters));
+      return true;
+    }
+
+    const reviewsMatch = requestUrl.pathname.match(
+      /^\/api\/books\/([A-Za-z0-9_-]{1,128})\/reviews$/,
+    );
+    if (reviewsMatch && request.method === "GET") {
+      const book = (await getCatalogBookList()).find((entry) => entry.id === reviewsMatch[1]);
+      if (!book) throw new RequestError(404, "Không tìm thấy sách.");
+      const reviews = (await db.getCatalogRecords("reviews"))
+        .filter((entry) => entry.bookId === book.id && entry.status === "visible")
+        .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+      const averageRating = reviews.length
+        ? reviews.reduce((total, entry) => total + entry.rating, 0) / reviews.length
+        : 0;
+      sendJson(response, 200, {
+        averageRating: Math.round(averageRating * 10) / 10,
+        reviewCount: reviews.length,
+        reviews: reviews.map(({ id, rating, content, userName, createdAt }) => ({
+          id, rating, content, userName, createdAt,
+        })),
+      });
+      return true;
+    }
+
+    if (reviewsMatch && request.method === "POST") {
+      const user = await getAuthUser(request);
+      if (!user) throw new RequestError(401, "Vui lòng đăng nhập để đánh giá sách.");
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Nội dung đánh giá không hợp lệ.",
+        payloadSchemas.review,
+      );
+      if (!Number.isInteger(payload.rating)) {
+        throw new RequestError(400, "Điểm đánh giá phải là số nguyên từ 1 đến 5.");
+      }
+      const book = (await getCatalogBookList()).find((entry) => entry.id === reviewsMatch[1]);
+      if (!book) throw new RequestError(404, "Không tìm thấy sách.");
+      const content = sanitizePlainText(payload.content, 1000);
+      if (!content) throw new RequestError(400, "Nhận xét không được để trống.");
+      const orders = await db.getAllOrders();
+      const eligible = orders.some((order) =>
+        order.userId === user.userId &&
+        order.status === "completed" &&
+        (order.items || []).some((item) => item.title === book.title)
+      );
+      if (!eligible) {
+        throw new RequestError(403, "Chỉ tài khoản đã hoàn tất mua sách này mới được đánh giá.");
+      }
+      const review = await db.updateCatalogRecords("reviews", (reviews) => {
+        if (reviews.some((entry) => entry.bookId === book.id && entry.userId === user.userId)) {
+          throw new RequestError(409, "Bạn đã gửi đánh giá cho sách này.");
+        }
+        const created = {
+          id: randomUUID(),
+          bookId: book.id,
+          bookTitle: book.title,
+          userId: user.userId,
+          userName: sanitizePlainText(user.name || "Khách hàng", 120),
+          rating: payload.rating,
+          content,
+          reporterIds: [],
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        };
+        reviews.push(created);
+        return created;
+      });
+      sendJson(response, 201, {
+        id: review.id,
+        status: review.status,
+        message: "Đánh giá đã được gửi để kiểm duyệt.",
+      });
+      return true;
+    }
+
+    const reportMatch = requestUrl.pathname.match(
+      /^\/api\/reviews\/([0-9a-f-]{36})\/report$/i,
+    );
+    if (reportMatch && request.method === "POST") {
+      const user = await getAuthUser(request);
+      if (!user) throw new RequestError(401, "Vui lòng đăng nhập để báo cáo đánh giá.");
+      const updated = await db.updateCatalogRecords("reviews", (reviews) => {
+        const review = reviews.find((entry) =>
+          entry.id === reportMatch[1] && entry.status === "visible"
+        );
+        if (!review) return null;
+        const reporters = Array.isArray(review.reporterIds) ? review.reporterIds : [];
+        if (!reporters.includes(user.userId)) reporters.push(user.userId);
+        review.reporterIds = reporters;
+        review.reportCount = reporters.length;
+        return review;
+      });
+      if (!updated) throw new RequestError(404, "Không tìm thấy đánh giá.");
+      sendJson(response, 200, { success: true });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/favorites" &&
+        ["GET", "POST", "DELETE"].includes(request.method)) {
+      const user = await getAuthUser(request);
+      if (!user) throw new RequestError(401, "Vui lòng đăng nhập để quản lý sách yêu thích.");
+      if (request.method === "GET") {
+        const availableIds = new Set((await getCatalogBookList())
+          .filter((book) =>
+            book.isActive !== false &&
+            !book.discontinued &&
+            book.status !== "inactive"
+          )
+          .map((book) => book.id));
+        const bookIds = (await db.getCatalogRecords("favorites"))
+          .filter((entry) => entry.userId === user.userId && availableIds.has(entry.bookId))
+          .map((entry) => entry.bookId);
+        sendJson(response, 200, { bookIds });
+        return true;
+      }
+      const payload = requireJsonObject(
+        await readJson(request),
+        "Sách yêu thích không hợp lệ.",
+        payloadSchemas.favorite,
+      );
+      const book = request.method === "POST"
+        ? (await getCatalogBookList()).find((entry) =>
+          entry.id === payload.bookId &&
+          entry.isActive !== false &&
+          !entry.discontinued &&
+          entry.status !== "inactive"
+        )
+        : null;
+      if (request.method === "POST" && !book) {
+        throw new RequestError(404, "Không tìm thấy sách đang được bán.");
+      }
+      const favorites = await db.updateCatalogRecords("favorites", (records) => {
+        const index = records.findIndex((entry) =>
+          entry.userId === user.userId && entry.bookId === payload.bookId
+        );
+        if (request.method === "POST" && index < 0) {
+          records.push({
+            userId: user.userId,
+            bookId: payload.bookId,
+            createdAt: new Date().toISOString(),
+          });
+        }
+        if (request.method === "DELETE" && index >= 0) records.splice(index, 1);
+        return records.filter((entry) => entry.userId === user.userId).map((entry) => entry.bookId);
+      });
+      sendJson(response, 200, { bookIds: favorites });
+      return true;
+    }
+
+    const relatedMatch = requestUrl.pathname.match(
+      /^\/api\/books\/([A-Za-z0-9_-]{1,128})\/related$/,
+    );
+    if (relatedMatch && request.method === "GET") {
+      const bookList = await getCatalogBookList();
+      const book = bookList.find((entry) => entry.id === relatedMatch[1]);
+      if (!book) throw new RequestError(404, "Không tìm thấy sách.");
+      const related = bookList
+        .filter((entry) =>
+          entry.id !== book.id &&
+          entry.stock > 0 &&
+          entry.isActive !== false &&
+          !entry.discontinued &&
+          entry.status !== "inactive" &&
+          ((book.category && entry.category === book.category) ||
+            (book.author && entry.author === book.author))
+        )
+        .sort((left, right) => {
+          const leftScore = Number(left.category === book.category) + Number(left.author === book.author);
+          const rightScore = Number(right.category === book.category) + Number(right.author === book.author);
+          return rightScore - leftScore ||
+            String(left.title).localeCompare(String(right.title), "vi");
+        })
+        .slice(0, 4)
+        .map((entry) => ({ ...entry, availability: "in_stock" }));
+      sendJson(response, 200, related);
       return true;
     }
 

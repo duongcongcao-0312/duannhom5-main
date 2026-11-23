@@ -196,7 +196,9 @@ async function hydrateAuthenticatedUser() {
 			window.booknestAuth.clearToken();
 			sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			state.user = null;
+			state.favorites = loadFavorites();
 			renderAccount();
+			renderBooks();
 			if (typeof showToast === 'function') {
 				showToast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'warning');
 			}
@@ -210,6 +212,9 @@ async function hydrateAuthenticatedUser() {
 		sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
 		renderAccount();
 		fillSavedCustomerInfo();
+		void syncFavoritesFromServer().catch((error) =>
+			showToast(error.message || 'Không thể đồng bộ sách yêu thích.', 'error')
+		);
 	} catch (error) {
 		console.error('Không thể đồng bộ hồ sơ khách hàng:', error);
 	}
@@ -218,8 +223,10 @@ async function hydrateAuthenticatedUser() {
 window.addEventListener('booknest:auth-expired', () => {
 	sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	state.user = null;
+	state.favorites = loadFavorites();
 	renderAccount();
 	renderCart();
+	renderBooks();
 });
 
 function fillSavedCustomerInfo() {
@@ -248,6 +255,55 @@ function loadFavorites() {
 }
 
 const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavorites(), coupon: localStorage.getItem(COUPON_STORAGE_KEY) || '' };
+
+async function syncFavoritesFromServer() {
+	const token = window.booknestAuth?.getToken?.();
+	if (!token || typeof window.booknestApiFetch !== 'function') return;
+	const response = await window.booknestApiFetch('/api/favorites', {
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	const result = await response.json();
+	if (!response.ok || !Array.isArray(result.bookIds)) {
+		throw new Error(result.error || 'Không thể đồng bộ sách yêu thích.');
+	}
+	state.favorites = result.bookIds
+		.map((id) => books.find((book) => book.id === id)?.title)
+		.filter(Boolean);
+	localStorage.removeItem(FAVORITES_STORAGE_KEY);
+	renderBooks();
+}
+let currentCatalogPage = 1;
+const catalogPageSize = 12;
+
+async function toggleFavorite(title) {
+	const book = books.find((entry) => entry.title === title);
+	const token = window.booknestAuth?.getToken?.();
+	if (state.user && token && book?.id) {
+		try {
+			const removing = state.favorites.includes(title);
+			const response = await window.booknestApiFetch('/api/favorites', {
+				method: removing ? 'DELETE' : 'POST',
+				headers: { Authorization: `Bearer ${token}` },
+				body: JSON.stringify({ bookId: book.id })
+			});
+			const result = await response.json();
+			if (!response.ok || !Array.isArray(result.bookIds)) {
+				throw new Error(result.error || 'Không thể cập nhật sách yêu thích.');
+			}
+			state.favorites = result.bookIds
+				.map((id) => books.find((entry) => entry.id === id)?.title)
+				.filter(Boolean);
+			renderBooks();
+		} catch (error) {
+			showToast(error.message || 'Không thể cập nhật sách yêu thích.', 'error');
+		}
+		return;
+	}
+	if (state.favorites.includes(title)) state.favorites = state.favorites.filter((item) => item !== title);
+	else state.favorites.push(title);
+	localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(state.favorites));
+	renderBooks();
+}
 let cartQuoteVersion = 0;
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
@@ -263,10 +319,19 @@ const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 async function hydrateCatalog() {
 	if (typeof window.booknestApiFetch !== 'function') return;
 	try {
-		const response = await window.booknestApiFetch('/api/books');
+		const response = await window.booknestApiFetch('/api/books?page=1&limit=100&sort=popularity&order=desc');
 		if (!response.ok) throw new Error('Không thể tải danh mục sách.');
 		const remoteBooks = await response.json();
 		if (!Array.isArray(remoteBooks)) throw new Error('Danh mục sách trả về không hợp lệ.');
+		const pagination = JSON.parse(response.headers.get('x-pagination') || '{}');
+		const allRemoteBooks = [...remoteBooks];
+		for (let page = 2; page <= Number(pagination.totalPages || 1); page += 1) {
+			const pageResponse = await window.booknestApiFetch(`/api/books?page=${page}&limit=100&sort=popularity&order=desc`);
+			if (!pageResponse.ok) throw new Error('Không thể tải đầy đủ danh mục sách.');
+			const pageBooks = await pageResponse.json();
+			if (!Array.isArray(pageBooks)) throw new Error('Trang danh mục sách không hợp lệ.');
+			allRemoteBooks.push(...pageBooks);
+		}
 		const categoryResponse = await window.booknestApiFetch('/api/categories');
 		if (categoryResponse.ok) {
 			const remoteCategories = await categoryResponse.json();
@@ -281,13 +346,16 @@ async function hydrateCatalog() {
 			}
 		}
 		const savedCartTitles = state.cart.map((book) => book.title);
-		books.splice(0, books.length, ...remoteBooks.filter((book) =>
+		books.splice(0, books.length, ...allRemoteBooks.filter((book) =>
 			book && typeof book.title === 'string' && typeof book.author === 'string' &&
 			Number.isFinite(Number(book.price))
 		));
 		state.cart = savedCartTitles
 			.map((title) => books.find((book) => book.title === title))
 			.filter(Boolean);
+		if (window.booknestAuth?.getToken?.()) {
+			await syncFavoritesFromServer();
+		}
 		if (hasCatalogShell) {
 			renderCategories();
 			renderBooks();
@@ -361,15 +429,30 @@ function getAiAnswer(question) {
 }
 
 function getBookImage(book) {
+	if (Array.isArray(book.images) && book.images[0]?.url) return book.images[0].url;
 	if (book.image) return book.image;
 	if (book.cover && !/^cover-[1-5]$/.test(book.cover)) return book.cover;
 	return `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
 }
 
 function getResponsiveBookImage(book, size) {
+	const uploadedVariants = book.images?.[0]?.variants;
+	const uploadedVariant = size === 'S' ? uploadedVariants?.small : uploadedVariants?.medium;
+	if (uploadedVariant) return uploadedVariant;
 	const image = getBookImage(book);
 	if (!image.startsWith('https://covers.openlibrary.org/')) return '';
 	return image.replace(/-L\.jpg(?=\?|$)/i, `-${size}.jpg`);
+}
+
+function getBookPictureSources(book) {
+	const small = getResponsiveBookImage(book, 'S');
+	const medium = getResponsiveBookImage(book, 'M');
+	if (small && medium && small !== medium) {
+		return `<source media="(max-width: 500px)" srcset="${escapeHtml(small)}"><source media="(max-width: 1000px)" srcset="${escapeHtml(medium)}">`;
+	}
+	return medium
+		? `<source media="(max-width: 800px)" srcset="${escapeHtml(medium)}">`
+		: '';
 }
 
 function getBookCoverStyle(book) {
@@ -507,7 +590,7 @@ function renderBooks() {
 
 	let visibleBooks = books.filter((book) => {
 		const titleAuthor = `${book.title} ${book.author}`;
-		const searchableText = `${book.title} ${book.author} ${book.category} ${book.label || ''}`;
+		const searchableText = `${book.title} ${book.author} ${book.category} ${book.label || ''} ${book.isbn || ''}`;
 		const searchableNorm = removeVietnameseAccents(searchableText).toLowerCase();
 		const matchesQuery = !query ||
 			titleAuthor.toLowerCase().includes(query) ||
@@ -528,15 +611,22 @@ function renderBooks() {
 	if (sortFilter?.value === 'price-desc') visibleBooks.sort((a, b) => b.price - a.price);
 	if (sortFilter?.value === 'title') visibleBooks.sort((a, b) => a.title.localeCompare(b.title, 'vi'));
 	if (sortFilter?.value === 'title-desc') visibleBooks.sort((a, b) => b.title.localeCompare(a.title, 'vi'));
+	if (sortFilter?.value === 'newest') visibleBooks.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+	if (sortFilter?.value === 'popular') visibleBooks.sort((a, b) => Number(b.popularity || b.soldCount || 0) - Number(a.popularity || a.soldCount || 0));
 
-	bookGrid.innerHTML = visibleBooks.map((book) => {
+	const totalVisible = visibleBooks.length;
+	const totalPages = Math.max(1, Math.ceil(totalVisible / catalogPageSize));
+	currentCatalogPage = Math.min(currentCatalogPage, totalPages);
+	const visiblePage = visibleBooks.slice((currentCatalogPage - 1) * catalogPageSize, currentCatalogPage * catalogPageSize);
+	bookGrid.innerHTML = visiblePage.map((book) => {
 		const tag = getBookTag(book);
 		const tagLabel = tagLabels[tag] || tag;
+		const pictureSources = getBookPictureSources(book);
 		return `
 		<article class="book-card">
 			<div class="cover ${getBookCoverStyle(book)} has-image">
 				<span class="book-tag tag-${escapeHtml(tag)}">${escapeHtml(tagLabel)}</span>
-				${getResponsiveBookImage(book, 'M') ? `<picture><source media="(max-width: 800px)" srcset="${escapeHtml(getResponsiveBookImage(book, 'M'))}">` : ''}<img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">${getResponsiveBookImage(book, 'M') ? '</picture>' : ''}
+				${pictureSources ? '<picture>' : ''}${pictureSources}<img class="cover-image" width="400" height="600" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">${pictureSources ? '</picture>' : ''}
 				<span class="cover-label">${escapeHtml(book.label || book.title).replace('\n', '<br>')}</span>
 			</div>
 			<div class="book-info">
@@ -549,7 +639,15 @@ function renderBooks() {
 	const emptyState = document.querySelector('#emptyState');
 	const bookCount = document.querySelector('#bookCount');
 	if (emptyState) emptyState.hidden = visibleBooks.length > 0;
-	if (bookCount) bookCount.textContent = visibleBooks.length;
+	if (bookCount) bookCount.textContent = totalVisible;
+	const pagination = document.querySelector('#catalogPagination');
+	const pageStatus = document.querySelector('#booksPageStatus');
+	const previousPage = document.querySelector('#previousBooksPage');
+	const nextPage = document.querySelector('#nextBooksPage');
+	if (pagination) pagination.hidden = totalVisible <= catalogPageSize;
+	if (pageStatus) pageStatus.textContent = `Trang ${currentCatalogPage} / ${totalPages}`;
+	if (previousPage) previousPage.disabled = currentCatalogPage <= 1;
+	if (nextPage) nextPage.disabled = currentCatalogPage >= totalPages;
 
 	document.querySelectorAll('.season-card, .category-list button').forEach((btn) => {
 		const isMatch = btn.dataset.category && btn.dataset.category === category;
@@ -571,6 +669,7 @@ function renderBooks() {
 }
 
 function resetFilters() {
+	currentCatalogPage = 1;
 	if (searchInput) searchInput.value = '';
 	if (categoryFilter) categoryFilter.value = 'all';
 	if (priceFilter) priceFilter.value = 'all';
@@ -581,13 +680,6 @@ function resetFilters() {
 		favoritesFilter.setAttribute('aria-pressed', 'false');
 		favoritesFilter.textContent = '♡ Yêu thích';
 	}
-	renderBooks();
-}
-
-function toggleFavorite(title) {
-	if (state.favorites.includes(title)) state.favorites = state.favorites.filter((item) => item !== title);
-	else state.favorites.push(title);
-	localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(state.favorites));
 	renderBooks();
 }
 
@@ -646,7 +738,10 @@ function renderCart() {
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
 	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
-	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}"><img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong data-cart-price="${escapeHtml(book.title)}">${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
+	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => {
+		const pictureSources = getBookPictureSources(book);
+		return `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}">${pictureSources ? '<picture>' : ''}${pictureSources}<img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">${pictureSources ? '</picture>' : ''}</div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong data-cart-price="${escapeHtml(book.title)}">${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`;
+	}).join('') : '<p class="cart-empty">Giỏ hàng đang trống.</p>';
 
 	removeFailedImages(cartItems);
 	const checkoutButton = document.querySelector('#checkoutButton');
@@ -750,11 +845,23 @@ if (cartItems) {
 		if (button) changeCartQuantity(button.dataset.cartTitle, Number(button.dataset.cartChange));
 	});
 }
-if (searchInput) searchInput.addEventListener('input', renderBooks);
-if (categoryFilter) categoryFilter.addEventListener('change', renderBooks);
-if (priceFilter) priceFilter.addEventListener('change', renderBooks);
-if (tagFilter) tagFilter.addEventListener('change', renderBooks);
-if (sortFilter) sortFilter.addEventListener('change', renderBooks);
+if (searchInput) searchInput.addEventListener('input', () => { currentCatalogPage = 1; renderBooks(); });
+if (categoryFilter) categoryFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
+if (priceFilter) priceFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
+if (tagFilter) tagFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
+if (sortFilter) sortFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
+document.querySelector('#previousBooksPage')?.addEventListener('click', () => {
+	if (currentCatalogPage > 1) {
+		currentCatalogPage -= 1;
+		renderBooks();
+		document.querySelector('#books')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+});
+document.querySelector('#nextBooksPage')?.addEventListener('click', () => {
+	currentCatalogPage += 1;
+	renderBooks();
+	document.querySelector('#books')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 if (resetFiltersBtn) resetFiltersBtn.addEventListener('click', resetFilters);
 document.querySelector('#emptyStateResetBtn')?.addEventListener('click', resetFilters);
 if (favoritesFilter) favoritesFilter.addEventListener('click', () => {
@@ -1329,9 +1436,11 @@ if (firebaseAuth) {
 			saveFederatedAccount(firebaseUser);
 		} else if (state.user?.isFirebaseSession) {
 			state.user = null;
+			state.favorites = loadFavorites();
 			sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			renderAccount();
 			renderCart();
+			renderBooks();
 		}
 	});
 }
@@ -1358,6 +1467,9 @@ document.querySelector('#loginForm').addEventListener('submit', async (event) =>
 			sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(data.user));
 			renderAccount();
 			renderCart();
+			void syncFavoritesFromServer().catch((error) =>
+				showToast(error.message || 'Không thể đồng bộ sách yêu thích.', 'error')
+			);
 			setAccountView('login');
 			accountDialog.close();
 			form.reset();
@@ -1414,6 +1526,9 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 			state.user = resData.user || user;
 			applyAccountCustomerInfo(state.user);
 			sessionStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(state.user));
+			void syncFavoritesFromServer().catch((error) =>
+				showToast(error.message || 'Không thể đồng bộ sách yêu thích.', 'error')
+			);
 			renderAccount();
 			renderCart();
 			setAccountView('login');
@@ -1467,6 +1582,7 @@ async function performAccountLogout(endpoint) {
 	sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 	sessionStorage.removeItem(CUSTOMER_INFO_STORAGE_KEY);
 	state.user = null;
+	state.favorites = loadFavorites();
 	renderAccount();
 	renderCart();
 	setAccountView('login');

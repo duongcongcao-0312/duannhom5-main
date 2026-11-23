@@ -593,6 +593,15 @@ test('book covers use smaller responsive sources on mobile and prioritize the de
 		assert.equal(getResponsiveBookImage({ title: 'A Book' }, 'M'), 'https://covers.openlibrary.org/b/title/A%20Book-M.jpg?default=false');
 		assert.equal(getResponsiveBookImage({ image: 'https://covers.openlibrary.org/b/id/123-L.jpg' }, 'M'), 'https://covers.openlibrary.org/b/id/123-M.jpg');
 		assert.equal(getResponsiveBookImage({ cover: 'https://example.com/cover.jpg' }, 'M'), '');
+		assert.equal(getResponsiveBookImage({
+			images: [{
+				url: '/api/uploads/book-covers/12345678-1234-4234-8234-123456789abc.webp',
+				variants: {
+					small: '/api/uploads/book-covers/12345678-1234-4234-8234-123456789abc-320.webp',
+					medium: '/api/uploads/book-covers/12345678-1234-4234-8234-123456789abc-640.webp',
+				},
+			}],
+		}, 'M'), '/api/uploads/book-covers/12345678-1234-4234-8234-123456789abc-640.webp');
 		assert.match(script, /<source media="\(max-width: 800px\)"/);
 	}
 	const detail = read('book-detail.js');
@@ -606,6 +615,8 @@ test('book details support purchasing and related book discovery', () => {
 	const html = read('book.html');
 	const script = read('book-detail.js');
 	const css = read('main.css');
+	assert.match(html, /assets\/api-config\.js/);
+	assert.match(html, /assets\/api-client\.js/);
 	assert.match(html, /books-data\.js/);
 	assert.match(script, /id="buyBook"/);
 	assert.match(script, /localStorage\.setItem\('booknest-cart'/);
@@ -673,7 +684,7 @@ test('book catalog supports price sorting with search and category filters', () 
 	assert.match(script, /category === 'all' \|\| book\.category === category/);
 	assert.match(script, /visibleBooks\.sort\(\(a, b\) => a\.price - b\.price\)/);
 	assert.match(script, /visibleBooks\.sort\(\(a, b\) => b\.price - a\.price\)/);
-	assert.match(script, /sortFilter\) sortFilter\.addEventListener\('change', renderBooks\)/);
+	assert.match(script, /sortFilter\) sortFilter\.addEventListener\('change', \(\) => \{ currentCatalogPage = 1; renderBooks\(\); \}\)/);
 	assert.match(script, /data-title="\$\{escapeHtml\(book\.title\)\}"/);
 });
 
@@ -895,8 +906,16 @@ test('guest order lookups require the access code and never expose its verifier'
 	const missingOrderBody = await missingOrder.json();
 	const missingCodeBody = await missingCode.json();
 	const wrongCodeBody = await wrongCode.json();
-	assert.deepEqual(missingCodeBody, wrongCodeBody);
-	assert.deepEqual(missingOrderBody, wrongCodeBody);
+	for (const body of [missingOrderBody, missingCodeBody, wrongCodeBody]) {
+		assert.equal(body.error, 'Không tìm thấy đơn hàng.');
+		assert.equal(body.code, 'NOT_FOUND');
+		assert.match(body.requestId, /^[0-9a-f-]{36}$/i);
+	}
+	assert.equal(new Set([
+		missingOrderBody.requestId,
+		missingCodeBody.requestId,
+		wrongCodeBody.requestId
+	]).size, 3);
 
 	const detailResponse = await fetch(`${baseUrl}/api/orders/${creationBody.orderId}`, {
 		headers: { 'X-Order-Access-Code': accessCode }

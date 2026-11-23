@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const sharp = require("sharp");
 const { resolveApiVersion } = require("./api-versioning");
 
 const MAX_URL_LENGTH = 2048;
@@ -66,7 +67,7 @@ const UPLOAD_POLICY = Object.freeze({
     ".swf",
     ".xml",
   ]),
-  storageFilenamePattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|webp)$/,
+  storageFilenamePattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\.(?:jpg|png)|(?:-(?:320|640))?\.webp)$/,
 });
 
 const REQUEST_LIMIT_POLICY = Object.freeze({
@@ -458,25 +459,63 @@ async function storeSafeImageUpload(uploadsDir, validatedUpload) {
   const resolvedRoot = path.resolve(uploadsDir);
   await fs.mkdir(resolvedRoot, { recursive: true, mode: 0o700 });
 
-  const storageFilename = `${crypto.randomUUID()}${validatedUpload.extension}`;
-  const targetPath = path.resolve(resolvedRoot, storageFilename);
-  if (
-    !UPLOAD_POLICY.storageFilenamePattern.test(storageFilename) ||
-    !targetPath.startsWith(`${resolvedRoot}${path.sep}`)
-  ) {
-    throw new RequestLimitError(500, "Không thể tạo đường dẫn lưu trữ an toàn.");
+  const imageId = crypto.randomUUID();
+  const imageVariants = [
+    { suffix: "", width: 1200, height: 1800 },
+    { suffix: "-640", width: 640, height: 960 },
+    { suffix: "-320", width: 320, height: 480 },
+  ];
+  const optimizedImages = [];
+  try {
+    for (const { suffix, width, height } of imageVariants) {
+      optimizedImages.push({
+        suffix,
+        buffer: await sharp(validatedUpload.buffer, { limitInputPixels: 20_000_000 })
+        .rotate()
+        .resize({ width, height, fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 82, effort: 4 })
+        .toBuffer(),
+      });
+    }
+  } catch {
+    throw new RequestLimitError(400, "Không thể giải mã ảnh tải lên.", {
+      errorCode: "INVALID_IMAGE_CONTENT",
+    });
   }
 
-  await fs.writeFile(targetPath, validatedUpload.buffer, { flag: "wx", mode: 0o600 });
-  const sha256 = crypto.createHash("sha256").update(validatedUpload.buffer).digest("hex");
+  const storedPaths = [];
+  try {
+    for (const optimizedImage of optimizedImages) {
+      const filename = `${imageId}${optimizedImage.suffix}.webp`;
+      const targetPath = path.resolve(resolvedRoot, filename);
+      if (
+        !UPLOAD_POLICY.storageFilenamePattern.test(filename) ||
+        !targetPath.startsWith(`${resolvedRoot}${path.sep}`)
+      ) {
+        throw new RequestLimitError(500, "Không thể tạo đường dẫn lưu trữ an toàn.");
+      }
+      await fs.writeFile(targetPath, optimizedImage.buffer, { flag: "wx", mode: 0o600 });
+      storedPaths.push(targetPath);
+    }
+  } catch (error) {
+    await Promise.all(storedPaths.map((filePath) => fs.unlink(filePath)));
+    throw error;
+  }
 
+  const storageFilename = `${imageId}.webp`;
+  const masterImage = optimizedImages[0].buffer;
   return {
     filename: storageFilename,
     originalFilename: validatedUpload.originalFilename,
-    mimeType: validatedUpload.mimeType,
-    size: validatedUpload.size,
-    sha256,
+    mimeType: "image/webp",
+    size: masterImage.length,
+    originalSize: validatedUpload.size,
+    sha256: crypto.createHash("sha256").update(masterImage).digest("hex"),
     url: `/api/uploads/book-covers/${storageFilename}`,
+    variants: {
+      small: `/api/uploads/book-covers/${imageId}-320.webp`,
+      medium: `/api/uploads/book-covers/${imageId}-640.webp`,
+    },
   };
 }
 
@@ -489,16 +528,12 @@ function resolveSafeStoredUploadPath(uploadsDir, filename) {
   if (!filePath.startsWith(`${resolvedRoot}${path.sep}`)) {
     return null;
   }
-  const ext = path.extname(filename).toLowerCase();
-  const mimeType =
-    ext === ".png"
-      ? "image/png"
-      : ext === ".webp"
-        ? "image/webp"
-        : ext === ".jpg"
-          ? "image/jpeg"
-          : null;
-  if (!mimeType) return null;
+  const extension = path.extname(filename).toLowerCase();
+  const mimeType = extension === ".png"
+    ? "image/png"
+    : extension === ".jpg"
+      ? "image/jpeg"
+      : "image/webp";
   return { filePath, mimeType };
 }
 

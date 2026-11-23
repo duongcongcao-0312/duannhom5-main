@@ -14,7 +14,7 @@ Unless marked required below, variables are optional and use the defaults in `.e
 | `PORT` | Integer 1–65535 | Optional; default 8000 | Server |
 | `DATABASE_URL` | PostgreSQL URL (contains database credentials; secret) | Staging/production | Backend, migration, backup |
 | `EXPECTED_DATABASE_NAME` | Database name | Staging/production with a database URL | Environment isolation |
-| `DATABASE_SSL_CA_PATH` | Filesystem path | Only when a private database CA is needed | PostgreSQL TLS |
+| `DATABASE_SSL_CA_PATH` | Filesystem path to a PEM CA certificate | Only when a private database CA is needed | PostgreSQL TLS for backend, migration, and seed |
 | `PG_POOL_MAX` | Integer 1–1000 | Optional; default 10 | PostgreSQL |
 | `PG_POOL_IDLE_TIMEOUT_MS` | Integer 1–86400000 | Optional; default 30000 | PostgreSQL |
 | `PG_POOL_MAX_LIFETIME_SECONDS` | Integer 1–86400 | Optional; default 1800 | PostgreSQL |

@@ -221,29 +221,6 @@ function createDatabaseSslConfig(caPath = process.env.DATABASE_SSL_CA_PATH) {
 }
 
 function createDatabasePoolConfig(connectionString, caPath = process.env.DATABASE_SSL_CA_PATH) {
-  if (!caPath) {
-    const databaseHost = connectionString ? new URL(connectionString).hostname : "";
-    const isLoopbackDatabase = ["localhost", "127.0.0.1", "[::1]"].includes(
-      databaseHost.toLowerCase(),
-    );
-    const isRenderInternalDatabase =
-      Boolean(process.env.RENDER) && !databaseHost.includes(".");
-    return {
-      connectionString,
-      max: readPositiveIntegerEnv("PG_POOL_MAX", databasePoolDefaults.max),
-      idleTimeoutMillis: readPositiveIntegerEnv("PG_POOL_IDLE_TIMEOUT_MS", databasePoolDefaults.idleTimeoutMillis),
-      maxLifetimeSeconds: readPositiveIntegerEnv("PG_POOL_MAX_LIFETIME_SECONDS", databasePoolDefaults.maxLifetimeSeconds),
-      connectionTimeoutMillis: databaseConnectionTimeoutMs,
-      statement_timeout: databaseQueryTimeoutMs,
-      query_timeout: databaseQueryTimeoutMs,
-      ssl: isLoopbackDatabase
-        ? false
-        : isRenderInternalDatabase
-          ? { rejectUnauthorized: false }
-          : true,
-    };
-  }
-
   let parsedUrl;
   try {
     parsedUrl = new URL(connectionString);
@@ -251,6 +228,10 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
     throw new Error(`DATABASE_URL không hợp lệ khi dùng CA certificate: ${error.message}`);
   }
 
+  const databaseHost = parsedUrl.hostname.toLowerCase();
+  const isLoopbackDatabase = ["localhost", "127.0.0.1", "[::1]"].includes(databaseHost);
+
+  // SSL URL options override node-postgres' `ssl` object. Keep TLS policy here.
   for (const parameter of [
     "ssl",
     "sslmode",
@@ -262,6 +243,11 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
     parsedUrl.searchParams.delete(parameter);
   }
 
+  const productionLike = [process.env.APP_ENV, process.env.NODE_ENV]
+    .some((environment) => ["staging", "production"].includes(String(environment || "").toLowerCase()));
+  const ssl = isLoopbackDatabase && !productionLike && !caPath
+    ? false
+    : createDatabaseSslConfig(caPath);
   return {
     connectionString: parsedUrl.toString(),
     max: readPositiveIntegerEnv("PG_POOL_MAX", databasePoolDefaults.max),
@@ -270,7 +256,7 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
     connectionTimeoutMillis: databaseConnectionTimeoutMs,
     statement_timeout: databaseQueryTimeoutMs,
     query_timeout: databaseQueryTimeoutMs,
-    ssl: createDatabaseSslConfig(caPath),
+    ssl,
   };
 }
 

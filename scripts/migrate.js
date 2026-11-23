@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { Pool } = require("pg");
+const { createDatabasePoolConfig } = require("../backend/postgres-db");
 const { redactLogText } = require("../backend/monitoring");
 const { assertDatabaseEnvironmentIsolation } = require("../backend/env-isolation");
 const {
@@ -155,10 +156,7 @@ async function migrate({ dryRun = process.argv.includes("--dry-run") } = {}) {
   }
   assertDatabaseEnvironmentIsolation(process.env);
 
-  const pool = new Pool({
-    connectionString,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-  });
+  const pool = new Pool(createDatabasePoolConfig(connectionString));
   const client = await pool.connect();
   try {
     if (dryRun) {

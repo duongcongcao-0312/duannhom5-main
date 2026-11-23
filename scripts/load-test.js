@@ -223,9 +223,45 @@ async function runLoadTest(options = {}) {
   return summary;
 }
 
+async function runSpikeTest(options = {}) {
+  const env = { ...process.env, ...(options.env || {}) };
+  const setting = (optionName, envName, fallback, maximum) => parseBoundedInteger(
+    options[optionName] ?? env[envName],
+    fallback,
+    1,
+    maximum,
+    envName,
+  );
+  const phases = [
+    { name: "baseline", requestCount: setting("baselineRequests", "LOAD_TEST_BASELINE_REQUESTS", 40, maximumRequestCount), concurrency: setting("baselineConcurrency", "LOAD_TEST_BASELINE_CONCURRENCY", 4, maximumConcurrency) },
+    { name: "spike", requestCount: setting("spikeRequests", "LOAD_TEST_SPIKE_REQUESTS", 200, maximumRequestCount), concurrency: setting("spikeConcurrency", "LOAD_TEST_SPIKE_CONCURRENCY", 20, maximumConcurrency) },
+    { name: "recovery", requestCount: setting("recoveryRequests", "LOAD_TEST_RECOVERY_REQUESTS", 40, maximumRequestCount), concurrency: setting("recoveryConcurrency", "LOAD_TEST_RECOVERY_CONCURRENCY", 4, maximumConcurrency) },
+  ];
+  const results = [];
+  for (const phase of phases) {
+    const summary = await runLoadTest({
+      ...options,
+      ...phase,
+      log: () => {},
+    });
+    results.push({ phase: phase.name, ...summary });
+  }
+  const result = {
+    event: "spike_test_complete",
+    baseUrl: results[0].baseUrl,
+    workload: "read-only browse, catalog, quote, health and categories",
+    phases: results,
+    recovered: results[2].failed === 0,
+  };
+  (options.log || console.log)(JSON.stringify(result));
+  return result;
+}
+
 async function main() {
-  const summary = await runLoadTest();
-  if (summary.failed > 0) process.exitCode = 1;
+  const summary = process.env.LOAD_TEST_PROFILE === "spike"
+    ? await runSpikeTest({ env: process.env })
+    : await runLoadTest();
+  if (summary.failed > 0 || summary.phases?.some((phase) => phase.failed > 0)) process.exitCode = 1;
 }
 
 if (require.main === module) {
@@ -238,4 +274,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseLoadTestConfig, percentile, runLoadTest };
+module.exports = { parseLoadTestConfig, percentile, runLoadTest, runSpikeTest };

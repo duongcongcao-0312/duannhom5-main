@@ -17,17 +17,27 @@ Production hosts are blocked. Use an isolated staging database and coordinate a
 maintenance window before running. The runner caps each invocation at 500
 requests, concurrency 20, and timeout 60 seconds.
 
-Start with the default workload, then raise concurrency gradually while keeping
-requests within the configured cap, for example:
+Start with the default workload, then run the bounded three-phase spike profile.
+It performs a 40-request/4-worker baseline, an abrupt 200-request/20-worker
+spike, then a 40-request/4-worker recovery sample. Each phase is a finite burst;
+the runner does not hold a request rate for a wall-clock duration. Each phase
+reports p50/p95/p99 latency, throughput and failures. Override phase sizes with
+`LOAD_TEST_BASELINE_REQUESTS`, `LOAD_TEST_BASELINE_CONCURRENCY`,
+`LOAD_TEST_SPIKE_REQUESTS`, `LOAD_TEST_SPIKE_CONCURRENCY`,
+`LOAD_TEST_RECOVERY_REQUESTS`, and `LOAD_TEST_RECOVERY_CONCURRENCY`.
+
+Example staging invocation:
 
 ```powershell
 $env:LOAD_TEST_BASE_URL = 'https://staging.example.test'
 $env:LOAD_TEST_ALLOW_STAGING = 'true'
 $env:LOAD_TEST_STAGING_HOSTS = 'staging.example.test'
-$env:LOAD_TEST_REQUESTS = '100'
-$env:LOAD_TEST_CONCURRENCY = '5'
+$env:LOAD_TEST_PROFILE = 'spike'
 npm run load-test
 ```
+
+For the smaller single-phase smoke benchmark, leave `LOAD_TEST_PROFILE` unset
+and use `LOAD_TEST_REQUESTS` / `LOAD_TEST_CONCURRENCY`.
 
 The JSON summary reports overall and per-scenario request counts, status/error
 rates, p50/p95/p99 latency, throughput, and failures. Save each run's output
@@ -42,10 +52,22 @@ clients, database CPU/connections, and application monitoring snapshot
 before, during, and after each load step. Record the chosen target (requests and
 concurrency), observed p95/error rate, resource peaks, and the first bottleneck.
 
-Before and after the run, compare the isolated database's order count and
-inventory quantities. Both must be unchanged because this workload only reads
-catalog data and calculates quotes. Stop increasing load if errors rise, p95
-latency breaches the staging SLO, resources approach their configured limits,
-or the database pool reports waiting clients. Agree on numeric p95, error-rate,
-and resource thresholds with the service owner before treating a run as passing;
-there are no universal safe thresholds embedded in this generic runner.
+Capture metrics immediately before baseline, throughout all three phases, and
+until the service is stable after recovery: platform CPU/memory/restarts,
+PostgreSQL CPU/connections, pool total/idle/waiting, request timeout and 5xx
+counts. Compare the isolated database's order count and inventory quantities
+before and after; both must be unchanged because this workload is read-only.
+Record environment/release, date, phase settings, each phase's summary, resource
+peaks, queue/pool waits, timeout/dependency errors, and time to return to
+baseline. A recovery phase with zero failures is necessary but does not by
+itself prove resource recovery. Stop if error rate rises, p95 breaches the
+staging SLO, resources approach configured limits, or pool waiters appear. Set
+numeric p95, error-rate, resource and recovery objectives with the service owner
+before the run; the repository has no measured staging capacity or agreed SLO,
+so local results cannot establish a production capacity limit.
+
+When a bottleneck is observed, reduce offered concurrency first, then inspect
+the matching layer: bound the database pool and query duration, shed/reject
+excess requests with 429/503 and retry guidance, and scale app instances or
+database capacity only after verifying the constrained resource. Re-run the
+same profile after changes and confirm database state remains unchanged.

@@ -1,5 +1,5 @@
 const { appendAuditEntry } = require("../audit");
-const { RefreshTokenReuseError } = require("../auth");
+const { RefreshTokenReuseError, hashPassword, needsPasswordRehash } = require("../auth");
 const {
   CSRF_COOKIE_NAME,
   buildAuthCookieHeaders,
@@ -361,6 +361,24 @@ if (
   }
   await clearRateLimit("login", address);
   if (email) await clearRateLimit("login-account", email);
+  if (needsPasswordRehash(user.password) && typeof db.updateUserPasswordHash === "function") {
+    try {
+      await db.updateUserPasswordHash(user.id, hashPassword(password));
+      await appendAuditEntry(auditLogPath, {
+        action: "auth.password.rehashed",
+        actorId: user.id,
+        actorRole: user.role,
+        entityType: "user",
+        entityId: user.id,
+        outcome: "success",
+        statusCode: 200,
+        requestId,
+        metadata: { reason: "hash_format_upgrade" },
+      }).catch(() => {});
+    } catch {
+      // Do not fail a valid login if transparent password rehash persistence fails.
+    }
+  }
   const session = await sessionStore.createSession(user);
   response.setHeader(
     "Set-Cookie",

@@ -3,31 +3,115 @@ const { normalizeRole } = require("./business-constants");
 const { secureHashPasswordResetToken } = require("./security");
 const { redactLogText } = require("./monitoring");
 
-/**
- * Hash a plain password using scrypt
- * Format: salt:hash
- */
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
+const PASSWORD_HASH_PARAMS = Object.freeze({
+  algorithm: "scrypt",
+  N: 16384,
+  r: 8,
+  p: 1,
+  keylen: 64,
+  saltBytes: 16,
+  maxmem: 64 * 1024 * 1024,
+});
+
+function parsePasswordHash(stored) {
+  if (typeof stored !== "string" || !stored) return null;
+  if (stored.startsWith("scrypt$")) {
+    const parts = stored.split("$");
+    if (parts.length !== 4) return null;
+    const [, paramSpec, salt, key] = parts;
+    if (!/^[a-f0-9]{16,}$/i.test(salt) || !/^[a-f0-9]{32,}$/i.test(key) || key.length % 2 !== 0) {
+      return null;
+    }
+    const params = {};
+    for (const pair of paramSpec.split(",")) {
+      const [k, v] = pair.split("=");
+      if (!k || !/^\d+$/.test(v || "")) return null;
+      params[k] = Number(v);
+    }
+    const { N, r, p } = params;
+    if (!Number.isSafeInteger(N) || N < 1024 || (N & (N - 1)) !== 0) return null;
+    if (!Number.isSafeInteger(r) || r < 1 || r > 64) return null;
+    if (!Number.isSafeInteger(p) || p < 1 || p > 16) return null;
+    return {
+      algorithm: "scrypt",
+      N,
+      r,
+      p,
+      keylen: key.length / 2,
+      salt,
+      key,
+      legacy: false,
+    };
+  }
+  if (stored.includes(":")) {
+    const parts = stored.split(":");
+    if (parts.length !== 2) return null;
+    const [salt, key] = parts;
+    if (!salt || !key || !/^[a-f0-9]+$/i.test(key) || key.length % 2 !== 0) return null;
+    return {
+      algorithm: "scrypt",
+      N: 16384,
+      r: 8,
+      p: 1,
+      keylen: key.length / 2,
+      salt,
+      key,
+      legacy: true,
+    };
+  }
+  return null;
 }
 
 /**
- * Verify a plain password against stored salt:hash
+ * Hash a plain password using scrypt with explicit cost parameters.
+ * Format: scrypt$N=<N>,r=<r>,p=<p>$<saltHex>$<hashHex>
+ */
+function hashPassword(password, params = PASSWORD_HASH_PARAMS) {
+  const N = Number(params.N ?? PASSWORD_HASH_PARAMS.N);
+  const r = Number(params.r ?? PASSWORD_HASH_PARAMS.r);
+  const p = Number(params.p ?? PASSWORD_HASH_PARAMS.p);
+  const keylen = Number(params.keylen ?? PASSWORD_HASH_PARAMS.keylen);
+  const saltBytes = Number(params.saltBytes ?? PASSWORD_HASH_PARAMS.saltBytes);
+  const maxmem = Number(params.maxmem ?? PASSWORD_HASH_PARAMS.maxmem);
+  const salt = crypto.randomBytes(saltBytes).toString("hex");
+  const hash = crypto.scryptSync(password, salt, keylen, { N, r, p, maxmem }).toString("hex");
+  return `scrypt$N=${N},r=${r},p=${p}$${salt}$${hash}`;
+}
+
+/**
+ * Verify a plain password against stored versioned or legacy scrypt hash.
  */
 function verifyPassword(password, stored) {
-  if (!stored || typeof stored !== "string" || !stored.includes(":")) {
+  if (typeof password !== "string" || password.length === 0) {
     return false;
   }
-  const [salt, key] = stored.split(":");
-  if (!salt || !key) return false;
+  const parsed = parsePasswordHash(stored);
+  if (!parsed) return false;
   try {
-    const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-    return crypto.timingSafeEqual(Buffer.from(key, "hex"), Buffer.from(hash, "hex"));
+    const derived = crypto.scryptSync(password, parsed.salt, parsed.keylen, {
+      N: parsed.N,
+      r: parsed.r,
+      p: parsed.p,
+      maxmem: Math.max(PASSWORD_HASH_PARAMS.maxmem, 256 * parsed.N * parsed.r),
+    });
+    const expected = Buffer.from(parsed.key, "hex");
+    if (derived.length !== expected.length) return false;
+    return crypto.timingSafeEqual(expected, derived);
   } catch {
     return false;
   }
+}
+
+function needsPasswordRehash(stored, targetParams = PASSWORD_HASH_PARAMS) {
+  const parsed = parsePasswordHash(stored);
+  if (!parsed) return true;
+  if (parsed.legacy) return true;
+  return (
+    parsed.N !== Number(targetParams.N ?? PASSWORD_HASH_PARAMS.N) ||
+    parsed.r !== Number(targetParams.r ?? PASSWORD_HASH_PARAMS.r) ||
+    parsed.p !== Number(targetParams.p ?? PASSWORD_HASH_PARAMS.p) ||
+    parsed.keylen !== Number(targetParams.keylen ?? PASSWORD_HASH_PARAMS.keylen)
+  );
 }
 
 function hashPasswordResetToken(token) {
@@ -415,6 +499,9 @@ module.exports = {
   hashPassword,
   hashPasswordResetToken,
   isPasswordValid,
+  needsPasswordRehash,
+  parsePasswordHash,
+  PASSWORD_HASH_PARAMS,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,

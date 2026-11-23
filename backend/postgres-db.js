@@ -1133,6 +1133,16 @@ class PostgresDatabase {
     });
   }
 
+  async updateUserPasswordHash(id, passwordHash) {
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user) return false;
+      user.password = passwordHash;
+      user.updatedAt = new Date().toISOString();
+      return true;
+    });
+  }
+
   async resetPassword(token, password) {
     return this.updateCollection("users", (users) => {
       const user = users.find((entry) => (

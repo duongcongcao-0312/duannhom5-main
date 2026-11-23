@@ -467,6 +467,16 @@ class Database {
     });
   }
 
+  async updateUserPasswordHash(id, passwordHash) {
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === id);
+      if (!user) return false;
+      user.password = passwordHash;
+      user.updatedAt = new Date().toISOString();
+      return true;
+    });
+  }
+
   async resetPassword(token, password) {
     return this.updateUsers((users) => {
       const user = users.find((entry) => (

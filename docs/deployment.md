@@ -159,6 +159,14 @@ docker compose up --build -d
 docker compose ps
 ```
 
+Image dùng Node.js 22 Alpine, cài dependency production bằng `npm ci` từ lockfile
+trong stage riêng, chạy với user `node` và có health check trên `/health`. Build
+context loại `.env*`, dữ liệu runtime, test, tài liệu và dependency cục bộ; chỉ
+các migration được đóng gói. Compose bật filesystem chỉ đọc, bỏ Linux capabilities
+và giữ dữ liệu ở volume riêng. Không truyền secret bằng `ARG` hoặc `ENV` lúc build;
+cấp cấu hình runtime qua secret manager hoặc file `.env` local (file này không
+được đưa vào image).
+
 Truy cập `http://localhost:8000`; xem log bằng `docker compose logs -f backend`
 và dừng bằng `docker compose down`. Cổng host mặc định là `8000`; có thể đổi
 bằng biến `HOST_PORT` trong `.env`. Compose local chạy chế độ development, dùng

@@ -38,6 +38,11 @@ function getBookImage(book) {
 	return `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
 }
 
+function getResponsiveBookImage(book, size) {
+	const image = getBookImage(book);
+	if (!image.startsWith('https://covers.openlibrary.org/')) return '';
+	return image.replace(/-L\.jpg(?=\?|$)/i, `-${size}.jpg`);
+}
 function getBookCoverStyle(book) {
 	return /^cover-[1-5]$/.test(book.cover || '') ? book.cover : 'cover-1';
 }
@@ -101,7 +106,7 @@ if (!book) {
 			${navigation.next ? `<a class="detail-navigation-next" href="${getBookDetailsUrl(navigation.next)}"><span>Sách tiếp theo</span> →<strong>${escapeHtml(navigation.next.title)}</strong></a>` : '<span class="detail-navigation-placeholder"></span>'}
 		</nav>
 		<div class="book-detail-grid">
-		<div class="detail-cover"><img src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async"></div>
+		<div class="detail-cover">${getResponsiveBookImage(book, 'M') ? `<picture><source media="(max-width: 800px)" srcset="${escapeHtml(getResponsiveBookImage(book, 'M'))}">` : ''}<img src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="eager" fetchpriority="high" decoding="async">${getResponsiveBookImage(book, 'M') ? '</picture>' : ''}</div>
 			<div class="detail-copy">
 				<p class="eyebrow">${escapeHtml(categoryLabels[book.category] || 'BookNest')}</p>
 				<h1>${escapeHtml(book.title)}</h1>
@@ -125,6 +130,7 @@ if (!book) {
 	document.querySelector('#buyBook').addEventListener('click', () => addBookToCart(book));
 	const detailImage = detail.querySelector('.detail-cover img');
 	detailImage.addEventListener('error', () => {
+		 detailImage.closest('picture')?.querySelectorAll('source').forEach((source) => source.remove());
 		detailImage.src = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800"><rect width="600" height="800" fill="#315c70"/><rect x="36" y="36" width="528" height="728" fill="none" stroke="#fffdf8" stroke-width="3"/><text x="70" y="300" fill="#fffdf8" font-family="Georgia,serif" font-size="42">${escapeHtml(book.title)}</text><text x="70" y="670" fill="#f7f3eb" font-family="Arial,sans-serif" font-size="22">${escapeHtml(book.author)}</text></svg>`)}`;
 	}, { once: true });
 }

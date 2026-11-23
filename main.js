@@ -366,6 +366,12 @@ function getBookImage(book) {
 	return `https://covers.openlibrary.org/b/title/${encodeURIComponent(book.title)}-L.jpg?default=false`;
 }
 
+function getResponsiveBookImage(book, size) {
+	const image = getBookImage(book);
+	if (!image.startsWith('https://covers.openlibrary.org/')) return '';
+	return image.replace(/-L\.jpg(?=\?|$)/i, `-${size}.jpg`);
+}
+
 function getBookCoverStyle(book) {
 	return /^cover-[1-5]$/.test(book.cover || '') ? book.cover : 'cover-1';
 }
@@ -530,7 +536,7 @@ function renderBooks() {
 		<article class="book-card">
 			<div class="cover ${getBookCoverStyle(book)} has-image">
 				<span class="book-tag tag-${escapeHtml(tag)}">${escapeHtml(tagLabel)}</span>
-				<img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">
+				${getResponsiveBookImage(book, 'M') ? `<picture><source media="(max-width: 800px)" srcset="${escapeHtml(getResponsiveBookImage(book, 'M'))}">` : ''}<img class="cover-image" data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">${getResponsiveBookImage(book, 'M') ? '</picture>' : ''}
 				<span class="cover-label">${escapeHtml(book.label || book.title).replace('\n', '<br>')}</span>
 			</div>
 			<div class="book-info">
@@ -619,6 +625,7 @@ function removeFailedImages(container) {
 	container.querySelectorAll('img').forEach((image) => image.addEventListener('error', () => {
 		if (!image.dataset.fallback) {
 			image.dataset.fallback = 'true';
+			image.closest('picture')?.querySelectorAll('source').forEach((source) => source.remove());
 			image.src = createFallbackCover(image.dataset.bookTitle, image.dataset.bookAuthor);
 			return;
 		}

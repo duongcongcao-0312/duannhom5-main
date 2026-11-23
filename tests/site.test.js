@@ -581,6 +581,27 @@ test('custom product cover URLs are used on the catalog and detail pages', () =>
 	assert.doesNotMatch(script, /findBookCover/);
 });
 
+test('book covers use smaller responsive sources on mobile and prioritize the detail cover', () => {
+	for (const file of ['main.js', 'book-detail.js']) {
+		const script = read(file);
+		const helper = script.match(/function getResponsiveBookImage\(book, size\) \{[\s\S]*?\n\}/);
+		assert.ok(helper, `${file} should define responsive cover sizing`);
+		const getBookImage = vm.runInNewContext(
+			`${script.match(/function getBookImage\(book\) \{[\s\S]*?\n\}/)[0]}; getBookImage`,
+		);
+		const getResponsiveBookImage = vm.runInNewContext(`${helper[0]}; getResponsiveBookImage`, { getBookImage });
+		assert.equal(getResponsiveBookImage({ title: 'A Book' }, 'M'), 'https://covers.openlibrary.org/b/title/A%20Book-M.jpg?default=false');
+		assert.equal(getResponsiveBookImage({ image: 'https://covers.openlibrary.org/b/id/123-L.jpg' }, 'M'), 'https://covers.openlibrary.org/b/id/123-M.jpg');
+		assert.equal(getResponsiveBookImage({ cover: 'https://example.com/cover.jpg' }, 'M'), '');
+		assert.match(script, /<source media="\(max-width: 800px\)"/);
+	}
+	const detail = read('book-detail.js');
+	assert.match(detail, /loading="eager" fetchpriority="high" decoding="async"/);
+	assert.match(detail, /alt="B/);
+	assert.match(read('main.js'), /loading="lazy" decoding="async"/);
+	assert.match(read('server.js'), /public, max-age=86400, stale-while-revalidate=604800/);
+});
+
 test('book details support purchasing and related book discovery', () => {
 	const html = read('book.html');
 	const script = read('book-detail.js');

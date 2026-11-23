@@ -1021,12 +1021,14 @@ async function serveStatic(request, response, pathname, staticRoot) {
     throw error;
   }
 
+  const contentType =
+    mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream";
   response.writeHead(200, {
-    "Cache-Control": "no-cache",
+    "Cache-Control": contentType.startsWith("image/")
+      ? "public, max-age=86400, stale-while-revalidate=604800"
+      : "no-cache",
     "Content-Length": contents.length,
-    "Content-Type":
-      mimeTypes[path.extname(filePath).toLowerCase()] ||
-      "application/octet-stream",
+    "Content-Type": contentType,
     "X-Content-Type-Options": "nosniff",
   });
   response.end(request.method === "HEAD" ? undefined : contents);

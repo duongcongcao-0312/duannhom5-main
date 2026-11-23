@@ -956,16 +956,16 @@ if (
     "Dữ liệu nhân viên không hợp lệ.",
     payloadSchemas.staff,
   );
-  if (!isPasswordValid(payload.password)) {
-    throw new RequestError(
-      400,
-      `Mật khẩu nhân viên phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự.`,
-    );
-  }
   const name = sanitizePlainText(payload.name, 120);
   const email = sanitizePlainText(payload.email, 254).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new RequestError(400, "Địa chỉ email nhân viên không hợp lệ.");
+  }
+  if (!isPasswordValid(payload.password, { email })) {
+    throw new RequestError(
+      400,
+      `Mật khẩu nhân viên phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và đáp ứng chính sách mật khẩu mạnh.`,
+    );
   }
   const staff = await db.createStaffUser({
     name,

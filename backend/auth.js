@@ -133,11 +133,94 @@ class RefreshTokenReuseError extends Error {
   }
 }
 
-function isPasswordValid(password) {
-  return typeof password === "string" &&
-    password.length >= PASSWORD_MIN_LENGTH &&
-    password.length <= PASSWORD_MAX_LENGTH &&
-    password.trim().length > 0;
+const PASSWORD_MIN_UNIQUE_CHARS = 4;
+
+const COMMON_WEAK_PASSWORDS = new Set([
+  "123456789012",
+  "1234567890123",
+  "12345678901234",
+  "123456123456",
+  "000000000000",
+  "111111111111",
+  "password1234",
+  "password12345",
+  "passwordpassword",
+  "qwerty123456",
+  "qwertyuiop12",
+  "admin1234567",
+  "administrator",
+  "booknest1234",
+  "booknest2026",
+  "abcdef123456",
+  "iloveyou1234",
+  "letmein12345",
+  "welcome12345",
+]);
+
+const PASSWORD_POLICY = Object.freeze({
+  minLength: PASSWORD_MIN_LENGTH,
+  maxLength: PASSWORD_MAX_LENGTH,
+  minUniqueChars: PASSWORD_MIN_UNIQUE_CHARS,
+  rejectWhitespaceOnly: true,
+  rejectControlChars: true,
+  rejectCommonWeakPasswords: true,
+  rejectEmailMatch: true,
+});
+
+function validatePasswordPolicy(password, context = {}) {
+  if (
+    typeof password !== "string" ||
+    password.length < PASSWORD_MIN_LENGTH ||
+    password.length > PASSWORD_MAX_LENGTH ||
+    password.trim().length === 0
+  ) {
+    return {
+      valid: false,
+      code: "PASSWORD_POLICY_LENGTH",
+      message: `Mật khẩu phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
+    };
+  }
+  if (/[\x00-\x1F\x7F]/.test(password)) {
+    return {
+      valid: false,
+      code: "PASSWORD_POLICY_INVALID_CHARS",
+      message: "Mật khẩu không được chứa ký tự điều khiển không hợp lệ.",
+    };
+  }
+  const normalized = password.trim().toLowerCase();
+  if (new Set(normalized).size < PASSWORD_MIN_UNIQUE_CHARS) {
+    return {
+      valid: false,
+      code: "PASSWORD_POLICY_WEAK",
+      message: "Mật khẩu quá đơn giản (lặp lại quá ít ký tự). Vui lòng chọn mật khẩu mạnh hơn.",
+    };
+  }
+  if (COMMON_WEAK_PASSWORDS.has(normalized) || /^\d+$/.test(normalized)) {
+    return {
+      valid: false,
+      code: "PASSWORD_POLICY_COMMON",
+      message: "Mật khẩu này quá phổ biến hoặc dễ đoán. Vui lòng chọn mật khẩu khác.",
+    };
+  }
+  if (typeof context.email === "string" && context.email.trim()) {
+    const normalizedEmail = context.email.trim().toLowerCase();
+    const localPart = normalizedEmail.split("@")[0] || "";
+    if (
+      normalized === normalizedEmail ||
+      (localPart.length >= 6 && normalized === localPart)
+    ) {
+      return {
+        valid: false,
+        code: "PASSWORD_POLICY_PERSONAL",
+        message: "Mật khẩu không được trùng với địa chỉ email tài khoản.",
+      };
+    }
+  }
+  return { valid: true };
+}
+
+function isPasswordValid(password, context = {}) {
+  return validatePasswordPolicy(password, context).valid;
 }
 
 class SessionStore {
@@ -501,7 +584,9 @@ module.exports = {
   isPasswordValid,
   needsPasswordRehash,
   parsePasswordHash,
+  validatePasswordPolicy,
   PASSWORD_HASH_PARAMS,
+  PASSWORD_POLICY,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,

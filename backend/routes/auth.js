@@ -1,5 +1,10 @@
 const { appendAuditEntry } = require("../audit");
-const { RefreshTokenReuseError, hashPassword, needsPasswordRehash } = require("../auth");
+const {
+  RefreshTokenReuseError,
+  hashPassword,
+  needsPasswordRehash,
+  validatePasswordPolicy,
+} = require("../auth");
 const {
   CSRF_COOKIE_NAME,
   buildAuthCookieHeaders,
@@ -172,11 +177,9 @@ if (
   if (!/^[a-f0-9]{64}$/i.test(token)) {
     throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
   }
-  if (!isPasswordValid(password)) {
-    throw new RequestError(
-      400,
-      `Mật khẩu mới phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
-    );
+  const passwordCheck = validatePasswordPolicy(password);
+  if (!passwordCheck.valid) {
+    throw withErrorCode(new RequestError(400, passwordCheck.message), passwordCheck.code);
   }
   const userId = await db.resetPassword(token, password);
   if (!userId) {
@@ -220,10 +223,11 @@ if (
       "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
     );
   }
-  if (!isPasswordValid(password)) {
-    throw new RequestError(
-      400,
-      `Mật khẩu phải có từ ${PASSWORD_MIN_LENGTH} đến ${PASSWORD_MAX_LENGTH} ký tự và không được chỉ chứa khoảng trắng.`,
+  const registerPasswordCheck = validatePasswordPolicy(password, { email });
+  if (!registerPasswordCheck.valid) {
+    throw withErrorCode(
+      new RequestError(400, registerPasswordCheck.message),
+      registerPasswordCheck.code,
     );
   }
   try {
@@ -830,6 +834,70 @@ if (
     expiresAt: refreshed.expiresAt,
     idleExpiresAt: refreshed.idleExpiresAt,
     refreshExpiresAt: refreshed.refreshExpiresAt,
+  });
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/auth/change-password" &&
+  request.method === "POST"
+) {
+  const session = await getAuthUser(request);
+  if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Dữ liệu đổi mật khẩu không hợp lệ.",
+    {
+      allowed: ["currentPassword", "newPassword"],
+      required: ["currentPassword", "newPassword"],
+      types: { currentPassword: "string", newPassword: "string" },
+      preserveStrings: ["currentPassword", "newPassword"],
+    },
+  );
+  const user = await db.findUserById(session.userId);
+  if (!user || user.isActive === false) {
+    throw new RequestError(401, "Tài khoản không hợp lệ.");
+  }
+  await verifyPasswordReauthentication(request, response, user, payload.currentPassword);
+  const passwordCheck = validatePasswordPolicy(payload.newPassword, { email: user.email });
+  if (!passwordCheck.valid) {
+    throw withErrorCode(new RequestError(400, passwordCheck.message), passwordCheck.code);
+  }
+  if (payload.newPassword === payload.currentPassword) {
+    throw withErrorCode(
+      new RequestError(400, "Mật khẩu mới không được trùng với mật khẩu hiện tại."),
+      "PASSWORD_POLICY_REUSE",
+    );
+  }
+  if (typeof db.updateUserPasswordHash !== "function") {
+    throw new RequestError(503, "Hệ thống hiện không thể cập nhật mật khẩu.");
+  }
+  await db.updateUserPasswordHash(user.id, hashPassword(payload.newPassword));
+  await sessionStore.destroyUserSessions(user.id);
+  const nextSession = await sessionStore.createSession(user);
+  response.setHeader(
+    "Set-Cookie",
+    buildAuthCookieHeaders(request, { sessionToken: nextSession.token, expiresAt: nextSession.expiresAt }),
+  );
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.password.changed",
+      actorId: user.id,
+      actorRole: user.role,
+      entityType: "user",
+      entityId: user.id,
+      outcome: "success",
+      statusCode: 200,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: { sessionsRevoked: true },
+    }).catch(() => {});
+  }
+  sendJson(response, 200, {
+    message: "Mật khẩu đã được cập nhật và các phiên cũ đã bị thu hồi.",
+    token: nextSession.token,
+    refreshToken: nextSession.refreshToken,
+    expiresAt: nextSession.expiresAt,
+    refreshExpiresAt: nextSession.refreshExpiresAt,
   });
   return true;
 }

@@ -5,6 +5,22 @@ const { parseTrustedProxyIps } = require("../backend/security");
 
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
+  if (
+    env.PAYMENT_WEBHOOK_SECRET !== undefined &&
+    String(env.PAYMENT_WEBHOOK_SECRET).trim() !== "" &&
+    Buffer.byteLength(String(env.PAYMENT_WEBHOOK_SECRET), "utf8") < 32
+  ) {
+    failures.push("PAYMENT_WEBHOOK_SECRET must be at least 32 bytes when configured.");
+  }
+
+  if (String(env.BACKUP_ENCRYPTION_REQUIRED || "").toLowerCase() === "true") {
+    const rawKey = String(env.BACKUP_ENCRYPTION_KEY || "").trim();
+    const keyBytes = rawKey ? Buffer.from(rawKey, "base64") : Buffer.alloc(0);
+    if (keyBytes.length !== 32) {
+      failures.push("BACKUP_ENCRYPTION_KEY must be a valid 32-byte base64 key when BACKUP_ENCRYPTION_REQUIRED=true.");
+    }
+  }
+
   if (String(env.NODE_ENV || "").toLowerCase() === "production") {
     let databaseUrl;
     try {

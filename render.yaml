@@ -25,6 +25,14 @@ services:
         sync: false
       - key: SEPAY_API_KEY
         sync: false
+      - key: PAYMENT_WEBHOOK_SECRET
+        sync: false
+      - key: BACKUP_ENCRYPTION_KEY
+        sync: false
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: MONITORING_ALERT_WEBHOOK_URL
+        sync: false
       - key: SEPAY_BANK_CODE
         sync: false
       - key: SEPAY_BANK_NAME

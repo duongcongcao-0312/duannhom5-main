@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { Pool } = require("pg");
 require("dotenv").config();
+const { assertSeedAllowed } = require("../backend/env-isolation");
 
 const customers = [
   ["11111111-1111-4111-8111-111111111111", "Nguyễn Minh Anh", "minh.anh@example.com", "0901000001", "Hà Nội", "customer"],
@@ -88,6 +89,7 @@ async function seedPostgres() {
 }
 
 async function main() {
+  assertSeedAllowed(process.env);
   if (process.env.DATABASE_URL) {
     await seedPostgres();
   } else {

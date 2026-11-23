@@ -44,6 +44,7 @@ const {
   resolveApiVersion,
 } = require("./backend/api-versioning");
 const { extractSessionToken, validateCsrfRequest } = require("./backend/csrf");
+const { assertDatabaseEnvironmentIsolation } = require("./backend/env-isolation");
 const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
@@ -1105,6 +1106,9 @@ function createServer({
   orderRequestLimit = 30,
   orderRequestWindowMs = 15 * 60 * 1000,
 } = {}) {
+  if (process.env.DATABASE_URL && !database) {
+    assertDatabaseEnvironmentIsolation(process.env);
+  }
   if (process.env.NODE_ENV === "production") {
     const adminEmail = String(process.env.ADMIN_EMAIL || "").trim();
     const adminPassword = String(process.env.ADMIN_PASSWORD || "");

@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { normalizeSePayConfig } = require("../backend/sepay-config");
 const { parseTrustedProxyIps } = require("../backend/security");
+const { validateDatabaseEnvironmentIsolation } = require("../backend/env-isolation");
 
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
@@ -109,6 +110,11 @@ function assertProductionEnvironment(env = process.env) {
       failures.push("Migration phải có version tăng dần duy nhất.");
       break;
     }
+  }
+
+  const isolationCheck = validateDatabaseEnvironmentIsolation(env);
+  if (!isolationCheck.ok) {
+    failures.push(...isolationCheck.errors);
   }
 
   if (failures.length) {

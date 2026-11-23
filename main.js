@@ -197,6 +197,9 @@ async function hydrateAuthenticatedUser() {
 			sessionStorage.removeItem(CURRENT_USER_STORAGE_KEY);
 			state.user = null;
 			renderAccount();
+			if (typeof showToast === 'function') {
+				showToast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'warning');
+			}
 			return;
 		}
 		if (!response.ok) throw new Error('Không thể tải hồ sơ tài khoản.');

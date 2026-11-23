@@ -35,6 +35,7 @@ function hashPasswordResetToken(token) {
 }
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const SESSION_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;
@@ -53,11 +54,17 @@ class SessionStore {
     this.sessionTtlMs = Number.isFinite(options.sessionTtlMs)
       ? options.sessionTtlMs
       : SESSION_TTL_MS;
+    this.idleTimeoutMs = Number.isFinite(options.idleTimeoutMs)
+      ? options.idleTimeoutMs
+      : SESSION_IDLE_TIMEOUT_MS;
     this.refreshTtlMs = Number.isFinite(options.refreshTtlMs)
       ? options.refreshTtlMs
       : SESSION_REFRESH_TTL_MS;
     if (this.sessionTtlMs <= 0) {
       throw new RangeError("SESSION_TTL_MS must be greater than zero.");
+    }
+    if (this.idleTimeoutMs < 0) {
+      throw new RangeError("SESSION_IDLE_TIMEOUT_MS must be non-negative.");
     }
     if (this.refreshTtlMs <= 0) {
       throw new RangeError("SESSION_REFRESH_TTL_MS must be greater than zero.");
@@ -100,6 +107,8 @@ class SessionStore {
       customerInfo: user.customerInfo || {},
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
+      idleExpiresAt: this.idleTimeoutMs > 0 ? now + this.idleTimeoutMs : null,
       expiresAt: now + Number(sessionTtlMs),
     };
     if (this.repository) {
@@ -124,9 +133,34 @@ class SessionStore {
     if (!session) return null;
     const sanitizedSession = { ...session };
     delete sanitizedSession.refreshToken;
-    if (Date.now() >= sanitizedSession.expiresAt) {
+    const now = Date.now();
+    const isIdleExpired =
+      this.idleTimeoutMs > 0 &&
+      Number.isFinite(sanitizedSession.lastActivityAt) &&
+      now - sanitizedSession.lastActivityAt >= this.idleTimeoutMs;
+    if (now >= sanitizedSession.expiresAt || isIdleExpired) {
       await this.destroySession(token);
       return null;
+    }
+    if (this.idleTimeoutMs > 0) {
+      const prevLastActivity = Number.isFinite(sanitizedSession.lastActivityAt)
+        ? sanitizedSession.lastActivityAt
+        : now;
+      sanitizedSession.lastActivityAt = now;
+      sanitizedSession.idleExpiresAt = now + this.idleTimeoutMs;
+      if (this.repository) {
+        const persistThresholdMs = Math.min(60 * 1000, Math.floor(this.idleTimeoutMs / 4));
+        if (now - prevLastActivity >= persistThresholdMs) {
+          const storedSession = { ...sanitizedSession };
+          delete storedSession.token;
+          await this.repository.saveSessionRecord(
+            hashPasswordResetToken(token),
+            storedSession,
+          );
+        }
+      } else {
+        this.sessions.set(token, { ...sanitizedSession, refreshToken: undefined });
+      }
     }
     return { ...sanitizedSession, token };
   }
@@ -160,8 +194,14 @@ class SessionStore {
     }
 
     session.updatedAt = now;
+    session.lastActivityAt = now;
+    session.idleExpiresAt = this.idleTimeoutMs > 0 ? now + this.idleTimeoutMs : null;
     session.expiresAt = now + Number(sessionTtlMs);
-    session.refreshExpiresAt = now + Number(refreshTtlMs);
+    if (Number.isFinite(Number(maybeRefreshTtlMs))) {
+      session.refreshExpiresAt = now + Number(refreshTtlMs);
+    } else if (!Number.isFinite(session.refreshExpiresAt)) {
+      session.refreshExpiresAt = now + Number(refreshTtlMs);
+    }
     if (this.repository) {
       const storedSession = { ...session };
       delete storedSession.token;
@@ -281,7 +321,11 @@ class SessionStore {
     const now = Date.now();
     let removed = 0;
     for (const [token, session] of this.sessions) {
-      if (now >= session.expiresAt) {
+      const isIdleExpired =
+        this.idleTimeoutMs > 0 &&
+        Number.isFinite(session.lastActivityAt) &&
+        now - session.lastActivityAt >= this.idleTimeoutMs;
+      if (now >= session.expiresAt || isIdleExpired) {
         this.sessions.delete(token);
         removed += 1;
       }
@@ -304,6 +348,7 @@ module.exports = {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   SESSION_TTL_MS,
+  SESSION_IDLE_TIMEOUT_MS,
   SESSION_REFRESH_TTL_MS,
   verifyPassword,
   SessionStore

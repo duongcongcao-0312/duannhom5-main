@@ -764,6 +764,7 @@ if (
   sendJson(response, 200, {
     token: refreshed.token,
     expiresAt: refreshed.expiresAt,
+    idleExpiresAt: refreshed.idleExpiresAt,
     refreshExpiresAt: refreshed.refreshExpiresAt,
   });
   return true;

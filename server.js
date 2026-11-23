@@ -74,6 +74,7 @@ const {
   isPasswordValid,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  SESSION_IDLE_TIMEOUT_MS,
   SESSION_REFRESH_TTL_MS,
   SESSION_TTL_MS,
   SessionStore,
@@ -1072,6 +1073,9 @@ function createServer({
   sessionTtlMs = Number.isFinite(Number(process.env.SESSION_TTL_MS))
     ? Number(process.env.SESSION_TTL_MS)
     : SESSION_TTL_MS,
+  idleTimeoutMs = Number.isFinite(Number(process.env.SESSION_IDLE_TIMEOUT_MS))
+    ? Number(process.env.SESSION_IDLE_TIMEOUT_MS)
+    : SESSION_IDLE_TIMEOUT_MS,
   refreshTtlMs = Number.isFinite(Number(process.env.SESSION_REFRESH_TTL_MS))
     ? Number(process.env.SESSION_REFRESH_TTL_MS)
     : SESSION_REFRESH_TTL_MS,
@@ -1265,6 +1269,7 @@ function createServer({
   const sessionStore = new SessionStore({
     repository: sessionRepository,
     sessionTtlMs,
+    idleTimeoutMs,
     refreshTtlMs,
     cleanupIntervalMs: 60 * 1000,
   });

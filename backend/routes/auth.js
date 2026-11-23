@@ -874,6 +874,9 @@ if (
   }
   await db.updateUserPasswordHash(user.id, hashPassword(payload.newPassword));
   await sessionStore.destroyUserSessions(user.id);
+  if (privacyExportStore && typeof privacyExportStore.purgeUserExports === "function") {
+    privacyExportStore.purgeUserExports(user.id);
+  }
   const nextSession = await sessionStore.createSession(user);
   response.setHeader(
     "Set-Cookie",

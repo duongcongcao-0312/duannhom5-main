@@ -365,6 +365,21 @@
             <button class="primary-button payment-submit" type="submit" id="socialCustomSubmitBtn">Đăng nhập với Google</button>
             <button class="text-button" data-account-back="login" type="button">← Quay lại đăng nhập</button>
         </form>
+        <form class="account-form" id="changePasswordForm" hidden>
+            <label class="service-field">Mật khẩu hiện tại
+                <input name="currentPassword" type="password" autocomplete="current-password" required>
+            </label>
+            <label class="service-field">Mật khẩu mới (tối thiểu 12 ký tự)
+                <input name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+            </label>
+            <label class="service-field">Xác nhận mật khẩu mới
+                <input name="confirmNewPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+            </label>
+            <p class="form-error" id="changePasswordError" role="alert" hidden></p>
+            <button class="primary-button payment-submit" type="submit">Cập nhật mật khẩu</button>
+            <button class="text-button" data-account-back="login" type="button">← Quay lại</button>
+        </form>
+        <button class="secondary-button account-logout" id="changePasswordNavButton" type="button" hidden>Đổi mật khẩu</button>
         <button class="secondary-button account-logout" id="logoutButton" type="button" hidden>Đăng xuất</button>
         <button class="secondary-button account-logout" id="logoutAllButton" type="button" hidden>Đăng xuất tất cả thiết bị</button>
     </dialog>

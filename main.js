@@ -1005,6 +1005,7 @@ const accountViews = {
 	register: document.querySelector('#registerForm'),
 	'reset-request': document.querySelector('#passwordResetRequestForm'),
 	'reset-confirm': document.querySelector('#passwordResetConfirmForm'),
+	'change-password': document.querySelector('#changePasswordForm'),
 	social: document.querySelector('#socialAuthForm')
 };
 
@@ -1029,6 +1030,8 @@ function setAccountView(view) {
 		document.querySelector('#accountTitle').textContent = prov.includes('facebook')
 			? 'Đăng nhập Facebook'
 			: 'Đăng nhập Google';
+	} else if (view === 'change-password') {
+		document.querySelector('#accountTitle').textContent = 'Đổi mật khẩu';
 	} else if (isAccountTabView) {
 		document.querySelector('#accountTitle').textContent = 'Tài khoản BookNest';
 	} else {
@@ -1039,15 +1042,18 @@ function setAccountView(view) {
 function renderAccount() {
 	const logoutButton = document.querySelector('#logoutButton');
 	const logoutAllButton = document.querySelector('#logoutAllButton');
+	const changePasswordNavButton = document.querySelector('#changePasswordNavButton');
 	const myOrdersButton = document.querySelector('#myOrdersButton');
 	if (state.user) {
 		accountButton.textContent = state.user.name;
 		if (logoutButton) logoutButton.hidden = false;
 		if (logoutAllButton) logoutAllButton.hidden = false;
+		if (changePasswordNavButton) changePasswordNavButton.hidden = false;
 	} else {
 		accountButton.textContent = 'Đăng nhập';
 		if (logoutButton) logoutButton.hidden = true;
 		if (logoutAllButton) logoutAllButton.hidden = true;
+		if (changePasswordNavButton) changePasswordNavButton.hidden = true;
 	}
 	if (myOrdersButton) myOrdersButton.hidden = !state.user;
 }
@@ -1460,6 +1466,50 @@ async function performAccountLogout(endpoint) {
 }
 document.querySelector('#logoutButton').addEventListener('click', () => performAccountLogout('/api/auth/logout'));
 document.querySelector('#logoutAllButton')?.addEventListener('click', () => performAccountLogout('/api/auth/logout-all'));
+document.querySelector('#changePasswordNavButton')?.addEventListener('click', () => {
+	showAccountError('#changePasswordError', '');
+	setAccountView('change-password');
+});
+document.querySelector('#changePasswordForm')?.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	showAccountError('#changePasswordError', '');
+	const form = event.currentTarget;
+	const currentPassword = String(form.elements.currentPassword?.value || '');
+	const newPassword = String(form.elements.newPassword?.value || '');
+	const confirmNewPassword = String(form.elements.confirmNewPassword?.value || '');
+	if (newPassword !== confirmNewPassword) {
+		showAccountError('#changePasswordError', 'Xác nhận mật khẩu mới chưa khớp.');
+		return;
+	}
+	const token = window.booknestAuth.getToken();
+	if (!token) {
+		showAccountError('#changePasswordError', 'Vui lòng đăng nhập lại trước khi đổi mật khẩu.');
+		return;
+	}
+	try {
+		const res = await window.booknestApiFetch('/api/auth/change-password', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`
+			},
+			body: JSON.stringify({ currentPassword, newPassword })
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			showAccountError('#changePasswordError', data.error || 'Không thể đổi mật khẩu lúc này.');
+			return;
+		}
+		if (data.token) window.booknestAuth.setToken(data.token);
+		form.reset();
+		setAccountView('login');
+		if (typeof showToast === 'function') {
+			showToast(data.message || 'Đã cập nhật mật khẩu thành công.', 'success');
+		}
+	} catch (error) {
+		showAccountError('#changePasswordError', 'Lỗi kết nối máy chủ khi đổi mật khẩu.');
+	}
+});
 function openOrderTracker(orderId = '') {
 	const form = document.querySelector('#trackOrderForm');
 	const orderIdInput = form?.elements?.orderId;

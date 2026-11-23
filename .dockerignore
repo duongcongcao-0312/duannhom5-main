@@ -28,6 +28,7 @@ docs
 playwright.config.js
 compose.yaml
 render.yaml
+backups
 
 # Keep only versioned migrations; runtime data and local state must come from
 # the mounted /app/data volume, never from the build context.

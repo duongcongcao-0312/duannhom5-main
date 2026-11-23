@@ -3,9 +3,15 @@ const path = require("node:path");
 const { normalizeSePayConfig } = require("../backend/sepay-config");
 const { parseTrustedProxyIps } = require("../backend/security");
 const { validateDatabaseEnvironmentIsolation } = require("../backend/env-isolation");
+const { validateEnvironment } = require("../backend/environment-config");
 
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
+  try {
+    validateEnvironment(env);
+  } catch (error) {
+    failures.push(error.message);
+  }
   if (
     env.PAYMENT_WEBHOOK_SECRET !== undefined &&
     String(env.PAYMENT_WEBHOOK_SECRET).trim() !== "" &&

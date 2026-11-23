@@ -46,6 +46,7 @@ const {
 } = require("./backend/api-versioning");
 const { extractSessionToken, validateCsrfRequest } = require("./backend/csrf");
 const { assertDatabaseEnvironmentIsolation } = require("./backend/env-isolation");
+const { validateEnvironment } = require("./backend/environment-config");
 const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
@@ -2501,6 +2502,13 @@ function createServer({
 }
 
 if (require.main === module) {
+  try {
+    validateEnvironment(process.env);
+  } catch (error) {
+    console.error(`Startup configuration error: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
   const port = Number(process.env.PORT || 8000);
   const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
   const server = createServer();

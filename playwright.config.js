@@ -1,4 +1,4 @@
-const { defineConfig } = require("@playwright/test");
+const { defineConfig, devices } = require("@playwright/test");
 const {
   assertSafeE2eDatabaseUrl,
   E2E_PAYMENT_WEBHOOK_SECRET,
@@ -10,18 +10,26 @@ const databaseUrl = assertSafeE2eDatabaseUrl(process.env.E2E_DATABASE_URL);
 module.exports = defineConfig({
   testDir: "./tests/e2e",
   testMatch: "**/*.spec.js",
+  outputDir: "./test-results/e2e",
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   workers: 1,
-  reporter: "list",
+  reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
   use: {
     baseURL,
-    browserName: "chromium",
-    screenshot: "off",
-    video: "off",
-    trace: "off",
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
+    trace: "retain-on-failure",
   },
+  projects: [
+    { name: "chrome", use: { ...devices["Desktop Chrome"], channel: "chrome" } },
+    { name: "edge", use: { ...devices["Desktop Edge"], channel: "msedge" } },
+    {
+      name: "mobile-safari",
+      use: { ...devices["iPhone 13"] },
+    },
+  ],
   webServer: {
     command: "node server.js",
     url: `${baseURL}/ready`,

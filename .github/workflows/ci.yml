@@ -34,6 +34,7 @@ jobs:
       APP_ENV: test
       NODE_ENV: test
       DATABASE_URL: postgresql://booknest:booknest-test-password@localhost:5432/booknest_test
+      E2E_DATABASE_URL: postgresql://booknest:booknest-test-password@127.0.0.1:5432/booknest_test
       ADMIN_EMAIL: integration-1gration-password-123
     steps:
       - name: Checkout
@@ -75,5 +76,19 @@ jobs:
           retention-days: 14
       - name: Build application
         run: npm run build:pages
+      - name: Install cross-browser test browsers
+        run: npx playwright install --with-deps chrome msedge webkit
+      - name: Run Chrome, Edge, and mobile Safari E2E
+        run: npm run test:e2e
+      - name: Upload browser screenshots, traces, and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-reports
+          path: |
+            test-results/e2e/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Security audit
         run: npm audit

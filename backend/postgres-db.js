@@ -42,6 +42,20 @@ const {
 
 const databaseConnectionTimeoutMs = 5_000;
 const databaseQueryTimeoutMs = 10_000;
+const databasePoolDefaults = Object.freeze({
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  maxLifetimeSeconds: 1_800,
+});
+
+function readPositiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  if (!/^\d+$/.test(raw) || Number(raw) < 1 || !Number.isSafeInteger(Number(raw))) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return Number(raw);
+}
 const serviceTypes = new Set(Object.values(SERVICE_TYPES));
 const orderStatuses = new Set(Object.values(ORDER_STATUSES));
 const paymentStatuses = new Set(Object.values(PAYMENT_STATUSES));
@@ -216,6 +230,9 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
       Boolean(process.env.RENDER) && !databaseHost.includes(".");
     return {
       connectionString,
+      max: readPositiveIntegerEnv("PG_POOL_MAX", databasePoolDefaults.max),
+      idleTimeoutMillis: readPositiveIntegerEnv("PG_POOL_IDLE_TIMEOUT_MS", databasePoolDefaults.idleTimeoutMillis),
+      maxLifetimeSeconds: readPositiveIntegerEnv("PG_POOL_MAX_LIFETIME_SECONDS", databasePoolDefaults.maxLifetimeSeconds),
       connectionTimeoutMillis: databaseConnectionTimeoutMs,
       statement_timeout: databaseQueryTimeoutMs,
       query_timeout: databaseQueryTimeoutMs,
@@ -247,6 +264,9 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
 
   return {
     connectionString: parsedUrl.toString(),
+    max: readPositiveIntegerEnv("PG_POOL_MAX", databasePoolDefaults.max),
+    idleTimeoutMillis: readPositiveIntegerEnv("PG_POOL_IDLE_TIMEOUT_MS", databasePoolDefaults.idleTimeoutMillis),
+    maxLifetimeSeconds: readPositiveIntegerEnv("PG_POOL_MAX_LIFETIME_SECONDS", databasePoolDefaults.maxLifetimeSeconds),
     connectionTimeoutMillis: databaseConnectionTimeoutMs,
     statement_timeout: databaseQueryTimeoutMs,
     query_timeout: databaseQueryTimeoutMs,
@@ -478,6 +498,7 @@ class PostgresDatabase {
       idle: Number.isInteger(this.pool.idleCount) ? this.pool.idleCount : 0,
       waiting: Number.isInteger(this.pool.waitingCount) ? this.pool.waitingCount : 0,
     };
+    connections.active = Math.max(0, connections.total - connections.idle);
     try {
       await this.pool.query("SELECT 1");
       return { status: "healthy", storage: "postgresql", connections };

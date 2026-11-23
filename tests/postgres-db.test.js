@@ -92,7 +92,7 @@ test("monitoring status probes database connectivity and reports pool counts onl
   assert.deepEqual(await db.getMonitoringStatus(), {
     status: "healthy",
     storage: "postgresql",
-    connections: { total: 6, idle: 4, waiting: 2 },
+    connections: { total: 6, idle: 4, waiting: 2, active: 2 },
   });
   assert.equal(pool.queries.length, 1);
   assert.match(pool.queries[0].sql, /SELECT 1/);
@@ -109,9 +109,11 @@ test("monitoring status probes database connectivity and reports pool counts onl
   assert.deepEqual(await failedDb.getMonitoringStatus(), {
     status: "unavailable",
     storage: "postgresql",
-    connections: { total: 0, idle: 0, waiting: 0 },
+    connections: { total: 0, idle: 0, waiting: 0, active: 0 },
     errorCode: "ECONNREFUSED",
   });
+  failedPool.query = async () => ({ rows: [{ ok: 1 }], rowCount: 1 });
+  assert.equal((await failedDb.getMonitoringStatus()).status, "healthy");
 });
 
 test("initialization provisions admin users in the relational table once", async (t) => {

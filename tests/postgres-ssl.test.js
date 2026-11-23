@@ -28,9 +28,36 @@ test("PostgreSQL TLS keeps standard certificate verification without a custom CA
 test("PostgreSQL pool applies bounded connection and query timeouts", () => {
   const config = createDatabasePoolConfig("postgresql://db.example.test:5432/app", "");
 
+  assert.equal(config.max, 10);
+  assert.equal(config.idleTimeoutMillis, 30_000);
+  assert.equal(config.maxLifetimeSeconds, 1_800);
   assert.equal(config.connectionTimeoutMillis, 5_000);
   assert.equal(config.statement_timeout, 10_000);
   assert.equal(config.query_timeout, 10_000);
+});
+
+test("PostgreSQL pool limits can be tuned per process and reject invalid values", (t) => {
+  const names = ["PG_POOL_MAX", "PG_POOL_IDLE_TIMEOUT_MS", "PG_POOL_MAX_LIFETIME_SECONDS"];
+  const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const name of names) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
+  });
+  process.env.PG_POOL_MAX = "4";
+  process.env.PG_POOL_IDLE_TIMEOUT_MS = "12000";
+  process.env.PG_POOL_MAX_LIFETIME_SECONDS = "600";
+  const config = createDatabasePoolConfig("postgresql://db.example.test:5432/app", "");
+  assert.equal(config.max, 4);
+  assert.equal(config.idleTimeoutMillis, 12_000);
+  assert.equal(config.maxLifetimeSeconds, 600);
+
+  process.env.PG_POOL_MAX = "0";
+  assert.throws(
+    () => createDatabasePoolConfig("postgresql://db.example.test:5432/app", ""),
+    /PG_POOL_MAX must be a positive integer/,
+  );
 });
 
 test("PostgreSQL pool disables TLS only for loopback database hosts", () => {

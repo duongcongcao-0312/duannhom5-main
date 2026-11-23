@@ -69,6 +69,21 @@ SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP
 API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
 log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
 
+## PostgreSQL connection pool
+
+The `pg` pool is bounded per process: the defaults are at most 10 connections,
+a 5 second acquire timeout, 30 second idle timeout, and 30 minute connection
+lifetime. Set `PG_POOL_MAX`, `PG_POOL_IDLE_TIMEOUT_MS`, and
+`PG_POOL_MAX_LIFETIME_SECONDS` to positive integers to adjust these values.
+Budget runtime connections as `PG_POOL_MAX × maximum application instances`,
+then reserve database capacity for migrations, backups, and other clients. For
+example, three instances at the default pool size can open up to 30 connections.
+`/ready` reports `active`, `idle`, `waiting`, and `total` for this process pool;
+it does not include other processes. A `database_pool_waiting_clients` alert is
+sent when requests are queued for a pool connection. Monitor it with
+`database_unavailable` and adjust pool size within the database connection
+limit, or reduce load if waiting persists.
+
 ## Firebase Authentication
 
 1. Tạo Firebase project/Web app và bật Google hoặc Facebook trong

@@ -1360,6 +1360,13 @@ function createServer({
         count: 1,
         threshold: "database health check failed",
       }, requestId);
+    } else if (status.connections?.waiting > 0) {
+      dispatchMonitoringAlert({
+        event: "database_pool_waiting_clients",
+        severity: "warning",
+        count: status.connections.waiting,
+        threshold: "one or more requests are waiting for a PostgreSQL pool connection",
+      }, requestId);
     }
     return status;
   }
@@ -1932,6 +1939,7 @@ function createServer({
 
   const handlePublicRoute = createPublicRoutes({
     db,
+    getDatabaseMonitoringStatus,
     getCatalogBookList,
     getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
     getBookCategories,

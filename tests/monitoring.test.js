@@ -165,3 +165,51 @@ test("runtime monitoring sends sanitized API, database, and payment alerts", asy
   assert.ok(alertPayloads.every((payload) => typeof payload.requestId === "string"));
   assert.doesNotMatch(JSON.stringify(alertPayloads), /credentials unavailable|Bearer |private@example/);
 });
+
+test("runtime monitoring alerts when requests are waiting for PostgreSQL pool connections", async (t) => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test";
+  t.after(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  });
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-pool-alert-"));
+  const alertPayloads = [];
+  const server = createServer({
+    database: {
+      async init() {},
+      async getCustomBooks() { return []; },
+      async getMonitoringStatus() {
+        return {
+          status: "healthy",
+          storage: "postgresql",
+          connections: { total: 10, active: 10, idle: 0, waiting: 2 },
+        };
+      },
+    },
+    backupStatusFile: path.join(directory, "backup-status.json"),
+    paymentWebhookSecret: "",
+    monitoringAlertUrl: "https://alerts.example.test/hook",
+    monitoringAlertFetch: async (_url, options) => {
+      alertPayloads.push(JSON.parse(options.body));
+      return { ok: true, status: 200 };
+    },
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/ready`);
+  assert.equal(response.status, 200);
+  const status = await response.json();
+  assert.deepEqual(status.connections, { total: 10, active: 10, idle: 0, waiting: 2 });
+  for (let attempt = 0; attempt < 20 && alertPayloads.length < 1; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(alertPayloads[0].event, "database_pool_waiting_clients");
+  assert.equal(alertPayloads[0].count, 2);
+});

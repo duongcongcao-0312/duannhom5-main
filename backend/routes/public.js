@@ -15,6 +15,7 @@ const { resolveSafeStoredUploadPath } = require("../request-limits");
 
 function createPublicRoutes({
   db,
+    getDatabaseMonitoringStatus,
   getCatalogBookList,
   logRequestError,
   paginateBookList,
@@ -41,7 +42,15 @@ function createPublicRoutes({
     ) {
       try {
         await db.init();
-        sendJson(response, 200, { status: "ready", service: "booknest" }, request.method);
+        const monitoringStatus = typeof getDatabaseMonitoringStatus === "function"
+          ? await getDatabaseMonitoringStatus(response.getHeader("X-Request-Id"))
+          : null;
+        const ready = monitoringStatus?.status !== "unavailable";
+        sendJson(response, ready ? 200 : 503, {
+          status: ready ? "ready" : "not_ready",
+          service: "booknest",
+          ...(monitoringStatus?.connections ? { connections: monitoringStatus.connections } : {}),
+        }, request.method);
       } catch (error) {
         logRequestError(
           request,

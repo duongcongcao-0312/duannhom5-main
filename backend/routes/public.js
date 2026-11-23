@@ -8,6 +8,7 @@ const { TERMS_POLICY } = require("../terms-policy");
 const { CONSUMER_TAX_POLICY } = require("../consumer-tax-policy");
 const { ECOMMERCE_COMPLIANCE } = require("../ecommerce-compliance");
 const { CONTENT_RIGHTS_POLICY } = require("../content-rights-policy");
+const { DATA_RETENTION_POLICY } = require("../data-retention-policy");
 const { API_VERSION_POLICY } = require("../api-versioning");
 const { resolveSafeStoredUploadPath } = require("../request-limits");
 
@@ -138,6 +139,11 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/policies/content-rights" && request.method === "GET") {
       sendJson(response, 200, { policy: CONTENT_RIGHTS_POLICY });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/policies/retention" && request.method === "GET") {
+      sendJson(response, 200, { policy: DATA_RETENTION_POLICY });
       return true;
     }
 

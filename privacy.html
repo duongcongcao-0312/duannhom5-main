@@ -135,6 +135,15 @@
       <ul id="privacyExportList"></ul>
     </section>
 
+    <h2 id="dataRetentionSchedule">7.1. Lịch thời hạn lưu trữ, xóa/ẩn danh &amp; ngoại lệ pháp lý</h2>
+    <ul>
+      <li><strong>Dữ liệu vận hành:</strong> Phiên đăng nhập hết hạn sau <strong>8 giờ</strong> (refresh tối đa <strong>30 ngày</strong>); token đặt lại mật khẩu <strong>1 giờ</strong>; bản xuất dữ liệu JSON tự hủy sau <strong>15 phút</strong>; bản ghi consent xóa định kỳ theo <code>retentionDays</code>; hồ sơ tài khoản, yêu cầu dịch vụ &amp; CRM lưu tối đa <strong>3 năm</strong> hoặc ẩn danh trong <strong>72 giờ</strong> theo yêu cầu xóa (DSAR).</li>
+      <li><strong>Dữ liệu giao dịch:</strong> Đơn hàng, đối soát thanh toán <code>BN...</code>/COD và hoàn tiền được lưu giữ <strong>5–10 năm</strong> theo nghĩa vụ kế toán/thuế (giữ nguyên sổ sách giao dịch khi ẩn danh tài khoản).</li>
+      <li><strong>Nhật ký kiểm toán (Logs):</strong> Lưu <strong>365 ngày</strong> dạng bất biến (append-only, nối chuỗi SHA-256), không chứa mật khẩu/token/PII tự do.</li>
+      <li><strong>Bản sao lưu mã hóa (Backups):</strong> Xoay vòng tự động <strong>30 ngày</strong> (AES-256-GCM); khi khôi phục áp dụng lại danh sách ẩn danh DSAR.</li>
+      <li><strong>Ngoại lệ lưu giữ (Legal Hold):</strong> Dữ liệu đang có nghĩa vụ kế toán/thuế, khiếu nại/tranh chấp, sự cố an ninh hoặc consent đánh dấu <code>retentionDays = 0</code> được tạm hoãn xóa cho đến khi nghĩa vụ kết thúc.</li>
+    </ul>
+
     <h2 id="privacySecurity">8. Biện pháp bảo vệ dữ liệu cá nhân</h2>
     <ul>
       <li>Mật khẩu tài khoản được băm một chiều ở backend bằng <code>scrypt</code> kèm salt ngẫu nhiên; token khôi phục mật khẩu và mã tải xuống xuất dữ liệu được băm trước khi lưu.</li>

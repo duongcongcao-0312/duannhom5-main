@@ -1,9 +1,15 @@
 const assert = require("node:assert/strict");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { createServer } = require("../server");
 const { Database } = require("../backend/db");
+const {
+  DATA_RETENTION_POLICY,
+  evaluateRetentionDisposition,
+} = require("../backend/data-retention-policy");
 const { runPrivacyConsentRetention } = require("../scripts/prune-privacy-consents");
 
 test("file storage prunes only consent records whose explicit retention period expired", async (t) => {
@@ -92,4 +98,72 @@ test("retention runner defaults to dry-run and only prunes when apply is request
     ["prune", asOf],
   ]);
   assert.equal(output.length, 2);
+});
+
+test("DATA_RETENTION_POLICY defines all 4 domains, legal hold exceptions, and evaluates retention dispositions accurately", () => {
+  assert.deepEqual(DATA_RETENTION_POLICY.domains, ["operational", "transactional", "logs", "backups"]);
+  const coveredDomains = new Set(DATA_RETENTION_POLICY.schedule.map((item) => item.domain));
+  for (const domain of DATA_RETENTION_POLICY.domains) {
+    assert.ok(coveredDomains.has(domain), `Retention schedule must cover domain "${domain}"`);
+  }
+  assert.ok(DATA_RETENTION_POLICY.legalHoldExceptions.length >= 4);
+
+  // Operational TTL & consent deletion
+  assert.equal(evaluateRetentionDisposition("consent_records", { ageDays: 30 }).action, "retain");
+  assert.equal(evaluateRetentionDisposition("consent_records", { ageDays: 400 }).action, "delete");
+  assert.equal(
+    evaluateRetentionDisposition("consent_records", { ageDays: 400, legalHold: true }).action,
+    "legal_hold",
+  );
+
+  // Transactional anonymization & legal hold override
+  assert.equal(evaluateRetentionDisposition("orders_and_payments", { ageDays: 365 }).action, "retain");
+  assert.equal(evaluateRetentionDisposition("orders_and_payments", { ageDays: 3650 }).action, "anonymize");
+  assert.equal(
+    evaluateRetentionDisposition("orders_and_payments", { ageDays: 4000, legalHold: true }).action,
+    "legal_hold",
+  );
+
+  // Logs & backups
+  assert.equal(evaluateRetentionDisposition("admin_audit_logs", { ageDays: 365 }).action, "delete");
+  assert.equal(evaluateRetentionDisposition("encrypted_backups", { ageDays: 30 }).action, "delete");
+
+  // Public privacy page & internal retention policy doc are synchronized
+  const root = path.join(__dirname, "..");
+  const privacyHtml = fsSync.readFileSync(path.join(root, "privacy.html"), "utf8");
+  assert.match(privacyHtml, /id="dataRetentionSchedule"/);
+  assert.match(privacyHtml, /Legal Hold/);
+
+  const doc = fsSync.readFileSync(path.join(root, "docs", "data-retention-policy.md"), "utf8");
+  for (const keyword of ["operational", "transactional", "logs", "backups", "Legal Hold"]) {
+    assert.ok(doc.includes(keyword), `docs/data-retention-policy.md must include "${keyword}"`);
+  }
+});
+
+test("public retention policy API returns DATA_RETENTION_POLICY without authentication", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-retention-api-"));
+  const server = createServer({
+    ordersPath: path.join(directory, "orders.jsonl"),
+    usersPath: path.join(directory, "users.json"),
+    servicesPath: path.join(directory, "services.jsonl"),
+    auditLogPath: path.join(directory, "audit.jsonl"),
+  });
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  for (const endpoint of ["/api/policies/retention", "/api/v1/policies/retention"]) {
+    const res = await fetch(`${baseUrl}${endpoint}`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.policy.version, DATA_RETENTION_POLICY.version);
+    assert.deepEqual(body.policy.domains, ["operational", "transactional", "logs", "backups"]);
+    assert.equal(body.policy.schedule.length, DATA_RETENTION_POLICY.schedule.length);
+  }
 });

@@ -892,23 +892,30 @@ class PostgresDatabase {
     return rowCount > 0;
   }
 
-  async updateCollection(name, update) {
-    if (!collections.has(name)) throw new Error(`Unknown data collection: ${name}`);
+  async withTransaction(operation) {
     await this.init();
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const records = await this.readRelationalCollection(client, name, true);
-      const result = await update(records);
-      await this.writeRelationalCollection(client, name, records);
+      const result = await operation(client);
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => {});
       throw error;
     } finally {
       client.release();
     }
+  }
+
+  async updateCollection(name, update) {
+    if (!collections.has(name)) throw new Error(`Unknown data collection: ${name}`);
+    return this.withTransaction(async (client) => {
+      const records = await this.readRelationalCollection(client, name, true);
+      const result = await update(records);
+      await this.writeRelationalCollection(client, name, records);
+      return result;
+    });
   }
 
   async readRelationalCollection(queryable, name, forUpdate = false) {
@@ -2627,7 +2634,8 @@ class PostgresDatabase {
   }
 
   async anonymizeUserAccount(userId, actorId = "system", actorRole = ROLES.ADMIN) {
-    const anonymized = await this.updateCollection("users", (users) => {
+    const anonymized = await this.withTransaction(async (client) => {
+      const users = await this.readRelationalCollection(client, "users", true);
       const user = users.find((entry) => entry.id === userId);
       if (!user) return null;
       const shortId = String(user.id).slice(0, 8);
@@ -2645,9 +2653,12 @@ class PostgresDatabase {
       user.providerId = null;
       user.socialAccounts = [];
       delete user.passwordReset;
+      delete user.emailVerification;
       user.updatedBy = String(actorId || "system").trim() || "system";
       user.updatedAt = now;
       user.anonymizedAt = now;
+      await this.writeRelationalCollection(client, "users", users);
+      await client.query("DELETE FROM auth_sessions WHERE user_id = $1", [userId]);
       return user;
     });
     if (anonymized) {

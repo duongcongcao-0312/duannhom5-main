@@ -7,6 +7,7 @@ const {
   randomUUID,
 } = require("node:crypto");
 const books = require("../books-data");
+const { CatalogCache } = require("./catalog-cache");
 const {
   CustomerError,
   Database,
@@ -1814,7 +1815,7 @@ function createServer({
     }
   }
 
-  async function getCatalogBookList() {
+  async function loadCatalogBookList() {
     await waitForCatalogReady();
     const [custom, overrides] = await Promise.all([
       db.getCustomBooks(),
@@ -1872,9 +1873,14 @@ function createServer({
     return [...baseBooks, ...customBooks];
   }
 
+  const catalogCache = new CatalogCache({ loader: loadCatalogBookList });
+  const getCatalogBookList = () => catalogCache.get();
+
   const handlePublicRoute = createPublicRoutes({
     db,
     getCatalogBookList,
+    getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
+    invalidateCatalogCache: () => catalogCache.invalidate(),
     getBookCategories,
     getBookAuthors,
     getBookPublishers,
@@ -2032,6 +2038,8 @@ function createServer({
     getBookCatalog: () => bookCatalog,
     getCatalogBookOverrides: () => catalogBookOverrides,
     getCatalogBookList,
+    getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
+    invalidateCatalogCache: () => catalogCache.invalidate(),
     getBookCategories,
     isPasswordValid,
     listQuerySchema,

@@ -7,7 +7,7 @@ const {
 } = require("../request-limits");
 
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, privacyExportStore, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getCatalogCacheSnapshot = () => ({}), invalidateCatalogCache = () => {}, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, privacyExportStore, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
   async function recordAdminAudit(event) {
     if (!auditLogPath) return;
     await appendAuditEntry(auditLogPath, event);
@@ -165,6 +165,7 @@ if (
     generatedAt: new Date().toISOString(),
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     requests: monitoringMetrics.getSnapshot(),
+    catalogCache: getCatalogCacheSnapshot(),
     database: databaseStatus,
     backup: backupStatus,
   });
@@ -735,6 +736,7 @@ if (
       isCustom: true,
     };
     getBookCatalog().set(created.title, created);
+    invalidateCatalogCache();
     return created;
   });
   await recordAdminAudit({
@@ -816,6 +818,7 @@ if (
     }
     if (isCatalogBook) getCatalogBookOverrides().set(id, updated);
     if (result.title) getBookCatalog().set(result.title, result);
+    invalidateCatalogCache();
     return result;
   });
   await recordAdminAudit({
@@ -848,6 +851,7 @@ if (adminBookMatch && request.method === "DELETE") {
     const deleted = await db.deleteCustomBook(adminBookMatch[1]);
     if (!deleted) throw new RequestError(404, "Không tìm thấy sách.");
     if (previous?.title) getBookCatalog().delete(previous.title);
+    invalidateCatalogCache();
   });
   await recordAdminAudit({
     action: "book.delete",

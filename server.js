@@ -12,6 +12,7 @@ const {
   timingSafeEqual,
 } = require("node:crypto");
 const books = require("./books-data");
+const { CatalogCache } = require("./backend/catalog-cache");
 const {
   CustomerError,
   Database,
@@ -1861,7 +1862,7 @@ function createServer({
     }
   }
 
-  async function getCatalogBookList() {
+  async function loadCatalogBookList() {
     await waitForCatalogReady();
     const [custom, overrides] = await Promise.all([
       db.getCustomBooks(),
@@ -1919,6 +1920,9 @@ function createServer({
     return [...baseBooks, ...customBooks];
   }
 
+  const catalogCache = new CatalogCache({ loader: loadCatalogBookList });
+  const getCatalogBookList = () => catalogCache.get();
+
   const requestLimitOverrides = {
     ...(requestBodyLimits && typeof requestBodyLimits === "object" ? requestBodyLimits : {}),
     ...(Number.isSafeInteger(uploadMaxBytes) && uploadMaxBytes > 0 ? { upload: uploadMaxBytes } : {}),
@@ -1929,6 +1933,7 @@ function createServer({
   const handlePublicRoute = createPublicRoutes({
     db,
     getCatalogBookList,
+    getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
     getBookCategories,
     getBookAuthors,
     getBookPublishers,
@@ -2124,6 +2129,8 @@ function createServer({
     getBookCatalog: () => bookCatalog,
     getCatalogBookOverrides: () => catalogBookOverrides,
     getCatalogBookList,
+    getCatalogCacheSnapshot: () => catalogCache.getSnapshot(),
+    invalidateCatalogCache: () => catalogCache.invalidate(),
     getDatabaseMonitoringStatus,
     getBookAuthors,
     getBookPublishers,

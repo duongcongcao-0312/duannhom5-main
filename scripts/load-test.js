@@ -1,4 +1,4 @@
-const productionHosts = new Set([
+﻿const productionHosts = new Set([
   "duongcongcao-0312.github.io",
   "duannhom5-main.onrender.com",
 ]);
@@ -10,13 +10,22 @@ const maximumRequestCount = 500;
 const maximumConcurrency = 20;
 const maximumTimeoutMs = 60000;
 const scenarios = [
-  { path: "/health", method: "GET" },
-  { path: "/api/books?page=1&limit=10", method: "GET" },
+  { name: "browse", path: "/", method: "GET" },
+  { name: "catalog_search_data", path: "/api/books?page=1&limit=10&sort=title&order=asc", method: "GET" },
   {
+    name: "cart_quote",
     path: "/api/orders/quote",
     method: "POST",
     body: JSON.stringify({ items: [{ title: "Nhà giả kim", quantity: 1 }] }),
   },
+  {
+    name: "checkout_quote",
+    path: "/api/orders/quote",
+    method: "POST",
+    body: JSON.stringify({ items: [{ title: "Nhà giả kim", quantity: 1 }] }),
+  },
+  { name: "api_health", path: "/health", method: "GET" },
+  { name: "api_categories", path: "/api/categories", method: "GET" },
 ];
 
 function parseBoundedInteger(value, defaultValue, minimum, maximum, name) {
@@ -128,6 +137,7 @@ async function runLoadTest(options = {}) {
       const scenario = scenarios[requestIndex % scenarios.length];
       const startedAt = performance.now();
       const result = {
+        scenario: scenario.name,
         path: scenario.path,
         durationMs: 0,
         ok: false,
@@ -157,28 +167,51 @@ async function runLoadTest(options = {}) {
     }
   }
 
+  const runStartedAt = performance.now();
   await Promise.all(
     Array.from(
       { length: Math.min(config.concurrency, config.requestCount) },
       runWorker,
     ),
   );
+  const elapsedMs = performance.now() - runStartedAt;
 
   const failures = results.filter((result) => !result.ok);
   const statuses = {};
+  const byScenario = {};
   for (const result of results) {
     const key = String(result.status || result.error);
     statuses[key] = (statuses[key] || 0) + 1;
+    const scenario = byScenario[result.scenario] || { requests: 0, failed: 0, statuses: {}, durations: [] };
+    scenario.requests += 1;
+    scenario.durations.push(result.durationMs);
+    if (!result.ok) scenario.failed += 1;
+    scenario.statuses[key] = (scenario.statuses[key] || 0) + 1;
+    byScenario[result.scenario] = scenario;
   }
+  const scenarioSummary = Object.fromEntries(Object.entries(byScenario).map(([name, value]) => [name, {
+    requests: value.requests,
+    failed: value.failed,
+    errorRate: Number((value.failed / value.requests).toFixed(4)),
+    statuses: value.statuses,
+    latencyMs: {
+      p50: Number(percentile(value.durations, 0.5).toFixed(2)),
+      p95: Number(percentile(value.durations, 0.95).toFixed(2)),
+      p99: Number(percentile(value.durations, 0.99).toFixed(2)),
+    },
+  }]));
   const summary = {
     event: "load_test_complete",
     baseUrl: config.baseUrl,
-    scenario: "health-catalog-order-quote",
+    scenario: "booknest-representative-read-and-quote",
     requests: config.requestCount,
     concurrency: config.concurrency,
+    elapsedMs: Number(elapsedMs.toFixed(2)),
+    throughputRequestsPerSecond: Number((config.requestCount / (elapsedMs / 1000)).toFixed(2)),
     failed: failures.length,
     errorRate: Number((failures.length / config.requestCount).toFixed(4)),
     statuses,
+    byScenario: scenarioSummary,
     latencyMs: {
       p50: Number(percentile(results.map((result) => result.durationMs), 0.5).toFixed(2)),
       p95: Number(percentile(results.map((result) => result.durationMs), 0.95).toFixed(2)),

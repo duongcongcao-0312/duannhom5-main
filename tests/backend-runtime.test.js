@@ -66,6 +66,7 @@ test("server sheds excess concurrent requests with a retryable 503 and resumes a
     return getCustomBooks(...args);
   };
   const server = createServer({ maxConcurrentRequests: 1, database });
+  assert.equal(server.requestTimeout, 30_000);
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -88,6 +89,16 @@ test("server sheds excess concurrent requests with a retryable 503 and resumes a
   releaseCatalog();
   assert.equal((await firstRequest).status, 200);
   assert.equal((await fetch(`${baseUrl}/api/books`)).status, 200);
+});
+
+test("server request receive timeout is configurable within safe bounds", async (t) => {
+  const server = createServer({ requestTimeoutMs: 5_000 });
+  assert.equal(server.requestTimeout, 5_000);
+  await assert.rejects(
+    async () => createServer({ requestTimeoutMs: 999 }),
+    /requestTimeoutMs must be an integer between 1000 and 120000/,
+  );
+  t.after(async () => new Promise((resolve) => server.close(resolve)));
 });
 
 test("file write queues reject work beyond their bound and drain cleanly", async () => {

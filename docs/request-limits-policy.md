@@ -30,3 +30,29 @@ Endpoint `POST /api/admin/uploads/book-cover` (yêu cầu quyền `write:books`,
 - **Kiểm tra tên tệp:** chặn đường dẫn tương đối (`..`, `/`, `\`), ký tự điều khiển/null byte, tệp ẩn bắt đầu bằng `.`, tên dài quá 120 ký tự, phần mở rộng không khớp MIME và phần mở rộng kép nguy hiểm (`.php.png`, `.svg.jpg`, `.html.webp`, `.js.png`, `.exe.png`, ...).
 - **Lưu trữ cô lập & chống ghi đè:** không dùng tên tệp do client gửi; hệ thống sinh tên ngẫu nhiên `<uuid>.<ext>` lưu trong thư mục riêng (`uploadsDir`, mặc định `data/uploads/book-covers`) bằng ghi độc quyền (`flag: "wx"`, quyền `0600`) có kiểm tra containment bằng `path.resolve`.
 - **Phục vụ an toàn:** `GET /api/uploads/book-covers/:filename` chỉ chấp nhận đúng mẫu UUID + `.jpg|.png|.webp` và luôn gắn `X-Content-Type-Options: nosniff`, `Content-Disposition: inline`, `Content-Security-Policy: default-src 'none'; sandbox`.
+
+## 4. Runtime, pagination và reverse proxy (BN-136)
+- **Thời gian nhận/xử lý:** Node.js `requestTimeout` mặc định **30 giây**, cấu hình bằng `REQUEST_TIMEOUT_MS` trong khoảng 1–120 giây. Header timeout là 10 giây; socket inactivity timeout là 60 giây; PostgreSQL connection/query timeout là 10 giây. Proxy nên dùng `client_body_timeout` không thấp hơn request timeout và `proxy_read_timeout` tối thiểu 60 giây.
+- **Concurrency:** tối đa **100 request đang xử lý trên mỗi instance**, cấu hình bằng `MAX_CONCURRENT_REQUESTS` (1–1000). Request vượt mức nhận `503`, `Retry-After: 1` và `Connection: close`; response được ghi vào HTTP request metrics/log theo route đã chuẩn hóa, status và duration, không ghi body/query/IP. Mỗi replica có hạn mức riêng; không xem đây là giới hạn tổng cụm.
+- **Phân trang:** endpoint phân trang kiểm tra query theo schema; các danh sách chính giới hạn `limit` tối đa 100 và page tối đa 10.000. Audit list admin giới hạn riêng 200 bản ghi. URL vẫn bị giới hạn 2.048 ký tự.
+- **Reverse proxy/gateway:** phải đặt body cap ít nhất 2.162.688 bytes (2 MiB file + 64 KiB multipart overhead) để upload hợp lệ không bị proxy từ chối trước ứng dụng; giới hạn lớn hơn ở proxy không làm tăng giới hạn ứng dụng. Giữ timeout upstream tối thiểu 60 giây và truyền status/`Retry-After` nguyên vẹn. Với Render, ingress do nền tảng quản lý; các giới hạn ứng dụng ở trên vẫn là giới hạn bắt buộc.
+
+Ví dụ Nginx cho route upload và upstream (đặt `client_max_body_size` trong `server` hoặc `location`; cấu hình giới hạn body endpoint-specific cần giữ các giá trị lớn hơn cho upload):
+
+```nginx
+client_body_timeout 30s;
+proxy_read_timeout 60s;
+proxy_send_timeout 30s;
+
+location /api/admin/uploads/ {
+    client_max_body_size 2162688;
+    proxy_pass http://booknest;
+}
+
+location /api/ {
+    client_max_body_size 131072;
+    proxy_pass http://booknest;
+}
+```
+
+Không cấu hình một `client_max_body_size` 128 KiB ở cấp `server` nếu muốn route upload nhận được 2 MiB; Nginx location upload cần override như ví dụ. Khi thay đổi các giới hạn, cập nhật đồng thời `backend/request-limits.js`, schema phân trang, biến môi trường triển khai và reverse proxy/gateway. Kiểm thử giá trị đúng ngưỡng và ngưỡng +1 trước khi phát hành.

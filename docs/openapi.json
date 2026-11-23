@@ -40,6 +40,23 @@
       "allowedMimeTypes": ["image/jpeg", "image/png", "image/webp"]
     }
   },
+  "x-request-runtime-limits": {
+    "maxConcurrentRequestsPerInstance": 100,
+    "maxConcurrentRequestsEnvironmentVariable": "MAX_CONCURRENT_REQUESTS",
+    "requestReceiveTimeoutMs": 30000,
+    "requestReceiveTimeoutEnvironmentVariable": "REQUEST_TIMEOUT_MS",
+    "headersTimeoutMs": 10000,
+    "socketInactivityTimeoutMs": 60000,
+    "pagination": {
+      "defaultMaximumLimit": 100,
+      "adminAuditMaximumLimit": 200,
+      "maximumPage": 10000
+    },
+    "overloadResponse": {
+      "status": 503,
+      "retryAfterSeconds": 1
+    }
+  },
   "x-rate-limits": {
     "login": { "scope": "ip+email", "windowMinutes": 15 },
     "register": { "scope": "ip", "windowMinutes": 15 },

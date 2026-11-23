@@ -1061,7 +1061,12 @@ function createServer({
   addressesPath = path.join(root, "data", "addresses.json"),
   uploadsDir = path.join(root, "data", "uploads", "book-covers"),
   requestBodyLimits = {},
-  maxConcurrentRequests = 100,
+  maxConcurrentRequests = Number.isSafeInteger(Number(process.env.MAX_CONCURRENT_REQUESTS)) && Number(process.env.MAX_CONCURRENT_REQUESTS) > 0
+    ? Number(process.env.MAX_CONCURRENT_REQUESTS)
+    : 100,
+  requestTimeoutMs = Number.isSafeInteger(Number(process.env.REQUEST_TIMEOUT_MS)) && Number(process.env.REQUEST_TIMEOUT_MS) >= 1_000
+    ? Number(process.env.REQUEST_TIMEOUT_MS)
+    : 30_000,
   uploadMaxBytes = UPLOAD_POLICY.maxFileBytes,
   backupStatusFile = path.resolve(
     process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
@@ -1144,6 +1149,9 @@ function createServer({
   }
   if (!Number.isSafeInteger(maxConcurrentRequests) || maxConcurrentRequests < 1 || maxConcurrentRequests > 1000) {
     throw new RangeError("maxConcurrentRequests must be an integer between 1 and 1000.");
+  }
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1_000 || requestTimeoutMs > 120_000) {
+    throw new RangeError("requestTimeoutMs must be an integer between 1000 and 120000.");
   }
   const trustedProxyIpList = parseTrustedProxyIps(trustedProxyIps);
   if (trustedProxyHops > 0 && trustedProxyIpList.length === 0) {
@@ -2320,6 +2328,28 @@ function createServer({
     if (inFlightRequests >= maxConcurrentRequests) {
       response.setHeader("Retry-After", "1");
       response.setHeader("Connection", "close");
+      let pathname = "/";
+      try {
+        pathname = new URL(request.url, "http://localhost").pathname;
+      } catch {
+        pathname = "<invalid-url>";
+      }
+      const sample = monitoringMetrics.recordRequest({
+        method: request.method,
+        pathname,
+        status: 503,
+        durationMs: Number(process.hrtime.bigint() - requestStartedAt) / 1e6,
+      });
+      console.warn(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "warn",
+        event: "http_request_overloaded",
+        requestId: redactLogText(requestId),
+        method: sample.method,
+        route: sample.route,
+        status: sample.status,
+        durationMs: Number(sample.durationMs.toFixed(2)),
+      }));
       const { payload } = buildApiErrorPayload({
         error: new RequestError(503, "Máy chủ đang bận. Vui lòng thử lại sau."),
         status: 503,
@@ -2438,7 +2468,7 @@ function createServer({
     });
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 30_000;
+  server.requestTimeout = requestTimeoutMs;
   server.keepAliveTimeout = 5_000;
   server.timeout = 60_000;
   server.once("close", () => {

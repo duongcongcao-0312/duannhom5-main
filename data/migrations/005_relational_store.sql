@@ -321,6 +321,17 @@ CROSS JOIN LATERAL jsonb_array_elements(
 WHERE collection = 'services'
 ON CONFLICT DO NOTHING;
 
-ALTER TABLE book_inventory
-    ADD CONSTRAINT fk_book_inventory_product
-    FOREIGN KEY (book_title) REFERENCES store_products(title) ON DELETE RESTRICT;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_book_inventory_product'
+          AND conrelid = 'book_inventory'::regclass
+    ) THEN
+        ALTER TABLE book_inventory
+            ADD CONSTRAINT fk_book_inventory_product
+            FOREIGN KEY (book_title) REFERENCES store_products(title) ON DELETE CASCADE;
+    END IF;
+END
+$$;

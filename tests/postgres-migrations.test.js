@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 require("dotenv").config();
 const { Pool } = require("pg");
-const { runMigrations } = require("../scripts/migrate");
+const { loadMigrationFiles, runMigrations } = require("../scripts/migrate");
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 const migrationsDirectory = path.join(__dirname, "..", "data", "migrations");
@@ -169,10 +169,11 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
     assert.equal(foreignKeys.rowCount, 3);
     assert.ok(foreignKeys.rows.every((row) => row.confdeltype === "r"));
 
+    const expectedMigrations = await loadMigrationFiles(migrationsDirectory);
     const history = await client.query("SELECT version FROM schema_migrations ORDER BY version");
     assert.deepEqual(
       history.rows.map((row) => row.version),
-      Array.from({ length: 16 }, (_, index) => String(index + 1).padStart(3, "0")),
+      expectedMigrations.map((migration) => migration.version),
     );
 
     const idempotencyTable = await client.query(

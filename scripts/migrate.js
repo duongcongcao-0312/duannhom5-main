@@ -2,6 +2,10 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { Pool } = require("pg");
 const { redactLogText } = require("../backend/monitoring");
+const {
+  assertPostMigrationIntegrity,
+  verifyPostMigrationIntegrity,
+} = require("../backend/migration-integrity");
 require("dotenv").config();
 
 const migrationsDirectory = path.join(__dirname, "..", "data", "migrations");
@@ -68,6 +72,14 @@ async function migrate() {
   const client = await pool.connect();
   try {
     await runMigrations(client);
+    const integrity = await assertPostMigrationIntegrity(client);
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: "info",
+      event: "database_migration_integrity_verified",
+      appliedMigrations: integrity.appliedMigrations.length,
+      counts: integrity.counts,
+    }));
     console.log("Database migrations completed.");
   } finally {
     client.release();
@@ -87,4 +99,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runMigrations };
+module.exports = {
+  assertPostMigrationIntegrity,
+  runMigrations,
+  verifyPostMigrationIntegrity,
+};

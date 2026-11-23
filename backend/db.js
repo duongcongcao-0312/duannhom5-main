@@ -454,6 +454,19 @@ class Database {
     });
   }
 
+  async markPasswordResetRequired(userId, required = true) {
+    return this.updateUsers((users) => {
+      const user = users.find((entry) => entry.id === userId);
+      if (!user) return null;
+      user.mustResetPassword = Boolean(required);
+      if (required) {
+        delete user.passwordReset;
+      }
+      user.updatedAt = new Date().toISOString();
+      return user;
+    });
+  }
+
   async resetPassword(token, password) {
     return this.updateUsers((users) => {
       const user = users.find((entry) => (
@@ -465,6 +478,7 @@ class Database {
       if (!user) return null;
       user.password = hashPassword(password);
       user.passwordAuthEnabled = true;
+      user.mustResetPassword = false;
       delete user.passwordReset;
       user.updatedAt = new Date().toISOString();
       return user.id;

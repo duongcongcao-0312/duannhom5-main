@@ -7,7 +7,7 @@ const {
 } = require("../request-limits");
 
 function createAdminRoutes(dependencies) {
-  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
+  const { CUSTOMER_ROLE_PERMISSIONS, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLE_PERMISSIONS, ROLES, RequestError, STUDENT_VERIFICATION_STATUSES, allowedOrderStatuses, allowedPaymentStatuses, allowedServiceStatuses, assertStockCoversReservations, assertUniqueBookTitle, auditLogPath, backupStatusFile, bookCount, catalogBookById, db, enqueueOrderWrite, getBookCatalog, getCatalogBookOverrides, getCatalogBookList, getDatabaseMonitoringStatus, getBookCategories, getBookAuthors, getBookPublishers, normalizeAuthorSlug, normalizePublisherSlug, saveBookAuthors, saveBookPublishers, normalizeCategorySlug, saveBookCategories, isPasswordValid, listQuerySchema, monitoringMetrics, normalizeAdminBook, normalizeCoupon, ordersPath, paginateList, payloadSchemas, privacyExportStore, publicUser, readAuditEntries, readBackupStatus, readJson, readRawBody, requireJsonObject, requireRole, sanitizePlainText, sendJson, sendPaginatedJson, sessionStore, startedAt, uploadMaxBytes, uploadsDir, validateQuery, waitForCatalogReady } = dependencies;
   async function recordAdminAudit(event) {
     if (!auditLogPath) return;
     await appendAuditEntry(auditLogPath, event);
@@ -1030,6 +1030,60 @@ if (
     createdAt: u.createdAt,
   }));
   sendPaginatedJson(response, paginateList(safeUsers, filters, "createdAt"));
+  return true;
+}
+
+const adminUserRevokeMatch = requestUrl.pathname.match(
+  /^\/api\/admin\/users\/([0-9a-f-]+)\/revoke-sessions$/i,
+);
+if (adminUserRevokeMatch && request.method === "POST") {
+  const actor = await requireRole(request, "write:users");
+  const targetUserId = adminUserRevokeMatch[1];
+  let payload = {};
+  if (Number(request.headers["content-length"] || 0) > 0 || request.headers["content-type"]) {
+    payload = requireJsonObject(
+      await readJson(request),
+      "Dữ liệu thu hồi phiên không hợp lệ.",
+      {
+        allowed: ["forcePasswordReset", "reason"],
+        types: { forcePasswordReset: "boolean", reason: "string" },
+      },
+    );
+  }
+  const targetUser = await db.findUserById(targetUserId);
+  if (!targetUser) {
+    throw new RequestError(404, "Không tìm thấy tài khoản người dùng.");
+  }
+  const forcePasswordReset = payload.forcePasswordReset === true;
+  const reason = sanitizePlainText(payload.reason || "suspected_compromise", 120) || "suspected_compromise";
+  await sessionStore.destroyUserSessions(targetUser.id);
+  const exportsPurged =
+    privacyExportStore && typeof privacyExportStore.purgeUserExports === "function"
+      ? privacyExportStore.purgeUserExports(targetUser.id)
+      : 0;
+  if (forcePasswordReset && typeof db.markPasswordResetRequired === "function") {
+    await db.markPasswordResetRequired(targetUser.id, true);
+  }
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "security.account.sessions_revoked",
+      actorId: actor.userId,
+      actorRole: actor.role,
+      entityType: "user",
+      entityId: targetUser.id,
+      metadata: {
+        forcePasswordReset,
+        exportsPurged,
+        reason,
+      },
+    });
+  }
+  sendJson(response, 200, {
+    revoked: true,
+    userId: targetUser.id,
+    forcePasswordReset,
+    exportsPurged,
+  });
   return true;
 }
 

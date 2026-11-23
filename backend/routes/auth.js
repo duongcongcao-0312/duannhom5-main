@@ -1,3 +1,4 @@
+const { appendAuditEntry } = require("../audit");
 const { redactLogText } = require("../monitoring");
 const { requireOwnershipOrPermission } = require("../authorization");
 const {
@@ -16,7 +17,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createAuthRoutes(dependencies) {
-  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, db, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
+  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
   function toRequestError(error) {
     if (error instanceof ProfileUpdateError) {
       return withErrorCode(new RequestError(error.status, error.message), error.errorCode);
@@ -257,6 +258,15 @@ if (
     !verifyPassword(password, user.password)
   ) {
     throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
+  }
+  if (user.mustResetPassword === true) {
+    throw withErrorCode(
+      new RequestError(
+        403,
+        "Tài khoản đang yêu cầu đặt lại mật khẩu vì lý do bảo mật. Vui lòng dùng chức năng khôi phục mật khẩu trước khi đăng nhập.",
+      ),
+      "PASSWORD_RESET_REQUIRED",
+    );
   }
   await clearRateLimit("login", address);
   const session = await sessionStore.createSession(user);
@@ -604,6 +614,38 @@ if (
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   await sessionStore.destroySession(token);
   sendJson(response, 200, { message: "Đã đăng xuất thành công." });
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/auth/logout-all" &&
+  request.method === "POST"
+) {
+  const session = await getAuthUser(request);
+  if (!session) throw new RequestError(401, "Chưa đăng nhập.");
+  await sessionStore.destroyUserSessions(session.userId);
+  const exportsPurged =
+    privacyExportStore && typeof privacyExportStore.purgeUserExports === "function"
+      ? privacyExportStore.purgeUserExports(session.userId)
+      : 0;
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.sessions.revoke_all",
+      actorId: session.userId,
+      actorRole: session.role,
+      entityType: "user",
+      entityId: session.userId,
+      metadata: {
+        reason: "user_logout_all",
+        exportsPurged,
+      },
+    });
+  }
+  sendJson(response, 200, {
+    revoked: true,
+    exportsPurged,
+    message: "Đã thu hồi toàn bộ phiên đăng nhập trên mọi thiết bị.",
+  });
   return true;
 }
 

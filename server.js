@@ -43,6 +43,7 @@ const {
   applyApiVersionHeaders,
   resolveApiVersion,
 } = require("./backend/api-versioning");
+const { validateCsrfRequest } = require("./backend/csrf");
 const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
@@ -2169,7 +2170,7 @@ function createServer({
     if (request.method === "OPTIONS") {
       response.writeHead(origin && !allowedOrigins.has(origin) ? 403 : 204, {
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code, X-Export-Token, X-File-Name",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-Request-Id, X-Order-Access-Code, X-Export-Token, X-File-Name, X-CSRF-Token",
       });
       response.end();
       return;
@@ -2187,6 +2188,13 @@ function createServer({
         throw versionError;
       }
       requestUrl.pathname = versionInfo.canonicalPath;
+    }
+
+    const csrfCheck = validateCsrfRequest(request, requestUrl.pathname, allowedOrigins);
+    if (!csrfCheck.ok) {
+      const csrfError = new RequestError(403, csrfCheck.message);
+      csrfError.errorCode = csrfCheck.errorCode;
+      throw csrfError;
     }
 
     assertRequestSizeHeaders(request, requestUrl.pathname, requestLimitOverrides);

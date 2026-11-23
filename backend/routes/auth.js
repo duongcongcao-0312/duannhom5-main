@@ -1,4 +1,5 @@
 const { appendAuditEntry } = require("../audit");
+const { CSRF_COOKIE_NAME, createCsrfToken } = require("../csrf");
 const { redactLogText } = require("../monitoring");
 const { requireOwnershipOrPermission } = require("../authorization");
 const {
@@ -25,6 +26,25 @@ function createAuthRoutes(dependencies) {
     return error;
   }
   return async function handleRoute(request, response, requestUrl) {
+if (
+  requestUrl.pathname === "/api/auth/csrf-token" &&
+  request.method === "GET"
+) {
+  const csrfToken = createCsrfToken();
+  const isSecure = request.socket?.encrypted === true ||
+    String(process.env.NODE_ENV || "").toLowerCase() === "production";
+  response.setHeader(
+    "Set-Cookie",
+    `${CSRF_COOKIE_NAME}=${csrfToken}; Path=/; SameSite=Lax${isSecure ? "; Secure" : ""}`,
+  );
+  sendJson(response, 200, {
+    csrfToken,
+    cookieName: CSRF_COOKIE_NAME,
+    headerName: "X-CSRF-Token",
+  });
+  return true;
+}
+
 if (
   requestUrl.pathname === "/api/auth/password-reset" &&
   request.method === "POST"

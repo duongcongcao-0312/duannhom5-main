@@ -1099,6 +1099,7 @@ function createServer({
   passwordResetIpLimit = 30,
   passwordResetEmailLimit = 5,
   passwordResetWindowMs = 15 * 60 * 1000,
+  passwordResetTtlMs = 60 * 60 * 1000,
   orderRequestLimit = 30,
   orderRequestWindowMs = 15 * 60 * 1000,
 } = {}) {
@@ -2014,6 +2015,7 @@ function createServer({
     passwordResetIpLimit,
     passwordResetEmailLimit,
     passwordResetWindowMs,
+    passwordResetTtlMs,
     passwordResetMailer,
     payloadSchemas,
     privacyExportStore,

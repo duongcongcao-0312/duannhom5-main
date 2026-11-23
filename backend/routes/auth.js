@@ -30,7 +30,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createAuthRoutes(dependencies) {
-  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, dispatchMonitoringAlert, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, loginAccountAttemptLimit = 10, loginAccountWindowMs = 15 * 60 * 1000, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
+  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, dispatchMonitoringAlert, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, loginAccountAttemptLimit = 10, loginAccountWindowMs = 15 * 60 * 1000, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetTtlMs = 60 * 60 * 1000, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
   function toRequestError(error) {
     if (error instanceof ProfileUpdateError) {
       return withErrorCode(new RequestError(error.status, error.message), error.errorCode);
@@ -121,7 +121,7 @@ if (
   const user = await db.createPasswordResetToken(
     email,
     tokenHash,
-    new Date(now + 60 * 60 * 1000).toISOString(),
+    new Date(now + passwordResetTtlMs).toISOString(),
   );
   if (user) {
     resetBase.hash = new URLSearchParams({ resetToken: token }).toString();
@@ -145,6 +145,19 @@ if (
         "Không thể gửi email khôi phục. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
       );
     }
+  }
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.password_reset.requested",
+      actorId: null,
+      actorRole: "anonymous",
+      entityType: "auth",
+      entityId: null,
+      outcome: "attempt",
+      statusCode: 200,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: { deliveryAttempted: true },
+    }).catch(() => {});
   }
   sendJson(response, 200, {
     message: "Nếu email được đăng ký, hướng dẫn khôi phục mật khẩu sẽ được gửi đến hộp thư của bạn.",
@@ -186,6 +199,23 @@ if (
     throw new RequestError(400, "Liên kết khôi phục không hợp lệ hoặc đã hết hạn.");
   }
   await sessionStore.destroyUserSessions(userId);
+  if (privacyExportStore && typeof privacyExportStore.purgeUserExports === "function") {
+    privacyExportStore.purgeUserExports(userId);
+  }
+  response.setHeader("Set-Cookie", buildClearAuthCookieHeaders(request));
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.password_reset.completed",
+      actorId: userId,
+      actorRole: "user",
+      entityType: "user",
+      entityId: userId,
+      outcome: "success",
+      statusCode: 200,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: { sessionsRevoked: true },
+    }).catch(() => {});
+  }
   sendJson(response, 200, { message: "Mật khẩu đã được cập nhật." });
   return true;
 }

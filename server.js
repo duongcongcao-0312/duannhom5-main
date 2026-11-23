@@ -151,6 +151,7 @@ const publicRootFiles = new Set([
   "main.js",
   "manifest.json",
   "consumer-tax.html",
+  "content-rights.html",
   "ecommerce-compliance.html",
   "privacy.html",
   "refund.html",

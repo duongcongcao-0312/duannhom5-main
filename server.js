@@ -2027,6 +2027,7 @@ function createServer({
   });
   const handlePrivacyRoute = createPrivacyRoutes({
     RequestError,
+    addressStore,
     allowedConsentPurposes,
     allowedConsentSources,
     allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses,

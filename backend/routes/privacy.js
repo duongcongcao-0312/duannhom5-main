@@ -16,7 +16,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createPrivacyRoutes(dependencies) {
-  const { RequestError, allowedConsentPurposes, allowedConsentSources, allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses, allowedPrivacyDataRequestTypes: privacyDataRequestTypes, auditLogPath, db, getAuthUser, ordersPath, payloadSchemas, privacyExportLimit = 5, privacyExportStore, privacyExportWindowMs = 15 * 60 * 1000, rateLimitRequest, readJson, requireAdmin, requireJsonObject, requireRole, sanitizePlainText, sendJson, sessionStore, verifyPasswordReauthentication } = dependencies;
+  const { RequestError, addressStore, allowedConsentPurposes, allowedConsentSources, allowedPrivacyDataRequestStatuses: privacyDataRequestStatuses, allowedPrivacyDataRequestTypes: privacyDataRequestTypes, auditLogPath, db, getAuthUser, ordersPath, payloadSchemas, privacyExportLimit = 5, privacyExportStore, privacyExportWindowMs = 15 * 60 * 1000, rateLimitRequest, readJson, requireAdmin, requireJsonObject, requireRole, sanitizePlainText, sendJson, sessionStore, verifyPasswordReauthentication } = dependencies;
   return async function handleRoute(request, response, requestUrl) {
 if (
   requestUrl.pathname === "/api/privacy/consents" &&
@@ -257,16 +257,41 @@ if (updatePrivacyDataRequestMatch && request.method === "PATCH") {
   }
 
   let anonymized = false;
+  let addressesDeleted = 0;
+  let exportsPurged = 0;
   if (payload.executeAnonymization === true && typeof db.anonymizeUserAccount === "function") {
     const result = await db.anonymizeUserAccount(dataRequest.subjectId, actor.userId, actor.role);
     anonymized = Boolean(result);
-    if (anonymized && sessionStore && typeof sessionStore.destroyUserSessions === "function") {
-      await sessionStore.destroyUserSessions(dataRequest.subjectId);
+    if (anonymized) {
+      if (sessionStore && typeof sessionStore.destroyUserSessions === "function") {
+        await sessionStore.destroyUserSessions(dataRequest.subjectId);
+      }
+      if (addressStore && typeof addressStore.deleteByUser === "function") {
+        addressesDeleted = await addressStore.deleteByUser(dataRequest.subjectId);
+      }
+      if (privacyExportStore && typeof privacyExportStore.purgeUserExports === "function") {
+        exportsPurged = privacyExportStore.purgeUserExports(dataRequest.subjectId);
+      }
+      if (auditLogPath) {
+        await appendAuditEntry(auditLogPath, {
+          action: "privacy.account.anonymize",
+          actorId: actor.userId,
+          actorRole: actor.role,
+          entityType: "privacy_data_request",
+          entityId: dataRequest.id,
+          metadata: {
+            addressesDeleted,
+            exportsPurged,
+            sessionsRevoked: true,
+            ordersPreservedForAccounting: true,
+          },
+        });
+      }
     }
   }
 
   sendJson(response, 200, payload.executeAnonymization === true
-    ? { request: dataRequest, anonymized }
+    ? { request: dataRequest, anonymized, addressesDeleted, exportsPurged }
     : { request: dataRequest });
   return true;
 }

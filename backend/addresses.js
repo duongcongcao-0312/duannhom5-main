@@ -134,6 +134,18 @@ class AddressStore {
       return removed;
     });
   }
+
+  async deleteByUser(userId) {
+    return this.enqueue(async () => {
+      const all = await this.readAll();
+      const remaining = all.filter((entry) => entry && entry.userId !== userId);
+      const removedCount = all.length - remaining.length;
+      if (removedCount > 0) {
+        await atomicWriteJson(this.filePath, remaining);
+      }
+      return removedCount;
+    });
+  }
 }
 
 module.exports = { AddressStore };

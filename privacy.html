@@ -145,6 +145,13 @@
       <li><strong>Ngoại lệ lưu giữ (Legal Hold):</strong> Dữ liệu đang có nghĩa vụ kế toán/thuế, khiếu nại/tranh chấp, sự cố an ninh hoặc consent đánh dấu <code>retentionDays = 0</code> được tạm hoãn xóa cho đến khi nghĩa vụ kết thúc.</li>
     </ul>
 
+    <h2 id="dataDeletionGuide">7.2. Hướng dẫn yêu cầu xóa hoặc ẩn danh dữ liệu cá nhân</h2>
+    <ul>
+      <li><strong>Cách gửi yêu cầu:</strong> Đăng nhập tài khoản, chọn <em>Xóa / ẩn danh dữ liệu</em> (<code>delete</code>) tại mục “Yêu cầu dữ liệu cá nhân” trên trang này (hoặc gửi qua email hỗ trợ/trực tiếp kèm xác minh chủ tài khoản). Hệ thống không hỗ trợ xóa trực tiếp không kiểm soát qua <code>DELETE /api/v1/users/:id</code> để đảm bảo an toàn và toàn vẹn sổ sách.</li>
+      <li><strong>Phạm vi xóa &amp; ẩn danh (mục tiêu 72 giờ):</strong> Ẩn danh họ tên, email, thông tin sinh viên, thông tin liên hệ và liên kết social; khóa đăng nhập &amp; thu hồi toàn bộ phiên đang hoạt động; <strong>xóa sổ địa chỉ giao hàng đã lưu</strong> và <strong>hủy mọi bản xuất dữ liệu cá nhân đang tồn tại</strong>.</li>
+      <li><strong>Dữ liệu lưu giữ theo nghĩa vụ hợp lệ:</strong> Lịch sử đơn hàng, mã đối soát thanh toán và chứng từ kế toán/thuế được giữ nguyên tính toàn vẹn sổ sách; nhật ký kiểm toán chỉ lưu vết xử lý tối thiểu (số địa chỉ đã xóa, số bản xuất đã hủy, không lưu lại PII đã xóa).</li>
+    </ul>
+
     <h2 id="privacySecurity">8. Biện pháp bảo vệ dữ liệu cá nhân</h2>
     <ul>
       <li>Mật khẩu tài khoản được băm một chiều ở backend bằng <code>scrypt</code> kèm salt ngẫu nhiên; token khôi phục mật khẩu và mã tải xuống xuất dữ liệu được băm trước khi lưu.</li>

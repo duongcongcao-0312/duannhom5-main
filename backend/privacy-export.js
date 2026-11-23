@@ -253,6 +253,18 @@ class PrivacyExportStore {
     };
   }
 
+  purgeUserExports(userId) {
+    let purged = 0;
+    for (const [id, entry] of this.exports.entries()) {
+      if (entry.userId === userId) {
+        entry.payload = null;
+        this.exports.delete(id);
+        purged += 1;
+      }
+    }
+    return purged;
+  }
+
   listUserExports(userId) {
     this.pruneExpiredPayloads();
     const current = this.now();

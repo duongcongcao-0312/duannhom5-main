@@ -203,15 +203,23 @@ const allowedConsentSources = new Set(["web", "admin", "api"]);
 
 function enqueueOrderWrite(ordersPath, operation) {
   const queueKey = path.resolve(ordersPath);
-  const previous = orderWriteQueues.get(queueKey) || Promise.resolve();
-  const result = previous.then(operation);
-  const queueEntry = result.then(() => undefined, () => undefined);
-  orderWriteQueues.set(queueKey, queueEntry);
-  queueEntry.then(() => {
-    if (orderWriteQueues.get(queueKey) === queueEntry) {
+  const queue = orderWriteQueues.get(queueKey) || { tail: Promise.resolve(), pending: 0 };
+  if (queue.pending >= 100) {
+    const error = new Error("Hệ thống đang quá tải. Vui lòng thử lại sau.");
+    error.status = 503;
+    error.code = "QUEUE_OVERLOADED";
+    return Promise.reject(error);
+  }
+  queue.pending += 1;
+  const result = queue.tail.then(operation);
+  queue.tail = result.catch(() => {});
+  orderWriteQueues.set(queueKey, queue);
+  result.finally(() => {
+    queue.pending -= 1;
+    if (queue.pending === 0 && orderWriteQueues.get(queueKey) === queue) {
       orderWriteQueues.delete(queueKey);
     }
-  });
+  }).catch(() => {});
   return result;
 }
 
@@ -1053,6 +1061,7 @@ function createServer({
   addressesPath = path.join(root, "data", "addresses.json"),
   uploadsDir = path.join(root, "data", "uploads", "book-covers"),
   requestBodyLimits = {},
+  maxConcurrentRequests = 100,
   uploadMaxBytes = UPLOAD_POLICY.maxFileBytes,
   backupStatusFile = path.resolve(
     process.env.BACKUP_STATUS_FILE || path.join(root, "data", "backup-status.json"),
@@ -1132,6 +1141,9 @@ function createServer({
   }
   if (!Number.isSafeInteger(trustedProxyHops) || trustedProxyHops < 0) {
     throw new RangeError("RATE_LIMIT_TRUSTED_PROXY_HOPS must be a non-negative integer.");
+  }
+  if (!Number.isSafeInteger(maxConcurrentRequests) || maxConcurrentRequests < 1 || maxConcurrentRequests > 1000) {
+    throw new RangeError("maxConcurrentRequests must be an integer between 1 and 1000.");
   }
   const trustedProxyIpList = parseTrustedProxyIps(trustedProxyIps);
   if (trustedProxyHops > 0 && trustedProxyIpList.length === 0) {
@@ -2297,6 +2309,7 @@ function createServer({
     await serveStatic(request, response, requestUrl.pathname, staticRoot);
   }
 
+  let inFlightRequests = 0;
   const server = http.createServer((request, response) => {
     const requestId = getRequestId(request);
     const requestStartedAt = process.hrtime.bigint();
@@ -2304,6 +2317,27 @@ function createServer({
     for (const [name, value] of Object.entries(securityHeaders)) {
       response.setHeader(name, value);
     }
+    if (inFlightRequests >= maxConcurrentRequests) {
+      response.setHeader("Retry-After", "1");
+      response.setHeader("Connection", "close");
+      const { payload } = buildApiErrorPayload({
+        error: new RequestError(503, "Máy chủ đang bận. Vui lòng thử lại sau."),
+        status: 503,
+        isExpectedError: true,
+        requestId,
+      });
+      sendJson(response, 503, payload, request.method);
+      return;
+    }
+    inFlightRequests += 1;
+    let released = false;
+    const releaseRequestSlot = () => {
+      if (released) return;
+      released = true;
+      inFlightRequests -= 1;
+    };
+    response.once("finish", releaseRequestSlot);
+    response.once("close", releaseRequestSlot);
     const forwardedProto = String(request.headers["x-forwarded-proto"] || "")
       .split(",")[0]
       .trim()
@@ -2355,7 +2389,8 @@ function createServer({
         error instanceof RequestError ||
         error instanceof RequestLimitError ||
         error instanceof ValidationError ||
-        error instanceof CustomerError;
+        error instanceof CustomerError ||
+        error?.code === "QUEUE_OVERLOADED";
       const status =
         isExpectedError &&
         Number.isInteger(error.status) &&
@@ -2402,6 +2437,10 @@ function createServer({
       void sendHtmlError(response, status, status === 404 ? "404" : "500");
     });
   });
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+  server.timeout = 60_000;
   server.once("close", () => {
     sessionStore.close();
     privacyExportStore.close();

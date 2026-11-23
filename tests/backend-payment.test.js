@@ -53,6 +53,9 @@ function createPaymentDatabase() {
   return {
     events,
     orders,
+    async consumeRateLimit(_bucketKey, limit) {
+      return { allowed: true, count: 1, remaining: Math.max(0, limit - 1), resetAt: Date.now() + 60_000 };
+    },
     async getCustomBooks() {
       return [];
     },
@@ -547,6 +550,9 @@ test("a created transfer order produces a QR whose payment code matches the SePa
 
 test("payment endpoints reject an invalid BIN and a missing SePay webhook key", async (t) => {
   const database = {
+    async consumeRateLimit(_bucketKey, limit) {
+      return { allowed: true, count: 1, remaining: Math.max(0, limit - 1), resetAt: Date.now() + 60_000 };
+    },
     async getCustomBooks() { return []; },
     async getCatalogBookOverrides() { return []; },
   };

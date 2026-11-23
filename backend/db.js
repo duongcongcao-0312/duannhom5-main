@@ -275,9 +275,23 @@ class Database {
   }
 
   enqueueFileWrite(filePath, operation) {
-    const previous = this.fileWriteQueues.get(filePath) || Promise.resolve();
-    const next = previous.then(operation);
-    this.fileWriteQueues.set(filePath, next.catch(() => {}));
+    const queue = this.fileWriteQueues.get(filePath) || { tail: Promise.resolve(), pending: 0 };
+    if (queue.pending >= 100) {
+      const error = new Error("Kho ghi dữ liệu đang quá tải. Vui lòng thử lại sau.");
+      error.status = 503;
+      error.code = "QUEUE_OVERLOADED";
+      return Promise.reject(error);
+    }
+    queue.pending += 1;
+    const next = queue.tail.then(operation);
+    queue.tail = next.catch(() => {});
+    this.fileWriteQueues.set(filePath, queue);
+    next.finally(() => {
+      queue.pending -= 1;
+      if (queue.pending === 0 && this.fileWriteQueues.get(filePath) === queue) {
+        this.fileWriteQueues.delete(filePath);
+      }
+    }).catch(() => {});
     return next;
   }
 

@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const { randomUUID } = require("node:crypto");
 
 const resendRequestTimeoutMs = 10_000;
 const resendMaxAttempts = 3;
@@ -10,6 +11,9 @@ function wait(milliseconds) {
 
 function createResendMailer(apiKey, from, fetchImpl = fetch) {
   async function sendResendEmail({ to, subject, text }) {
+    // Keep one provider idempotency key across retries so a lost response cannot
+    // cause the same email to be delivered more than once.
+    const idempotencyKey = randomUUID();
     for (let attempt = 0; attempt < resendMaxAttempts; attempt += 1) {
       let response;
       try {
@@ -18,6 +22,7 @@ function createResendMailer(apiKey, from, fetchImpl = fetch) {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({ from, to: [to], subject, text }),
           signal: AbortSignal.timeout(resendRequestTimeoutMs),
@@ -73,6 +78,9 @@ function createSmtpMailer(env = process.env) {
     host,
     port,
     secure: port === 465,
+    connectionTimeout: 5_000,
+    greetingTimeout: 5_000,
+    socketTimeout: 10_000,
     ...(user || password ? { auth: { user, pass: password } } : {}),
   });
 

@@ -69,6 +69,15 @@ SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP
 API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
 log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
 
+## Overload handling
+
+HTTP parsing is bounded by a 10 second header timeout and a 30 second request
+body timeout. The server accepts at most 100 in-flight requests by default;
+excess requests receive HTTP 503 with `Retry-After: 1`. File and order write
+queues hold at most 100 operations per target and reject further writes with a
+retryable 503. SMTP uses 5 second connection/greeting timeouts and a 10 second
+socket timeout. Resend retries reuse one idempotency key for the email request.
+
 ## PostgreSQL connection pool
 
 The `pg` pool is bounded per process: the defaults are at most 10 connections,

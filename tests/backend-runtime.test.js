@@ -4,6 +4,7 @@ const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const nodemailer = require("nodemailer");
 const { hashPassword, verifyPassword } = require("../backend/auth");
 const { Database } = require("../backend/db");
 const { createEmailMailer } = require("../backend/email");
@@ -16,6 +17,7 @@ test("catalog loading retries after a temporary database failure", async (t) => 
   let catalogReads = 0;
   const server = createServer({
     database: {
+      async consumeRateLimit() { return { allowed: true, resetAt: Date.now() + 60_000 }; },
       async getCustomBooks() {
         catalogReads += 1;
         if (catalogReads === 1) throw new Error("temporary database failure");
@@ -24,6 +26,8 @@ test("catalog loading retries after a temporary database failure", async (t) => 
       async getCatalogBookOverrides() {
         return [];
       },
+      async getAuthors(fallback) { return fallback; },
+      async getPublishers() { return []; },
     },
   });
 
@@ -42,6 +46,65 @@ test("catalog loading retries after a temporary database failure", async (t) => 
   assert.equal(response.status, 200);
   assert.ok(catalogReads >= 3, "initial load should retry, then the API should read the recovered catalog");
   assert.ok(Array.isArray(await response.json()));
+});
+
+test("server sheds excess concurrent requests with a retryable 503 and resumes after recovery", async (t) => {
+  let releaseCatalog;
+  let markCatalogStarted;
+  let blockFirstCatalogLoad = true;
+  const catalogStarted = new Promise((resolve) => { markCatalogStarted = resolve; });
+  const catalogGate = new Promise((resolve) => { releaseCatalog = resolve; });
+  const directory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "booknest-overload-"));
+  const database = new Database({ dataDir: directory });
+  const getCustomBooks = database.getCustomBooks.bind(database);
+  database.getCustomBooks = async (...args) => {
+    if (blockFirstCatalogLoad) {
+      blockFirstCatalogLoad = false;
+      markCatalogStarted();
+      await catalogGate;
+    }
+    return getCustomBooks(...args);
+  };
+  const server = createServer({ maxConcurrentRequests: 1, database });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(async () => {
+    releaseCatalog();
+    await new Promise((resolve) => server.close(resolve));
+    await fsPromises.rm(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  await catalogStarted;
+  const firstRequest = fetch(`${baseUrl}/api/books`);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const overloaded = await fetch(`${baseUrl}/api/books`);
+  assert.equal(overloaded.status, 503);
+  assert.equal(overloaded.headers.get("retry-after"), "1");
+  assert.equal(overloaded.headers.get("connection"), "close");
+  assert.match((await overloaded.json()).error, /đang bận/i);
+  releaseCatalog();
+  assert.equal((await firstRequest).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/books`)).status, 200);
+});
+
+test("file write queues reject work beyond their bound and drain cleanly", async () => {
+  const database = new Database({ dataDir: path.join(os.tmpdir(), "booknest-queue-test") });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const accepted = [database.enqueueFileWrite("bounded-test", () => gate)];
+  for (let index = 0; index < 99; index += 1) {
+    accepted.push(database.enqueueFileWrite("bounded-test", async () => {}));
+  }
+  await assert.rejects(database.enqueueFileWrite("bounded-test", async () => {}), {
+    status: 503,
+    code: "QUEUE_OVERLOADED",
+  });
+  release();
+  await Promise.all(accepted);
+  assert.equal(database.fileWriteQueues.size, 0);
 });
 
 
@@ -79,13 +142,35 @@ test("email delivery uses the HTTPS provider and exposes provider errors", async
   );
 });
 
+test("SMTP transport has bounded connection, greeting, and socket timeouts", async () => {
+  const originalCreateTransport = nodemailer.createTransport;
+  let transportOptions;
+  nodemailer.createTransport = (options) => {
+    transportOptions = options;
+    return { async sendMail() {} };
+  };
+  try {
+    const mailer = createEmailMailer({ SMTP_HOST: "smtp.example.com", SMTP_FROM: "shop@example.com" });
+    assert.ok(mailer);
+    assert.equal(transportOptions.connectionTimeout, 5_000);
+    assert.equal(transportOptions.greetingTimeout, 5_000);
+    assert.equal(transportOptions.socketTimeout, 10_000);
+  } finally {
+    nodemailer.createTransport = originalCreateTransport;
+  }
+});
+
 test("email delivery retries transient Resend responses and bounds timeouts", async () => {
   let responseAttempts = 0;
+  let idempotencyKey;
   const retryingMailer = createEmailMailer(
     { RESEND_API_KEY: "test-api-key", RESEND_FROM: "no-reply@example.com" },
     async (_url, options) => {
       responseAttempts += 1;
       assert.ok(options.signal instanceof AbortSignal);
+      assert.ok(options.headers["Idempotency-Key"]);
+      if (idempotencyKey) assert.equal(options.headers["Idempotency-Key"], idempotencyKey);
+      idempotencyKey = options.headers["Idempotency-Key"];
       if (responseAttempts === 1) return new Response("rate limited", { status: 429 });
       if (responseAttempts === 2) return new Response("provider unavailable", { status: 503 });
       return new Response("", { status: 202 });
@@ -172,7 +257,7 @@ test("production server requires an explicit rate-limit HMAC secret", () => {
       env: {
         ...process.env,
         RENDER: "",
-        DATABASE_URL: "postgresql://test:test@127.0.0.1:5432/booknest",
+        DATABASE_URL: "postgresql://test:test@db.example.com:5432/booknest",
         ADMIN_EMAIL: "admin@example.com",
         ADMIN_PASSWORD: "password1234",
         RATE_LIMIT_HMAC_KEY: "",

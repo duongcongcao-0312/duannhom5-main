@@ -49,6 +49,19 @@ test("PostgresDatabase rejects a missing DATABASE_URL", () => {
   );
 });
 
+test("order collection reads aggregate line items in one grouped join", async (t) => {
+  const pool = createPool();
+  const db = new PostgresDatabase({ pool });
+  t.after(() => db.close());
+
+  await db.readRelationalCollection(pool, "orders");
+
+  assert.equal(pool.queries.length, 1);
+  assert.match(pool.queries[0].sql, /GROUP BY order_id/);
+  assert.match(pool.queries[0].sql, /items\.order_id = orders\.order_id/);
+  assert.doesNotMatch(pool.queries[0].sql, /JOIN\s+LATERAL/i);
+});
+
 test("PostgresDatabase prunes only consent records with an elapsed retention period", async (t) => {
   const pool = createPool();
   pool.query = async (sql, values = []) => {

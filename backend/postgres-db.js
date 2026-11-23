@@ -998,11 +998,24 @@ class PostgresDatabase {
         const id = String(record.orderId || "");
         ids.push(id);
         const items = Array.isArray(record.items) ? record.items : [];
-        for (const item of items) {
+        if (items.length > 0) {
+          const productIds = [];
+          const titles = [];
+          const authors = [];
+          const unitPrices = [];
+          for (const item of items) {
+            productIds.push(`order-${id}-${item.title}`);
+            titles.push(item.title);
+            authors.push(item.author || "");
+            unitPrices.push(Number(item.unitPrice ?? item.price ?? 0));
+          }
           await client.query(
             `INSERT INTO store_products (product_id, title, author, price, stock, is_custom)
-             VALUES ($1, $2, $3, $4, 0, FALSE) ON CONFLICT (title) DO NOTHING`,
-            [`order-${id}-${item.title}`, item.title, item.author || "", item.unitPrice || item.price || 0],
+             SELECT product_id, title, author, price, 0, FALSE
+             FROM UNNEST($1::text[], $2::text[], $3::text[], $4::numeric[])
+               AS batch(product_id, title, author, price)
+             ON CONFLICT (title) DO NOTHING`,
+            [productIds, titles, authors, unitPrices],
           );
         }
         await client.query(
@@ -1032,14 +1045,28 @@ class PostgresDatabase {
           ],
         );
         await client.query("DELETE FROM store_order_items WHERE order_id = $1::uuid", [id]);
-        for (const item of items) {
-          const unitPrice = Number(item.unitPrice ?? item.price ?? 0);
-          const quantity = Number(item.quantity || 0);
+        if (items.length > 0) {
+          const itemTitles = [];
+          const itemAuthors = [];
+          const itemPrices = [];
+          const itemQuantities = [];
+          const itemLineTotals = [];
+          for (const item of items) {
+            const unitPrice = Number(item.unitPrice ?? item.price ?? 0);
+            const quantity = Number(item.quantity || 0);
+            itemTitles.push(item.title);
+            itemAuthors.push(item.author || "");
+            itemPrices.push(unitPrice);
+            itemQuantities.push(quantity);
+            itemLineTotals.push(unitPrice * quantity);
+          }
           await client.query(
             `INSERT INTO store_order_items
               (order_id, product_title, author, unit_price, quantity, line_total)
-             VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
-            [id, item.title, item.author || "", unitPrice, quantity, unitPrice * quantity],
+             SELECT $1::uuid, title, author, unit_price, quantity, line_total
+             FROM UNNEST($2::text[], $3::text[], $4::numeric[], $5::int[], $6::numeric[])
+               AS batch(title, author, unit_price, quantity, line_total)`,
+            [id, itemTitles, itemAuthors, itemPrices, itemQuantities, itemLineTotals],
           );
         }
       } else if (name === "books") {
@@ -1105,13 +1132,23 @@ class PostgresDatabase {
 
   async findUserByEmail(email) {
     if (!email) return null;
+    await this.init();
     const normalized = String(email).trim().toLowerCase();
-    return (await this.getUsers()).find((user) => user.email.toLowerCase() === normalized) || null;
+    const { rows } = await this.pool.query(
+      "SELECT * FROM app_users WHERE lower(email) = $1 LIMIT 1",
+      [normalized],
+    );
+    return rows[0] ? rowToRecord("users", rows[0]) : null;
   }
 
   async findUserById(id) {
     if (!id) return null;
-    return (await this.getUsers()).find((user) => user.id === id) || null;
+    await this.init();
+    const { rows } = await this.pool.query(
+      "SELECT * FROM app_users WHERE user_id = $1 LIMIT 1",
+      [String(id)],
+    );
+    return rows[0] ? rowToRecord("users", rows[0]) : null;
   }
 
   async createPasswordResetToken(email, tokenHash, expiresAt) {

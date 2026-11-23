@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS privacy_data_requests (
   request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  subject_id UUID NOT NULL,
+  subject_id TEXT NOT NULL,
   request_type TEXT NOT NULL CHECK (request_type IN ('access', 'update', 'delete')),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'processing', 'completed', 'rejected')),

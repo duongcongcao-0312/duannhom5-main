@@ -43,6 +43,23 @@ The JSON summary reports overall and per-scenario request counts, status/error
 rates, p50/p95/p99 latency, throughput, and failures. Save each run's output
 alongside the staging release/version and test window.
 
+## Initial API SLO gate
+
+The load runner evaluates every run against an initial working target of p95
+under 1,000 ms, 5xx/error rate at or below 1%, and throughput at or above 5
+requests/second. A breach is included in the JSON `slo` field and makes the CLI
+exit nonzero. The spike profile gates each phase independently. Override targets
+with `LOAD_TEST_SLO_P95_MS`, `LOAD_TEST_SLO_ERROR_RATE` (fraction from 0 to 1),
+and `LOAD_TEST_SLO_THROUGHPUT_RPS`. These are starting targets for a repeatable
+staging baseline; the service owner must review them against measured staging
+capacity before treating them as a release SLO. Local and shared-CI measurements
+are diagnostic, since host capacity and contention vary.
+
+Runtime monitoring reports and alerts when the rolling five-minute API sample
+has at least 20 requests and p95 exceeds 1,000 ms or 5xx rate exceeds 5%.
+Alerts use the configured `MONITORING_ALERT_WEBHOOK_URL` and existing cooldown.
+The production dashboard exposes the same rolling latency/error measurements.
+
 ## Measurements and acceptance record
 
 The runner cannot observe host or database resources. During each run, capture
@@ -62,9 +79,9 @@ peaks, queue/pool waits, timeout/dependency errors, and time to return to
 baseline. A recovery phase with zero failures is necessary but does not by
 itself prove resource recovery. Stop if error rate rises, p95 breaches the
 staging SLO, resources approach configured limits, or pool waiters appear. Set
-numeric p95, error-rate, resource and recovery objectives with the service owner
-before the run; the repository has no measured staging capacity or agreed SLO,
-so local results cannot establish a production capacity limit.
+numeric resource and recovery objectives with the service owner before the run.
+The initial API targets above still require owner review against a recorded
+staging baseline; local results cannot establish a production capacity limit.
 
 When a bottleneck is observed, reduce offered concurrency first, then inspect
 the matching layer: bound the database pool and query duration, shed/reject

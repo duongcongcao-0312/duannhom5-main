@@ -9,6 +9,7 @@ const defaultTimeoutMs = 5000;
 const maximumRequestCount = 500;
 const maximumConcurrency = 20;
 const maximumTimeoutMs = 60000;
+const defaultSlo = Object.freeze({ p95LatencyMs: 1000, errorRate: 0.01, throughputRequestsPerSecond: 5 });
 const scenarios = [
   { name: "browse", path: "/", method: "GET" },
   { name: "catalog_search_data", path: "/api/books?page=1&limit=10&sort=title&order=asc", method: "GET" },
@@ -96,11 +97,28 @@ function parseLoadTestConfig(env = process.env) {
     throw new Error("LOAD_TEST_CONCURRENCY cannot exceed LOAD_TEST_REQUESTS.");
   }
 
+  const slo = {
+    p95LatencyMs: parseBoundedInteger(env.LOAD_TEST_SLO_P95_MS, defaultSlo.p95LatencyMs, 1, maximumTimeoutMs, "LOAD_TEST_SLO_P95_MS"),
+    errorRate: env.LOAD_TEST_SLO_ERROR_RATE === undefined || env.LOAD_TEST_SLO_ERROR_RATE === ""
+      ? defaultSlo.errorRate
+      : Number(env.LOAD_TEST_SLO_ERROR_RATE),
+    throughputRequestsPerSecond: env.LOAD_TEST_SLO_THROUGHPUT_RPS === undefined || env.LOAD_TEST_SLO_THROUGHPUT_RPS === ""
+      ? defaultSlo.throughputRequestsPerSecond
+      : Number(env.LOAD_TEST_SLO_THROUGHPUT_RPS),
+  };
+  if (!Number.isFinite(slo.errorRate) || slo.errorRate < 0 || slo.errorRate > 1) {
+    throw new Error("LOAD_TEST_SLO_ERROR_RATE must be a number from 0 to 1.");
+  }
+  if (!Number.isFinite(slo.throughputRequestsPerSecond) || slo.throughputRequestsPerSecond <= 0) {
+    throw new Error("LOAD_TEST_SLO_THROUGHPUT_RPS must be a positive number.");
+  }
+
   return {
     baseUrl: url.origin,
     requestCount,
     concurrency,
     timeoutMs,
+    slo,
   };
 }
 
@@ -219,6 +237,17 @@ async function runLoadTest(options = {}) {
     },
     failures: failures.map(({ path, status, error }) => ({ path, status, error })),
   };
+  summary.slo = {
+    targets: config.slo,
+    passed: summary.latencyMs.p95 <= config.slo.p95LatencyMs &&
+      summary.errorRate <= config.slo.errorRate &&
+      summary.throughputRequestsPerSecond >= config.slo.throughputRequestsPerSecond,
+    breaches: [
+      ...(summary.latencyMs.p95 > config.slo.p95LatencyMs ? ["p95_latency"] : []),
+      ...(summary.errorRate > config.slo.errorRate ? ["error_rate"] : []),
+      ...(summary.throughputRequestsPerSecond < config.slo.throughputRequestsPerSecond ? ["throughput"] : []),
+    ],
+  };
   output(JSON.stringify(summary));
   return summary;
 }
@@ -252,6 +281,7 @@ async function runSpikeTest(options = {}) {
     workload: "read-only browse, catalog, quote, health and categories",
     phases: results,
     recovered: results[2].failed === 0,
+    sloPassed: results.every((phase) => phase.slo.passed),
   };
   (options.log || console.log)(JSON.stringify(result));
   return result;
@@ -261,7 +291,7 @@ async function main() {
   const summary = process.env.LOAD_TEST_PROFILE === "spike"
     ? await runSpikeTest({ env: process.env })
     : await runLoadTest();
-  if (summary.failed > 0 || summary.phases?.some((phase) => phase.failed > 0)) process.exitCode = 1;
+  if (summary.failed > 0 || summary.slo?.passed === false || summary.phases?.some((phase) => phase.failed > 0 || phase.slo?.passed === false)) process.exitCode = 1;
 }
 
 if (require.main === module) {

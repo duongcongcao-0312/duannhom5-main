@@ -1,5 +1,8 @@
 const ALERT_WINDOW_MS = 5 * 60 * 1000;
 const MAX_REQUEST_SAMPLES = 10000;
+const API_LATENCY_SLO_P95_MS = 1000;
+const API_ERROR_RATE_SLO_PCT = 5;
+const API_SLO_MIN_REQUESTS = 20;
 
 function normalizeRequestRoute(pathname) {
   if (pathname === "/" || pathname === "/health" || pathname === "/ready") {
@@ -112,6 +115,24 @@ class MonitoringMetrics {
         severity: "critical",
         count: snapshot.serverErrorsLast5m,
         threshold: "5 API 5xx responses within 5 minutes",
+      });
+    }
+    if (snapshot.requestsLast5m >= API_SLO_MIN_REQUESTS && snapshot.p95LatencyMs > API_LATENCY_SLO_P95_MS) {
+      alerts.push({
+        event: "api_latency_slo_breached",
+        severity: "warning",
+        count: snapshot.requestsLast5m,
+        value: snapshot.p95LatencyMs,
+        threshold: `p95 latency above ${API_LATENCY_SLO_P95_MS} ms for at least ${API_SLO_MIN_REQUESTS} API requests within 5 minutes`,
+      });
+    }
+    if (snapshot.requestsLast5m >= API_SLO_MIN_REQUESTS && snapshot.errorRatePct > API_ERROR_RATE_SLO_PCT) {
+      alerts.push({
+        event: "api_error_rate_slo_breached",
+        severity: "warning",
+        count: snapshot.serverErrorsLast5m,
+        value: snapshot.errorRatePct,
+        threshold: `5xx error rate above ${API_ERROR_RATE_SLO_PCT}% for at least ${API_SLO_MIN_REQUESTS} API requests within 5 minutes`,
       });
     }
     if (this.requests.some((entry) => (

@@ -96,6 +96,7 @@ test("monitoring detects readiness, payment webhook, and order conflict threshol
   assert.equal(snapshot.payments.duplicatesSinceStart, 1);
 });
 
+
 test("log redaction removes configured secrets, credentials, email and phone values", () => {
   const requestId = "2f9849db-8ef0-4165-8e95-7c1330e723e1";
   const message = redactLogText(

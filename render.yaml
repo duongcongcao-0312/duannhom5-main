@@ -3,6 +3,7 @@ services:
     name: duannhom5-main
     runtime: node
     plan: free
+    autoDeploy: false
     buildCommand: npm ci
     startCommand: npm run predeploy:check && npm run migrate && npm start
     healthCheckPath: /ready
@@ -10,6 +11,8 @@ services:
       - key: NODE_VERSION
         value: 20
       - key: NODE_ENV
+        value: production
+      - key: APP_ENV
         value: production
       - key: HOST
         value: 0.0.0.0
@@ -20,6 +23,8 @@ services:
       - key: REQUEST_TIMEOUT_MS
         value: 30000
       - key: DATABASE_URL
+        sync: false
+      - key: EXPECTED_DATABASE_NAME
         sync: false
       - key: RATE_LIMIT_HMAC_KEY
         sync: false

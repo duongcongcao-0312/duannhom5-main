@@ -80,6 +80,33 @@ test("allows properly isolated development, staging, and production database con
   );
 });
 
+test("requires a pinned database name and production runtime mode for hosted environments", () => {
+  const stagingWithoutPin = validateDatabaseEnvironmentIsolation({
+    APP_ENV: "staging",
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://staging:pw@staging-db.example.com:5432/booknest_staging",
+  });
+  assert.equal(stagingWithoutPin.ok, false);
+  assert.match(stagingWithoutPin.errors.join(" "), /EXPECTED_DATABASE_NAME/);
+
+  const productionWithoutPin = validateDatabaseEnvironmentIsolation({
+    APP_ENV: "production",
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://production:pw@db.example.com:5432/booknest_prod",
+  });
+  assert.equal(productionWithoutPin.ok, false);
+  assert.match(productionWithoutPin.errors.join(" "), /EXPECTED_DATABASE_NAME/);
+
+  const unsafeStagingMode = validateDatabaseEnvironmentIsolation({
+    APP_ENV: "staging",
+    NODE_ENV: "development",
+    DATABASE_URL: "postgresql://staging:pw@staging-db.example.com:5432/booknest_staging",
+    EXPECTED_DATABASE_NAME: "booknest_staging",
+  });
+  assert.equal(unsafeStagingMode.ok, false);
+  assert.match(unsafeStagingMode.errors.join(" "), /NODE_ENV=production/);
+});
+
 test("assertSeedAllowed blocks seeding in production or against production DATABASE_URL and allows dev/test", () => {
   assert.throws(
     () => assertSeedAllowed({ NODE_ENV: "production", DATABASE_URL: "postgresql://p:s@db.example.com:5432/booknest_prod" }),

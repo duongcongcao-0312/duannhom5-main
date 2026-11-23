@@ -31,6 +31,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      APP_ENV: test
+      NODE_ENV: test
       DATABASE_URL: postgresql://booknest:booknest-test-password@localhost:5432/booknest_test
       ADMIN_EMAIL: integration-1gration-password-123
     steps:

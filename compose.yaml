@@ -29,6 +29,7 @@ services:
     command: ["node", "scripts/migrate.js"]
     init: true
     environment:
+      APP_ENV: development
       NODE_ENV: development
       DATABASE_URL: postgres://booknest_dev:booknest_dev_only@db:5432/booknest_dev
     depends_on:
@@ -52,6 +53,7 @@ services:
     init: true
     restart: unless-stopped
     environment:
+      APP_ENV: development
       NODE_ENV: development
       HOST: 0.0.0.0
       PORT: 8000

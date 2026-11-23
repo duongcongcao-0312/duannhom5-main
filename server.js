@@ -229,6 +229,9 @@ const securityHeaders = {
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+  "Cross-Origin-Resource-Policy": "same-site",
 };
 const customerQuerySchema = {
   search: { type: "string", maxLength: 100 },
@@ -2239,6 +2242,20 @@ function createServer({
     response.setHeader("X-Request-Id", requestId);
     for (const [name, value] of Object.entries(securityHeaders)) {
       response.setHeader(name, value);
+    }
+    const forwardedProto = String(request.headers["x-forwarded-proto"] || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase();
+    if (
+      request.socket?.encrypted === true ||
+      (String(process.env.NODE_ENV || "").toLowerCase() === "production" &&
+        forwardedProto === "https")
+    ) {
+      response.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+      );
     }
     response.once("finish", () => {
       let pathname = "/";

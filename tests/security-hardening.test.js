@@ -114,3 +114,51 @@ test("public order lookup does not disclose delivery or customer details", async
   assert.match(body, /"orderId"/);
   assert.match(body, /"status"/);
 });
+
+test("CSP and HTTP security headers harden storefront, admin, and API responses without overly permissive script rules", async (t) => {
+  const baseUrl = await withServer(t);
+  const root = path.join(__dirname, "..");
+
+  // Storefront & admin pages carry strict CSP, Permissions-Policy, COOP, CORP, and no HSTS on plain local HTTP
+  for (const endpoint of ["/", "/admin.html", "/book.html", "/privacy.html", "/api/v1/books"]) {
+    const res = await fetch(`${baseUrl}${endpoint}`);
+    assert.equal(res.status, 200, `${endpoint} should return 200`);
+    const csp = res.headers.get("content-security-policy") || "";
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /object-src 'none'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /script-src 'self' https:\/\/www\.gstatic\.com/);
+    const scriptDirective = csp.split(";").find((part) => part.trim().startsWith("script-src")) || "";
+    assert.doesNotMatch(scriptDirective, /'unsafe-inline'|'unsafe-eval'|\*/, "script-src must not allow unsafe-inline, unsafe-eval, or wildcard");
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(res.headers.get("x-frame-options"), "DENY");
+    assert.equal(res.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+    assert.match(res.headers.get("permissions-policy") || "", /camera=\(\).*microphone=\(\).*geolocation=\(\)/);
+    assert.equal(res.headers.get("cross-origin-opener-policy"), "same-origin-allow-popups");
+    assert.equal(res.headers.get("cross-origin-resource-policy"), "same-site");
+    assert.equal(res.headers.get("strict-transport-security"), null, "HSTS must not be emitted on local plain HTTP");
+  }
+
+  // HSTS is emitted when running in production behind HTTPS reverse proxy
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  t.after(() => {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  });
+  const httpsRes = await fetch(`${baseUrl}/health`, {
+    headers: { "X-Forwarded-Proto": "https" },
+  });
+  assert.equal(httpsRes.status, 200);
+  assert.equal(
+    httpsRes.headers.get("strict-transport-security"),
+    "max-age=31536000; includeSubDomains",
+  );
+
+  // Storefront & admin HTML contain zero inline <script> blocks or inline event handlers
+  for (const page of ["index.html", "admin.html", "book.html", "privacy.html"]) {
+    const html = await fs.readFile(path.join(root, page), "utf8");
+    assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)/i, `${page} must not contain inline <script> blocks`);
+    assert.doesNotMatch(html, /\bon(?:click|load|error|submit|change)\s*=/i, `${page} must not contain inline event handlers`);
+  }
+});

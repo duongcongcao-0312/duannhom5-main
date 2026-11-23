@@ -1035,13 +1035,16 @@ function setAccountView(view) {
 
 function renderAccount() {
 	const logoutButton = document.querySelector('#logoutButton');
+	const logoutAllButton = document.querySelector('#logoutAllButton');
 	const myOrdersButton = document.querySelector('#myOrdersButton');
 	if (state.user) {
 		accountButton.textContent = state.user.name;
-		document.querySelector('#logoutButton').hidden = false;
+		if (logoutButton) logoutButton.hidden = false;
+		if (logoutAllButton) logoutAllButton.hidden = false;
 	} else {
 		accountButton.textContent = 'Đăng nhập';
-		document.querySelector('#logoutButton').hidden = true;
+		if (logoutButton) logoutButton.hidden = true;
+		if (logoutAllButton) logoutAllButton.hidden = true;
 	}
 	if (myOrdersButton) myOrdersButton.hidden = !state.user;
 }
@@ -1424,7 +1427,7 @@ document.querySelector('#registerForm').addEventListener('submit', async (event)
 		submitButton.disabled = false;
 	}
 });
-document.querySelector('#logoutButton').addEventListener('click', async () => {
+async function performAccountLogout(endpoint) {
 	if (state.user?.firebaseUid && firebaseAuth) {
 		try {
 			await firebaseAuth.signOut();
@@ -1436,7 +1439,7 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 	try {
 		const token = window.booknestAuth.getToken();
 		if (token) {
-			await window.booknestApiFetch('/api/auth/logout', {
+			await window.booknestApiFetch(endpoint, {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` }
 			});
@@ -1451,7 +1454,9 @@ document.querySelector('#logoutButton').addEventListener('click', async () => {
 	renderAccount();
 	renderCart();
 	setAccountView('login');
-});
+}
+document.querySelector('#logoutButton').addEventListener('click', () => performAccountLogout('/api/auth/logout'));
+document.querySelector('#logoutAllButton')?.addEventListener('click', () => performAccountLogout('/api/auth/logout-all'));
 function openOrderTracker(orderId = '') {
 	const form = document.querySelector('#trackOrderForm');
 	const orderIdInput = form?.elements?.orderId;

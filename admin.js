@@ -148,17 +148,20 @@
 
 
 
-    document.getElementById('adminLogoutBtn').addEventListener('click', async () => {
+    async function performAdminLogout(endpoint, message) {
         try {
-            await apiFetch('/api/auth/logout', { method: 'POST' });
+            await apiFetch(endpoint, { method: 'POST' });
         } catch (error) {
             console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
         }
         window.booknestAuth.clearToken();
         currentAdmin = null;
         showLoginOverlay();
-        showToast('Đã đăng xuất.');
-    });
+        showToast(message);
+    }
+
+    document.getElementById('adminLogoutBtn').addEventListener('click', () => performAdminLogout('/api/auth/logout', 'Đã đăng xuất.'));
+    document.getElementById('adminLogoutAllBtn')?.addEventListener('click', () => performAdminLogout('/api/auth/logout-all', 'Đã đăng xuất khỏi tất cả thiết bị.'));
 
     // Navigation & Views
     let activeView = 'dashboard';

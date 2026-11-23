@@ -1,0 +1,39 @@
+# Chiến lược Index & Đánh giá Hiệu năng Truy vấn (`BN-006`)
+
+## 1. Danh mục truy vấn thường xuyên & Index mục tiêu
+
+| Truy vấn thường xuyên | Điều kiện lọc / Join / Sắp xếp | Index sử dụng | Ghi chú chi phí ghi & lưu trữ |
+| --- | --- | --- | --- |
+| Đăng nhập / tra cứu tài khoản (`findUserByEmail`) | `WHERE lower(email) = $1 LIMIT 1` | `idx_app_users_lower_email` (UNIQUE) | Chi phí ghi thấp (chỉ cập nhật khi tạo/đổi email), chặn trùng email không phân biệt hoa/thường. |
+| Đọc danh mục sách tùy chỉnh (`readRelationalCollection("books")`) | `WHERE is_custom = TRUE ORDER BY created_at` | `idx_store_products_custom_created` (Partial) | Partial index chỉ lập chỉ mục sách tùy chỉnh, kích thước rất nhỏ. |
+| Liệt kê đơn hàng theo thời gian & đối soát thanh toán | `ORDER BY created_at DESC`, `WHERE payment_status = $1 ORDER BY created_at DESC` | `idx_store_orders_created_at`, `idx_store_orders_payment_status_created` | B-tree gọn (2 cột), tăng tốc trang quản trị đơn hàng và đối soát. |
+| Chi tiết dòng sản phẩm đơn hàng (`LEFT JOIN LATERAL`) | `WHERE order_id = orders.order_id` | PK `(order_id, product_title)` + `idx_store_order_items_product_title` | Tận dụng sẵn khóa chính ghép, không tạo index thừa. |
+| Danh sách khách hàng CRM đang hoạt động | `WHERE is_active = TRUE AND status = $1 ORDER BY created_at DESC` | `idx_customers_active_status_created` (Partial) | Partial index bỏ qua khách hàng đã xóa mềm (`is_active = FALSE`). |
+| Dọn bản ghi consent hết hạn (`pruneExpiredConsentRecords`) | `WHERE retain_until <= $1` | `idx_privacy_consents_retain_until` | Tránh Seq Scan khi job retention chạy định kỳ. |
+
+## 2. Quy trình kiểm chứng bằng `EXPLAIN (ANALYZE, BUFFERS)`
+
+Trước và sau khi áp dụng `data/migrations/022_query_performance_indexes.sql`, chạy kiểm tra kế hoạch thực thi trên staging/production snapshot:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM app_users WHERE lower(email) = 'user@example.com' LIMIT 1;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM store_products WHERE is_custom = TRUE ORDER BY created_at;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM store_orders WHERE payment_status = 'pending' ORDER BY created_at DESC LIMIT 20;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM customers WHERE is_active = TRUE AND status = 'active' ORDER BY created_at DESC LIMIT 20;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT COUNT(*)::int FROM privacy_consents WHERE retain_until <= NOW();
+```
+
+## 3. Đánh giá chi phí ghi & kích thước index
+
+- Ưu tiên **partial index** (`WHERE is_custom = TRUE`, `WHERE is_active = TRUE`) để giảm kích thước index trên đĩa và giảm số lần cập nhật B-tree khi ghi.
+- Không thêm index trên các cột có độ phân biệt rất thấp đứng một mình hoặc cột văn bản dài (`note`, `description`).
+- Định kỳ kiểm tra kích thước & tần suất dùng index qua `pg_stat_user_indexes` (`idx_scan`, `pg_relation_size(indexrelid)`) để loại bỏ index không còn sử dụng.

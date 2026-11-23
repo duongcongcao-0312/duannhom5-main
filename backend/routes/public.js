@@ -5,6 +5,7 @@ const { REFUND_POLICY } = require("../refund-policy");
 const { RETURN_POLICY } = require("../return-policy");
 const { SHIPPING_POLICY } = require("../shipping-policy");
 const { TERMS_POLICY } = require("../terms-policy");
+const { CONSUMER_TAX_POLICY } = require("../consumer-tax-policy");
 const { API_VERSION_POLICY } = require("../api-versioning");
 const { resolveSafeStoredUploadPath } = require("../request-limits");
 
@@ -120,6 +121,11 @@ function createPublicRoutes({
 
     if (requestUrl.pathname === "/api/policies/privacy" && request.method === "GET") {
       sendJson(response, 200, { policy: PRIVACY_POLICY });
+      return true;
+    }
+
+    if (requestUrl.pathname === "/api/policies/consumer-tax" && request.method === "GET") {
+      sendJson(response, 200, { policy: CONSUMER_TAX_POLICY });
       return true;
     }
 

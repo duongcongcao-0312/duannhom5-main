@@ -1446,7 +1446,12 @@ function createServer({
       } catch (error) {
         catalogLoadError = error;
         nextCatalogRetryAt = Date.now() + catalogRetryCooldownMs;
-        console.error("Catalog load failed:", error);
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: "error",
+          event: "catalog_load_failed",
+          message: error instanceof Error ? error.message : String(error),
+        }));
       } finally {
         catalogLoadPromise = null;
       }

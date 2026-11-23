@@ -167,6 +167,9 @@ class MonitoringMetrics {
   }
 }
 
+const SENSITIVE_LOG_KEY_PATTERN =
+  /^(?:password|passwd|currentpassword|newpassword|token|refreshtoken|idtoken|resettoken|downloadtoken|accesscode|access_code|secret|apikey|api_key|api-key|authorization|cookie|set-cookie|x-export-token|x-order-access-code|x-booknest-signature|email|phone|address)$/i;
+
 function redactLogText(value, env = process.env) {
   let redacted = String(value ?? "");
   const requestIds = [];
@@ -199,8 +202,14 @@ function redactLogText(value, env = process.env) {
   }
   redacted = redacted
     .replace(/(postgres(?:ql)?:\/\/[^:\s/@]+:)[^@\s/]+@/gi, "$1[REDACTED]@")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
-    .replace(/((?:password|passwd|token|secret|api[_-]?key)\s*[=:]\s*["']?)[^"'\s,;&]+/gi, "$1[REDACTED]")
+    .replace(/\b(Bearer|Apikey|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi, "$1 [REDACTED]")
+    .replace(/\bsha256=[a-f0-9]{16,128}\b/gi, "sha256=[REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_JWT]")
+    .replace(
+      /((?:password|passwd|current[_-]?password|new[_-]?password|refresh[_-]?token|id[_-]?token|reset[_-]?token|download[_-]?token|access[_-]?code|token|secret|api[_-]?key|authorization|set-cookie|cookie|x-export-token|x-order-access-code|x-booknest-signature)\s*[=:]\s*["']?)[^"'\s,;&}\]]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\b[a-f0-9]{64}\b/gi, "[REDACTED_HEX]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]")
     .replace(/\b(?:\+?\d[\d\s()-]{7,}\d)\b/g, "[REDACTED_PHONE]");
   return redacted.replace(
@@ -209,9 +218,46 @@ function redactLogText(value, env = process.env) {
   );
 }
 
+function redactLogObject(value, env = process.env, depth = 0) {
+  if (depth > 6 || value === null || value === undefined) return value;
+  if (typeof value === "string") return redactLogText(value, env);
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => redactLogObject(item, env, depth + 1));
+  }
+  const result = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (SENSITIVE_LOG_KEY_PATTERN.test(key)) {
+      result[key] = "[REDACTED]";
+    } else {
+      result[key] = redactLogObject(nested, env, depth + 1);
+    }
+  }
+  return result;
+}
+
+function formatSafeErrorLog({ requestId, method, route, message, error }, env = process.env) {
+  return {
+    timestamp: new Date().toISOString(),
+    level: "error",
+    event: "request_error",
+    message: redactLogText(message || "Request failed", env),
+    requestId: redactLogText(requestId || "", env),
+    method: String(method || "GET").toUpperCase(),
+    route: normalizeRequestRoute(route || "/"),
+    error: {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: redactLogText(error instanceof Error ? error.message : String(error ?? ""), env),
+      stack: redactLogText(error instanceof Error ? error.stack : "", env),
+    },
+  };
+}
+
 module.exports = {
   ALERT_WINDOW_MS,
   MonitoringMetrics,
+  formatSafeErrorLog,
   normalizeRequestRoute,
+  redactLogObject,
   redactLogText,
 };

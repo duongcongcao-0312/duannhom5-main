@@ -28,6 +28,7 @@ const {
 } = require("./backend/audit");
 const {
   MonitoringMetrics,
+  formatSafeErrorLog,
   normalizeRequestRoute,
   redactLogText,
 } = require("./backend/monitoring");
@@ -270,20 +271,13 @@ function logRequestError(request, requestId, error, message) {
   }
   const cause = error && typeof error === "object" ? error.cause : undefined;
   const loggedError = cause || error;
-  console.error(JSON.stringify({
-    timestamp: new Date().toISOString(),
-    level: "error",
-    event: "request_error",
-    message,
-    requestId: redactLogText(requestId),
+  console.error(JSON.stringify(formatSafeErrorLog({
+    requestId,
     method: request.method,
-    route: normalizeRequestRoute(pathname),
-    error: {
-      name: loggedError instanceof Error ? loggedError.name : "UnknownError",
-      message: redactLogText(loggedError instanceof Error ? loggedError.message : String(loggedError)),
-      stack: redactLogText(loggedError instanceof Error ? loggedError.stack : ""),
-    },
-  }));
+    route: pathname,
+    message,
+    error: loggedError,
+  })));
 }
 
 function parseMonitoringAlertUrl(value) {

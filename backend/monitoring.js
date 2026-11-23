@@ -1,7 +1,7 @@
 const ALERT_WINDOW_MS = 5 * 60 * 1000;
 const MAX_REQUEST_SAMPLES = 10000;
 const API_LATENCY_SLO_P95_MS = 1000;
-const API_ERROR_RATE_SLO_PCT = 5;
+const API_ERROR_RATE_SLO_PCT = 1;
 const API_SLO_MIN_REQUESTS = 20;
 
 function normalizeRequestRoute(pathname) {

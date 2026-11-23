@@ -96,6 +96,22 @@ test("monitoring detects readiness, payment webhook, and order conflict threshol
   assert.equal(snapshot.payments.duplicatesSinceStart, 1);
 });
 
+test("monitoring alerts on rolling API latency and error-rate SLO breaches after minimum traffic", () => {
+  const now = 1_700_000_000_000;
+  const metrics = new MonitoringMetrics({ clock: () => now });
+  for (let index = 0; index < 20; index += 1) {
+    metrics.recordRequest({
+      method: "GET",
+      pathname: "/api/books",
+      status: index < 2 ? 500 : 200,
+      durationMs: 1_200,
+    }, now);
+  }
+  const alerts = metrics.getTriggeredAlerts(now);
+  assert.ok(alerts.some((alert) => alert.event === "api_latency_slo_breached"));
+  assert.ok(alerts.some((alert) => alert.event === "api_error_rate_slo_breached"));
+});
+
 
 test("log redaction removes configured secrets, credentials, email and phone values", () => {
   const requestId = "2f9849db-8ef0-4165-8e95-7c1330e723e1";

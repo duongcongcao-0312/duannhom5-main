@@ -45,18 +45,29 @@ alongside the staging release/version and test window.
 
 ## Initial API SLO gate
 
-The load runner evaluates every run against an initial working target of p95
-under 1,000 ms, 5xx/error rate at or below 1%, and throughput at or above 5
-requests/second. A breach is included in the JSON `slo` field and makes the CLI
-exit nonzero. The spike profile gates each phase independently. Override targets
-with `LOAD_TEST_SLO_P95_MS`, `LOAD_TEST_SLO_ERROR_RATE` (fraction from 0 to 1),
-and `LOAD_TEST_SLO_THROUGHPUT_RPS`. These are starting targets for a repeatable
-staging baseline; the service owner must review them against measured staging
-capacity before treating them as a release SLO. Local and shared-CI measurements
-are diagnostic, since host capacity and contention vary.
+The project API SLO is p95 under 1,000 ms, 5xx/error rate at or below 1%, and
+throughput at or above 5 requests/second. The runner gates overall and each
+scenario's p95/error rate; the spike profile gates every phase independently.
+A breach is included in the JSON `slo` field and makes the CLI exit nonzero.
+Override targets with `LOAD_TEST_SLO_P95_MS`, `LOAD_TEST_SLO_ERROR_RATE`
+(fraction from 0 to 1), and `LOAD_TEST_SLO_THROUGHPUT_RPS`. CI runs the same
+gate against an in-process server and 60 read-only requests to catch regressions.
+Use staging measurements for capacity/release acceptance; CI and local throughput
+are not a substitute for host and database capacity measurements.
+
+### Recorded local baseline
+
+Measured 2026-11-23 on the repository's local Windows execution environment:
+in-process server, temporary file database, 60 requests, concurrency 6. The
+workload returned 60/60 HTTP 200 responses; p50 5.62 ms, p95 29.11 ms, p99
+45.75 ms, and observed throughput 611.25 requests/second. All six scenarios
+passed individually (each p95 was at most 45.75 ms). This is a reproducible
+functional baseline for regression checks, not a staging/production capacity
+claim. Re-run with the same workload and record environment/release details when
+collecting an operator baseline.
 
 Runtime monitoring reports and alerts when the rolling five-minute API sample
-has at least 20 requests and p95 exceeds 1,000 ms or 5xx rate exceeds 5%.
+has at least 20 requests and p95 exceeds 1,000 ms or 5xx rate exceeds 1%.
 Alerts use the configured `MONITORING_ALERT_WEBHOOK_URL` and existing cooldown.
 The production dashboard exposes the same rolling latency/error measurements.
 
@@ -80,8 +91,9 @@ baseline. A recovery phase with zero failures is necessary but does not by
 itself prove resource recovery. Stop if error rate rises, p95 breaches the
 staging SLO, resources approach configured limits, or pool waiters appear. Set
 numeric resource and recovery objectives with the service owner before the run.
-The initial API targets above still require owner review against a recorded
-staging baseline; local results cannot establish a production capacity limit.
+Record the staging baseline against these project targets; a sustained breach
+requires investigation and an explicit SLO change in review rather than silently
+raising the thresholds. Local results cannot establish production capacity.
 
 When a bottleneck is observed, reduce offered concurrency first, then inspect
 the matching layer: bound the database pool and query duration, shed/reject

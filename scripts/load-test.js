@@ -241,11 +241,17 @@ async function runLoadTest(options = {}) {
     targets: config.slo,
     passed: summary.latencyMs.p95 <= config.slo.p95LatencyMs &&
       summary.errorRate <= config.slo.errorRate &&
-      summary.throughputRequestsPerSecond >= config.slo.throughputRequestsPerSecond,
+      summary.throughputRequestsPerSecond >= config.slo.throughputRequestsPerSecond &&
+      Object.values(scenarioSummary).every((scenario) =>
+        scenario.latencyMs.p95 <= config.slo.p95LatencyMs && scenario.errorRate <= config.slo.errorRate),
     breaches: [
       ...(summary.latencyMs.p95 > config.slo.p95LatencyMs ? ["p95_latency"] : []),
       ...(summary.errorRate > config.slo.errorRate ? ["error_rate"] : []),
       ...(summary.throughputRequestsPerSecond < config.slo.throughputRequestsPerSecond ? ["throughput"] : []),
+      ...Object.entries(scenarioSummary).flatMap(([name, scenario]) => [
+        ...(scenario.latencyMs.p95 > config.slo.p95LatencyMs ? [`${name}:p95_latency`] : []),
+        ...(scenario.errorRate > config.slo.errorRate ? [`${name}:error_rate`] : []),
+      ]),
     ],
   };
   output(JSON.stringify(summary));

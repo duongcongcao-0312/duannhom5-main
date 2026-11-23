@@ -1,6 +1,10 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
+const { Database } = require("../backend/db");
 const { parseLoadTestConfig, runLoadTest } = require("../scripts/load-test");
 
 test("load test accepts a local URL and rejects remote targets without staging approval", () => {
@@ -53,26 +57,37 @@ test("load test enforces bounded request and concurrency settings", () => {
 });
 
 test("load test reports latency percentiles and error rate using local read-only routes", async (t) => {
-  const server = createServer();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-load-test-"));
+  const database = new Database({ dataDir: directory });
+  database.consumeRateLimit = async (_key, _limit, _windowMs, now = Date.now()) => ({
+    allowed: true,
+    resetAt: now + 60_000,
+  });
+  const server = createServer({ database });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  t.after(async () => new Promise((resolve) => server.close(resolve)));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(directory, { recursive: true, force: true });
+  });
 
   const result = await runLoadTest({
     baseUrl: `http://127.0.0.1:${server.address().port}`,
-    requestCount: 6,
-    concurrency: 3,
+    requestCount: 60,
+    concurrency: 6,
     timeoutMs: 5000,
     log: () => {},
   });
 
-  assert.equal(result.requests, 6);
+  assert.equal(result.requests, 60);
   assert.equal(result.failed, 0);
   assert.equal(result.errorRate, 0);
-  assert.equal(result.statuses["200"], 6);
+  assert.equal(result.statuses["200"], 60);
   assert.ok(result.latencyMs.p50 >= 0);
   assert.ok(result.latencyMs.p95 >= result.latencyMs.p50);
   assert.ok(result.latencyMs.p99 >= result.latencyMs.p95);
+  assert.equal(result.slo.passed, true);
+  assert.deepEqual(result.slo.breaches, []);
 });

@@ -582,6 +582,7 @@ class Database {
         id: crypto.randomUUID(),
         name: sanitizeTextValue(data.name, { maxLength: 120, fieldName: "Họ tên" }),
         email: cleanEmail,
+        emailVerified: Boolean(data.emailVerified),
         password: hashPassword(data.password),
         passwordAuthEnabled: true,
         role: normalizedRole,

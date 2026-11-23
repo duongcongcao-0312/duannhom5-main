@@ -413,6 +413,9 @@ if (
       "Vui lòng điền đầy đủ họ tên, email và mật khẩu.",
     );
   }
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new RequestError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
+  }
   const registerPasswordCheck = validatePasswordPolicy(password, { email });
   if (!registerPasswordCheck.valid) {
     throw withErrorCode(
@@ -439,6 +442,19 @@ if (
       "Set-Cookie",
       buildAuthCookieHeaders(request, { sessionToken: session.token, expiresAt: session.expiresAt }),
     );
+    if (auditLogPath) {
+      await appendAuditEntry(auditLogPath, {
+        action: "auth.register.succeeded",
+        actorId: user.id,
+        actorRole: user.role,
+        entityType: "user",
+        entityId: user.id,
+        outcome: "success",
+        statusCode: 201,
+        requestId: response.getHeader("X-Request-Id"),
+        metadata: { emailVerified: Boolean(user.emailVerified) },
+      }).catch(() => {});
+    }
     sendJson(response, 201, {
       token: session.token,
       refreshToken: session.refreshToken,

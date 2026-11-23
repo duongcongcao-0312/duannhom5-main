@@ -1213,6 +1213,7 @@ class PostgresDatabase {
         id: crypto.randomUUID(),
         name: String(data.name).trim(),
         email,
+        emailVerified: Boolean(data.emailVerified),
         password: hashPassword(data.password),
         passwordAuthEnabled: true,
         role,

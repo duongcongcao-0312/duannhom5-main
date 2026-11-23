@@ -316,12 +316,12 @@ function getBookTag(book) {
 
 function renderCategories() {
 	if (!categoryFilter) return;
-	categoryFilter.innerHTML = '<option value="all">Tất cả thể loại</option>' + categories.map((category) => `<option value="${category.value}">${category.label}</option>`).join('');
+	categoryFilter.innerHTML = '<option value="all">Tất cả thể loại</option>' + categories.map((category) => `<option value="${escapeHtml(category.value)}">${escapeHtml(category.label)}</option>`).join('');
 	const categoryList = document.querySelector('.category-list');
 	if (categoryList) {
 		categoryList.innerHTML = categories.map((category) => {
 			const count = books.filter((book) => book.category === category.value).length;
-			return `<button data-category="${category.value}" type="button"><span>${category.label}<small>${count} tựa sách</small></span><span>→</span></button>`;
+			return `<button data-category="${escapeHtml(category.value)}" type="button"><span>${escapeHtml(category.label)}<small>${count} tựa sách</small></span><span>→</span></button>`;
 		}).join('');
 	}
 	document.querySelectorAll('[data-category]').forEach((button) => button.addEventListener('click', () => {

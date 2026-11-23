@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 
+const SESSION_COOKIE_NAME = "bn_session";
 const CSRF_COOKIE_NAME = "bn_csrf_token";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -12,6 +13,60 @@ const CSRF_EXEMPT_ROUTES = new Set([
 
 function createCsrfToken() {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function isSecureRequest(request) {
+  if (request?.socket?.encrypted === true) return true;
+  const forwardedProto = String(request?.headers?.["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+    return true;
+  }
+  return forwardedProto === "https";
+}
+
+function resolveSessionSameSite(isSecure) {
+  const configured = String(process.env.SESSION_COOKIE_SAMESITE || "Lax").trim().toLowerCase();
+  if (configured === "strict") return "Strict";
+  if (configured === "none" && isSecure) return "None";
+  return "Lax";
+}
+
+function buildAuthCookieHeaders(request, { sessionToken, expiresAt, csrfToken = createCsrfToken() }) {
+  const isSecure = isSecureRequest(request);
+  const sameSite = resolveSessionSameSite(isSecure);
+  const maxAgeSeconds = Number.isFinite(expiresAt)
+    ? Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000))
+    : 7 * 24 * 60 * 60;
+  const secureFlag = isSecure ? "; Secure" : "";
+  return [
+    `${SESSION_COOKIE_NAME}=${sessionToken}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAgeSeconds}${secureFlag}`,
+    `${CSRF_COOKIE_NAME}=${csrfToken}; Path=/; SameSite=${sameSite}; Max-Age=${maxAgeSeconds}${secureFlag}`,
+  ];
+}
+
+function buildClearAuthCookieHeaders(request) {
+  const isSecure = isSecureRequest(request);
+  const sameSite = resolveSessionSameSite(isSecure);
+  const secureFlag = isSecure ? "; Secure" : "";
+  return [
+    `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=0${secureFlag}`,
+    `${CSRF_COOKIE_NAME}=; Path=/; SameSite=${sameSite}; Max-Age=0${secureFlag}`,
+  ];
+}
+
+function extractSessionToken(request) {
+  const authHeader = String(request?.headers?.authorization || "").trim();
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch && bearerMatch[1].trim()) {
+    return bearerMatch[1].trim();
+  }
+  const cookies = parseCookies(request?.headers?.cookie);
+  return typeof cookies[SESSION_COOKIE_NAME] === "string"
+    ? cookies[SESSION_COOKIE_NAME].trim()
+    : "";
 }
 
 function parseCookies(cookieHeader) {
@@ -131,8 +186,12 @@ module.exports = {
   CSRF_COOKIE_NAME,
   CSRF_EXEMPT_ROUTES,
   CSRF_HEADER_NAME,
+  SESSION_COOKIE_NAME,
   STATE_CHANGING_METHODS,
+  buildAuthCookieHeaders,
+  buildClearAuthCookieHeaders,
   createCsrfToken,
+  extractSessionToken,
   parseCookies,
   validateCsrfRequest,
 };

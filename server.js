@@ -43,7 +43,7 @@ const {
   applyApiVersionHeaders,
   resolveApiVersion,
 } = require("./backend/api-versioning");
-const { validateCsrfRequest } = require("./backend/csrf");
+const { extractSessionToken, validateCsrfRequest } = require("./backend/csrf");
 const {
   ENDPOINT_BODY_LIMITS,
   MAX_URL_LENGTH,
@@ -1567,8 +1567,7 @@ function createServer({
   }
 
   async function getAuthUser(request) {
-    const authHeader = request.headers["authorization"] || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const token = extractSessionToken(request);
     return await sessionStore.getSession(token);
   }
 
@@ -2163,6 +2162,7 @@ function createServer({
     const origin = request.headers.origin;
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
+      response.setHeader("Access-Control-Allow-Credentials", "true");
       response.setHeader("Vary", "Origin");
       response.setHeader("Access-Control-Expose-Headers", "X-Request-Id, X-API-Version, Deprecation, Sunset, Link");
     }

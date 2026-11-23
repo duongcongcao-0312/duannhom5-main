@@ -1,5 +1,11 @@
 const { appendAuditEntry } = require("../audit");
-const { CSRF_COOKIE_NAME, createCsrfToken } = require("../csrf");
+const {
+  CSRF_COOKIE_NAME,
+  buildAuthCookieHeaders,
+  buildClearAuthCookieHeaders,
+  createCsrfToken,
+  extractSessionToken,
+} = require("../csrf");
 const { redactLogText } = require("../monitoring");
 const { requireOwnershipOrPermission } = require("../authorization");
 const {
@@ -234,6 +240,10 @@ if (
       ),
     });
     const session = await sessionStore.createSession(user);
+    response.setHeader(
+      "Set-Cookie",
+      buildAuthCookieHeaders(request, { sessionToken: session.token, expiresAt: session.expiresAt }),
+    );
     sendJson(response, 201, {
       token: session.token,
       expiresAt: session.expiresAt,
@@ -349,6 +359,10 @@ if (
   await clearRateLimit("login", address);
   if (email) await clearRateLimit("login-account", email);
   const session = await sessionStore.createSession(user);
+  response.setHeader(
+    "Set-Cookie",
+    buildAuthCookieHeaders(request, { sessionToken: session.token, expiresAt: session.expiresAt }),
+  );
   await appendAuditEntry(auditLogPath, {
     action: "auth.login.succeeded",
     actorId: user.id,
@@ -409,6 +423,10 @@ if (
   }
 
   const session = await sessionStore.createSession(user);
+  response.setHeader(
+    "Set-Cookie",
+    buildAuthCookieHeaders(request, { sessionToken: session.token, expiresAt: session.expiresAt }),
+  );
   sendJson(response, 200, {
     token: session.token,
     expiresAt: session.expiresAt,
@@ -718,8 +736,7 @@ if (
     loginAttemptWindowMs,
     "Bạn đã yêu cầu làm mới phiên quá nhiều lần. Vui lòng thử lại sau.",
   );
-  const authHeader = request.headers["authorization"] || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const token = extractSessionToken(request);
   if (!token) {
     throw new RequestError(401, "Chưa đăng nhập.");
   }
@@ -740,6 +757,10 @@ if (
   if (!refreshed) {
     throw new RequestError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
   }
+  response.setHeader(
+    "Set-Cookie",
+    buildAuthCookieHeaders(request, { sessionToken: refreshed.token, expiresAt: refreshed.expiresAt }),
+  );
   sendJson(response, 200, {
     token: refreshed.token,
     expiresAt: refreshed.expiresAt,
@@ -752,9 +773,9 @@ if (
   requestUrl.pathname === "/api/auth/logout" &&
   request.method === "POST"
 ) {
-  const authHeader = request.headers["authorization"] || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const token = extractSessionToken(request);
   await sessionStore.destroySession(token);
+  response.setHeader("Set-Cookie", buildClearAuthCookieHeaders(request));
   sendJson(response, 200, { message: "Đã đăng xuất thành công." });
   return true;
 }
@@ -766,6 +787,7 @@ if (
   const session = await getAuthUser(request);
   if (!session) throw new RequestError(401, "Chưa đăng nhập.");
   await sessionStore.destroyUserSessions(session.userId);
+  response.setHeader("Set-Cookie", buildClearAuthCookieHeaders(request));
   const exportsPurged =
     privacyExportStore && typeof privacyExportStore.purgeUserExports === "function"
       ? privacyExportStore.purgeUserExports(session.userId)

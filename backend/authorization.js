@@ -1,4 +1,5 @@
 const { ROLES, normalizeRole } = require("./business-constants");
+const { extractSessionToken } = require("./csrf");
 
 const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.ADMIN]: Object.freeze([
@@ -53,8 +54,7 @@ const CUSTOMER_ROLE_PERMISSIONS = Object.freeze({
 });
 
 async function authenticate(request, sessionStore, RequestError) {
-  const authHeader = request.headers["authorization"] || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const token = extractSessionToken(request);
   const user = await sessionStore.getSession(token);
   if (!user) throw new RequestError(401, "Chưa đăng nhập.");
   return user;

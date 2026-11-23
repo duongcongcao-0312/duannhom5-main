@@ -135,6 +135,10 @@ if (requestUrl.pathname === "/api/orders" && request.method === "POST") {
     requester,
     idempotencyKey,
   );
+  response.setHeader("Idempotency-Key", idempotencyKey);
+  if (replayed) {
+    response.setHeader("Idempotency-Replayed", "true");
+  }
   sendJson(response, replayed ? 200 : 201, publicOrder(order));
   return true;
 }

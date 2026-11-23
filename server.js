@@ -2178,7 +2178,7 @@ function createServer({
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Access-Control-Allow-Credentials", "true");
       response.setHeader("Vary", "Origin");
-      response.setHeader("Access-Control-Expose-Headers", "X-Request-Id, X-API-Version, Deprecation, Sunset, Link");
+      response.setHeader("Access-Control-Expose-Headers", "X-Request-Id, X-API-Version, Deprecation, Sunset, Link, Idempotency-Key, Idempotency-Replayed");
     }
 
     if (request.method === "OPTIONS") {

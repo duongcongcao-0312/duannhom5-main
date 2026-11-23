@@ -34,3 +34,13 @@ test("database index strategy document covers EXPLAIN verification and write/sto
   assert.match(doc, /idx_app_users_lower_email/);
   assert.match(doc, /idx_privacy_consents_retain_until/);
 });
+
+test("migration 025 removes the payment status index only when its composite replacement exists", async () => {
+  const migration = await fs.readFile(
+    path.join(__dirname, "..", "data", "migrations", "025_remove_redundant_order_index.sql"),
+    "utf8",
+  );
+  assert.match(migration, /to_regclass\('idx_store_orders_payment_status_created'\)/);
+  assert.match(migration, /DROP INDEX IF EXISTS idx_store_orders_payment_status/);
+  assert.match(migration, /BN-128/);
+});

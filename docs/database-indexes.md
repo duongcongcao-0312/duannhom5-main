@@ -43,3 +43,9 @@ SELECT COUNT(*)::int FROM privacy_consents WHERE retain_until <= NOW();
 `readRelationalCollection("orders")` loads the full order list and its line items. The former query used `LEFT JOIN LATERAL` to look up items separately for each order. The updated query groups line items by `order_id` in one subquery and joins that result to orders. Item ordering by `product_title`, order ordering by `created_at`, and the returned JSON shape are preserved. A regression test ensures the path remains a single grouped-join query.
 
 Measure both query forms on staging with representative data using `EXPLAIN (ANALYZE, BUFFERS)`; record execution time, shared hit/read blocks, and actual row counts. This workspace has no access to a staging or production database, so before/after benchmark measurements could not be captured here and the performance gain still needs confirmation against representative data.
+
+## Issue #334: remove a redundant order index
+
+Migration `025_remove_redundant_order_index.sql` drops `idx_store_orders_payment_status` only when `idx_store_orders_payment_status_created` exists. The composite index starts with `payment_status`, so it serves equality filters on that column and additionally supports ordering by `created_at`; removing the single-column index preserves query semantics while reducing duplicate index storage and write maintenance. The migration does not touch table data and guards the drop for schemas without the replacement index.
+
+The repository has no representative PostgreSQL connection, so index usage (`pg_stat_user_indexes`), size (`pg_relation_size`), query latency, and write impact could not be measured here. Before production rollout, compare those metrics on staging and confirm the composite index is used for payment status filters; retain the single-column index if workload-specific evidence shows a material benefit.

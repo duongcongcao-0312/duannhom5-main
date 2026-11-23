@@ -26,10 +26,20 @@ async function measurePage(browser, pageSpec, viewport) {
 	});
 	await page.addInitScript((hasCart) => {
 		if (hasCart) localStorage.setItem("booknest-cart", JSON.stringify(["Nhà giả kim"]));
-		window.__frontendPerf = { cls: 0, lcp: 0, events: [] };
+		window.__frontendPerf = { cls: 0, lcp: 0, events: [], shifts: [] };
 		new PerformanceObserver((list) => {
 			for (const entry of list.getEntries()) {
-				if (!entry.hadRecentInput) window.__frontendPerf.cls += entry.value;
+				if (!entry.hadRecentInput) {
+					window.__frontendPerf.cls += entry.value;
+					window.__frontendPerf.shifts.push({
+						value: entry.value,
+						sources: (entry.sources || []).map(({ node, previousRect, currentRect }) => ({
+							node: node?.id ? `#${node.id}` : node?.className?.baseVal || node?.className || node?.tagName,
+							previousRect,
+							currentRect,
+						})),
+					});
+				}
 			}
 		}).observe({ type: "layout-shift", buffered: true });
 		new PerformanceObserver((list) => {
@@ -73,11 +83,13 @@ async function measurePage(browser, pageSpec, viewport) {
 			resourceCount: resources.length,
 			knownTransferBytes: resources.reduce((sum, item) => sum + item.transferSize, 0),
 			longestObservedEventMs: Math.round(Math.max(0, ...window.__frontendPerf.events)),
+			layoutShifts: window.__frontendPerf.shifts,
 		};
 	});
 	await context.close();
 	return {
 		page: pageSpec.name,
+		iteration: Number(process.env.PERF_ITERATION || 1),
 		viewport: `${viewport.width}x${viewport.height}`,
 		status: response?.status() ?? null,
 		...metrics,
@@ -91,11 +103,24 @@ async function main() {
 	const browser = await chromium.launch({ executablePath: edgePath, headless: true });
 	try {
 		const results = [];
-		for (const viewport of [
+		const viewports = [
 			{ width: 1365, height: 768 },
 			{ width: 390, height: 844 },
-		]) {
-			for (const pageSpec of pages) results.push(await measurePage(browser, pageSpec, viewport));
+		];
+		const selectedPages = process.env.PERF_PAGE
+			? pages.filter(({ name }) => name === process.env.PERF_PAGE)
+			: pages;
+		const selectedViewports = process.env.PERF_VIEWPORT
+			? viewports.filter(({ width }) => String(width) === process.env.PERF_VIEWPORT)
+			: viewports;
+		for (const viewport of selectedViewports) {
+			for (const pageSpec of selectedPages) {
+				const iterations = Math.max(1, Number(process.env.PERF_REPEAT) || 1);
+				for (let iteration = 1; iteration <= iterations; iteration += 1) {
+					process.env.PERF_ITERATION = String(iteration);
+					results.push(await measurePage(browser, pageSpec, viewport));
+				}
+			}
 		}
 		process.stdout.write(`${JSON.stringify({ baseUrl, results }, null, 2)}\n`);
 	} finally {

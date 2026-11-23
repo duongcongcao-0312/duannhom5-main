@@ -17,7 +17,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createAuthRoutes(dependencies) {
-  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
+  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, dispatchMonitoringAlert, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, loginAccountAttemptLimit = 10, loginAccountWindowMs = 15 * 60 * 1000, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
   function toRequestError(error) {
     if (error instanceof ProfileUpdateError) {
       return withErrorCode(new RequestError(error.status, error.message), error.errorCode);
@@ -245,19 +245,56 @@ if (
     payloadSchemas.login,
   );
   const address = getClientAddress(request);
-  await rateLimitRequest(
-    response,
-    "login",
-    address,
-    loginAttemptLimit,
-    loginAttemptWindowMs,
-    "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-  );
   const email = sanitizePlainText(
     typeof payload.email === "string" ? payload.email : String(payload.email || ""),
     254,
   ).toLowerCase();
   const password = typeof payload.password === "string" ? payload.password : "";
+  const requestId = response.getHeader("X-Request-Id");
+  const bruteForceMessage = "Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.";
+
+  async function enforceLoginLimit(scope, identity, limit, windowMs) {
+    try {
+      await rateLimitRequest(response, scope, identity, limit, windowMs, bruteForceMessage);
+    } catch (error) {
+      if (error instanceof RequestError && error.status === 429) {
+        await appendAuditEntry(auditLogPath, {
+          action: "auth.login.blocked",
+          actorId: null,
+          actorRole: "anonymous",
+          entityType: "auth",
+          entityId: null,
+          outcome: "denied",
+          statusCode: 429,
+          requestId,
+          metadata: {
+            scope,
+            reason: "brute_force_threshold_exceeded",
+          },
+        }).catch(() => {});
+        if (typeof dispatchMonitoringAlert === "function") {
+          dispatchMonitoringAlert({
+            event: "auth_login_brute_force_blocked",
+            severity: "warning",
+            count: 1,
+            threshold: `${scope}:${limit}/${Math.round(windowMs / 1000)}s`,
+          }, requestId);
+        }
+      }
+      throw error;
+    }
+  }
+
+  await enforceLoginLimit("login", address, loginAttemptLimit, loginAttemptWindowMs);
+  if (email) {
+    await enforceLoginLimit(
+      "login-account",
+      email,
+      loginAccountAttemptLimit,
+      loginAccountWindowMs,
+    );
+  }
+
   const user = await db.findUserByEmail(email);
   if (
     !user ||
@@ -265,6 +302,19 @@ if (
     user.passwordAuthEnabled === false ||
     !verifyPassword(password, user.password)
   ) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.login.failed",
+      actorId: null,
+      actorRole: "anonymous",
+      entityType: "auth",
+      entityId: null,
+      outcome: "failure",
+      statusCode: 401,
+      requestId,
+      metadata: {
+        reason: "invalid_credentials",
+      },
+    }).catch(() => {});
     throw new RequestError(401, "Email hoặc mật khẩu không chính xác.");
   }
   if (user.mustResetPassword === true) {
@@ -277,7 +327,21 @@ if (
     );
   }
   await clearRateLimit("login", address);
+  if (email) await clearRateLimit("login-account", email);
   const session = await sessionStore.createSession(user);
+  await appendAuditEntry(auditLogPath, {
+    action: "auth.login.succeeded",
+    actorId: user.id,
+    actorRole: user.role,
+    entityType: "auth",
+    entityId: user.id,
+    outcome: "success",
+    statusCode: 200,
+    requestId,
+    metadata: {
+      authMethod: "password",
+    },
+  }).catch(() => {});
   sendJson(response, 200, {
     token: session.token,
     expiresAt: session.expiresAt,

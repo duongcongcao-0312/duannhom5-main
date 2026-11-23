@@ -2,8 +2,45 @@ const { SOCIAL_PROVIDERS } = require("./db");
 
 const FIREBASE_LOOKUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:lookup";
 
+function decodeBase64UrlJson(segment) {
+  const padded = segment.replace(/-/g, "+").replace(/_/g, "/");
+  const json = Buffer.from(padded, "base64").toString("utf8");
+  return JSON.parse(json);
+}
+
+function assertValidFirebaseJwtClaims(idToken, { projectId = "", nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  const parts = String(idToken || "").split(".");
+  if (parts.length !== 3) {
+    if (projectId) {
+      throw new Error("Firebase ID Token không đúng định dạng JWT.");
+    }
+    return;
+  }
+  let header;
+  let payload;
+  try {
+    header = decodeBase64UrlJson(parts[0]);
+    payload = decodeBase64UrlJson(parts[1]);
+  } catch {
+    throw new Error("Firebase ID Token không hợp lệ.");
+  }
+  if (!header || header.alg !== "RS256" || !parts[2]) {
+    throw new Error("Thuật toán ký Firebase ID Token không được phép.");
+  }
+  if (!payload || !Number.isFinite(payload.exp) || payload.exp <= nowSec) {
+    throw new Error("Firebase ID Token đã hết hạn.");
+  }
+  if (projectId) {
+    const expectedIssuer = `https://securetoken.google.com/${projectId}`;
+    if (payload.iss !== expectedIssuer || payload.aud !== projectId) {
+      throw new Error("Issuer hoặc audience của Firebase ID Token không hợp lệ.");
+    }
+  }
+}
+
 function createFirebaseIdTokenVerifier({
   apiKey = process.env.FIREBASE_API_KEY,
+  projectId = process.env.FIREBASE_PROJECT_ID || "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   return async function verifyFirebaseIdToken(idToken) {
@@ -13,6 +50,7 @@ function createFirebaseIdTokenVerifier({
     if (typeof fetchImpl !== "function") {
       throw new Error("Môi trường chạy không hỗ trợ fetch để xác minh Firebase.");
     }
+    assertValidFirebaseJwtClaims(idToken, { projectId });
     const response = await fetchImpl(`${FIREBASE_LOOKUP_URL}?key=${encodeURIComponent(apiKey)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -42,4 +80,4 @@ function createFirebaseIdTokenVerifier({
   };
 }
 
-module.exports = { createFirebaseIdTokenVerifier };
+module.exports = { assertValidFirebaseJwtClaims, createFirebaseIdTokenVerifier };

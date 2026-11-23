@@ -40,6 +40,15 @@ const SESSION_REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;
 
+class RefreshTokenReuseError extends Error {
+  constructor(userId) {
+    super("Refresh token reuse detected; all sessions for this user have been revoked.");
+    this.name = "RefreshTokenReuseError";
+    this.code = "REFRESH_TOKEN_REUSE_DETECTED";
+    this.userId = userId || null;
+  }
+}
+
 function isPasswordValid(password) {
   return typeof password === "string" &&
     password.length >= PASSWORD_MIN_LENGTH &&
@@ -50,6 +59,8 @@ function isPasswordValid(password) {
 class SessionStore {
   constructor(options = {}) {
     this.sessions = new Map();
+    this.consumedRefreshHashes = new Map();
+    this._refreshLocks = new Map();
     this.repository = options.repository || null;
     this.sessionTtlMs = Number.isFinite(options.sessionTtlMs)
       ? options.sessionTtlMs
@@ -237,59 +248,113 @@ class SessionStore {
     }
   }
 
-  async rotateSession(token, refreshTokenOrSessionTtlMs, maybeRefreshTtlMs) {
-    const session = await this.getSession(token);
-    if (!session) return null;
-    const now = Date.now();
-    let refreshToken = null;
-    let sessionTtlMs = this.sessionTtlMs;
-    let refreshTtlMs = this.refreshTtlMs;
-
-    if (typeof refreshTokenOrSessionTtlMs === "string") {
-      refreshToken = refreshTokenOrSessionTtlMs;
-      if (Number.isFinite(Number(maybeRefreshTtlMs))) {
-        sessionTtlMs = Number(maybeRefreshTtlMs);
+  async _withTokenLock(token, operation) {
+    const key = typeof token === "string" && token ? token : "__none__";
+    const previous = this._refreshLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => current);
+    this._refreshLocks.set(key, chain);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this._refreshLocks.get(key) === chain) {
+        this._refreshLocks.delete(key);
       }
-    } else if (Number.isFinite(Number(refreshTokenOrSessionTtlMs))) {
-      sessionTtlMs = Number(refreshTokenOrSessionTtlMs);
-      refreshTtlMs = Number.isFinite(Number(maybeRefreshTtlMs))
-        ? Number(maybeRefreshTtlMs)
-        : refreshTtlMs;
     }
+  }
 
-    if (Number.isFinite(session.refreshExpiresAt) && now >= session.refreshExpiresAt) {
-      await this.destroySession(token);
+  _getConsumedRefreshRecord(refreshToken) {
+    if (!refreshToken || typeof refreshToken !== "string") return null;
+    const hash = hashPasswordResetToken(refreshToken);
+    const record = this.consumedRefreshHashes.get(hash);
+    if (!record) return null;
+    if (Date.now() >= record.expiresAt) {
+      this.consumedRefreshHashes.delete(hash);
       return null;
     }
-    if (refreshToken && !this.verifyRefreshToken(refreshToken, session)) {
-      return null;
-    }
+    return record;
+  }
 
-    const nextToken = crypto.randomUUID();
-    const nextRefreshToken = crypto.randomUUID();
-    const rotatedSession = {
-      ...session,
-      token: nextToken,
-      refreshToken: nextRefreshToken,
-      refreshTokenHash: hashPasswordResetToken(nextRefreshToken),
-      updatedAt: now,
-      expiresAt: now + Number(sessionTtlMs),
-      refreshExpiresAt: now + Number(refreshTtlMs),
-    };
-    if (this.repository) {
-      const storedSession = { ...rotatedSession };
-      delete storedSession.token;
-      delete storedSession.refreshToken;
-      await this.repository.deleteSessionRecord(hashPasswordResetToken(token));
-      await this.repository.saveSessionRecord(
-        hashPasswordResetToken(nextToken),
-        storedSession,
-      );
-    } else {
-      this.sessions.delete(token);
-      this.sessions.set(nextToken, { ...rotatedSession, refreshToken: undefined });
-    }
-    return rotatedSession;
+  async rotateSession(token, refreshTokenOrSessionTtlMs, maybeRefreshTtlMs) {
+    return this._withTokenLock(token, async () => {
+      const now = Date.now();
+      let refreshToken = null;
+      let sessionTtlMs = this.sessionTtlMs;
+      let refreshTtlMs = this.refreshTtlMs;
+
+      if (typeof refreshTokenOrSessionTtlMs === "string") {
+        refreshToken = refreshTokenOrSessionTtlMs;
+        if (Number.isFinite(Number(maybeRefreshTtlMs))) {
+          sessionTtlMs = Number(maybeRefreshTtlMs);
+        }
+      } else if (Number.isFinite(Number(refreshTokenOrSessionTtlMs))) {
+        sessionTtlMs = Number(refreshTokenOrSessionTtlMs);
+        refreshTtlMs = Number.isFinite(Number(maybeRefreshTtlMs))
+          ? Number(maybeRefreshTtlMs)
+          : refreshTtlMs;
+      }
+
+      if (refreshToken) {
+        const consumed = this._getConsumedRefreshRecord(refreshToken);
+        if (consumed) {
+          await this.destroyUserSessions(consumed.userId);
+          throw new RefreshTokenReuseError(consumed.userId);
+        }
+      }
+
+      const session = await this.getSession(token);
+      if (!session) return null;
+
+      if (Number.isFinite(session.refreshExpiresAt) && now >= session.refreshExpiresAt) {
+        await this.destroySession(token);
+        return null;
+      }
+      if (refreshToken && !this.verifyRefreshToken(refreshToken, session)) {
+        return null;
+      }
+
+      const nextToken = crypto.randomUUID();
+      const nextRefreshToken = crypto.randomUUID();
+      const nextRefreshExpiresAt = Number.isFinite(Number(maybeRefreshTtlMs))
+        ? now + Number(refreshTtlMs)
+        : (Number.isFinite(session.refreshExpiresAt) ? session.refreshExpiresAt : now + Number(refreshTtlMs));
+      const rotatedSession = {
+        ...session,
+        token: nextToken,
+        refreshToken: nextRefreshToken,
+        refreshTokenHash: hashPasswordResetToken(nextRefreshToken),
+        updatedAt: now,
+        lastActivityAt: now,
+        idleExpiresAt: this.idleTimeoutMs > 0 ? now + this.idleTimeoutMs : null,
+        expiresAt: now + Number(sessionTtlMs),
+        refreshExpiresAt: nextRefreshExpiresAt,
+      };
+      if (typeof session.refreshTokenHash === "string" && session.refreshTokenHash) {
+        this.consumedRefreshHashes.set(session.refreshTokenHash, {
+          userId: session.userId,
+          expiresAt: nextRefreshExpiresAt,
+        });
+      }
+      if (this.repository) {
+        const storedSession = { ...rotatedSession };
+        delete storedSession.token;
+        delete storedSession.refreshToken;
+        await this.repository.deleteSessionRecord(hashPasswordResetToken(token));
+        await this.repository.saveSessionRecord(
+          hashPasswordResetToken(nextToken),
+          storedSession,
+        );
+      } else {
+        this.sessions.delete(token);
+        this.sessions.set(nextToken, { ...rotatedSession, refreshToken: undefined });
+      }
+      return rotatedSession;
+    });
   }
 
   async destroySession(token) {
@@ -315,10 +380,15 @@ class SessionStore {
   }
 
   async pruneExpiredSessions() {
+    const now = Date.now();
+    for (const [hash, record] of this.consumedRefreshHashes) {
+      if (now >= record.expiresAt) {
+        this.consumedRefreshHashes.delete(hash);
+      }
+    }
     if (this.repository) {
       return this.repository.pruneExpiredSessionRecords();
     }
-    const now = Date.now();
     let removed = 0;
     for (const [token, session] of this.sessions) {
       const isIdleExpired =
@@ -351,5 +421,6 @@ module.exports = {
   SESSION_IDLE_TIMEOUT_MS,
   SESSION_REFRESH_TTL_MS,
   verifyPassword,
+  RefreshTokenReuseError,
   SessionStore
 };

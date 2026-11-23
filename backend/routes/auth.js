@@ -1,4 +1,5 @@
 const { appendAuditEntry } = require("../audit");
+const { RefreshTokenReuseError } = require("../auth");
 const {
   CSRF_COOKIE_NAME,
   buildAuthCookieHeaders,
@@ -246,7 +247,9 @@ if (
     );
     sendJson(response, 201, {
       token: session.token,
+      refreshToken: session.refreshToken,
       expiresAt: session.expiresAt,
+      refreshExpiresAt: session.refreshExpiresAt,
       user: publicUser(user),
     });
   } catch (err) {
@@ -378,7 +381,9 @@ if (
   }).catch(() => {});
   sendJson(response, 200, {
     token: session.token,
+    refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
+    refreshExpiresAt: session.refreshExpiresAt,
     user: publicUser(user),
   });
   return true;
@@ -429,7 +434,9 @@ if (
   );
   sendJson(response, 200, {
     token: session.token,
+    refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
+    refreshExpiresAt: session.refreshExpiresAt,
     user: publicUser(user),
   });
   return true;
@@ -753,7 +760,44 @@ if (
     );
     refreshToken = payload.refreshToken;
   }
-  const refreshed = await sessionStore.refreshSession(token, refreshToken);
+  let refreshed;
+  let rotated = false;
+  try {
+    if (typeof refreshToken === "string" && refreshToken.trim()) {
+      refreshed = await sessionStore.rotateSession(token, refreshToken.trim());
+      rotated = Boolean(refreshed);
+    } else {
+      refreshed = await sessionStore.refreshSession(token);
+    }
+  } catch (error) {
+    if (error instanceof RefreshTokenReuseError || error?.code === "REFRESH_TOKEN_REUSE_DETECTED") {
+      response.setHeader("Set-Cookie", buildClearAuthCookieHeaders(request));
+      if (auditLogPath) {
+        await appendAuditEntry(auditLogPath, {
+          action: "auth.refresh_token.reuse_detected",
+          actorId: error.userId || null,
+          actorRole: "anonymous",
+          entityType: "auth",
+          entityId: error.userId || null,
+          outcome: "denied",
+          statusCode: 401,
+          requestId: response.getHeader("X-Request-Id"),
+          metadata: {
+            reason: "refresh_token_replay",
+            actionTaken: "revoked_all_user_sessions",
+          },
+        }).catch(() => {});
+      }
+      throw withErrorCode(
+        new RequestError(
+          401,
+          "Phát hiện tái sử dụng refresh token. Toàn bộ phiên đã bị thu hồi, vui lòng đăng nhập lại.",
+        ),
+        "REFRESH_TOKEN_REUSE_DETECTED",
+      );
+    }
+    throw error;
+  }
   if (!refreshed) {
     throw new RequestError(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.");
   }
@@ -763,6 +807,8 @@ if (
   );
   sendJson(response, 200, {
     token: refreshed.token,
+    ...(rotated && refreshed.refreshToken ? { refreshToken: refreshed.refreshToken } : {}),
+    rotated,
     expiresAt: refreshed.expiresAt,
     idleExpiresAt: refreshed.idleExpiresAt,
     refreshExpiresAt: refreshed.refreshExpiresAt,

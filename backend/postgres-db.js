@@ -924,16 +924,18 @@ class PostgresDatabase {
       query = `SELECT orders.*,
           COALESCE(items.records, '[]'::json) AS items
         FROM store_orders orders
-        LEFT JOIN LATERAL (
-          SELECT json_agg(json_build_object(
+        LEFT JOIN (
+          SELECT order_id,
+            json_agg(json_build_object(
             'title', product_title,
             'author', author,
             'unitPrice', unit_price,
             'quantity', quantity,
             'lineTotal', line_total
           ) ORDER BY product_title) AS records
-          FROM store_order_items WHERE order_id = orders.order_id
-        ) items ON TRUE
+          FROM store_order_items
+          GROUP BY order_id
+        ) items ON items.order_id = orders.order_id
         ORDER BY orders.created_at${forUpdate ? " FOR UPDATE OF orders" : ""}`;
     } else {
       const filter = name === "books" ? " WHERE is_custom = TRUE" : "";

@@ -37,3 +37,9 @@ SELECT COUNT(*)::int FROM privacy_consents WHERE retain_until <= NOW();
 - Ưu tiên **partial index** (`WHERE is_custom = TRUE`, `WHERE is_active = TRUE`) để giảm kích thước index trên đĩa và giảm số lần cập nhật B-tree khi ghi.
 - Không thêm index trên các cột có độ phân biệt rất thấp đứng một mình hoặc cột văn bản dài (`note`, `description`).
 - Định kỳ kiểm tra kích thước & tần suất dùng index qua `pg_stat_user_indexes` (`idx_scan`, `pg_relation_size(indexrelid)`) để loại bỏ index không còn sử dụng.
+
+## Issue #333: grouped join for order lists
+
+`readRelationalCollection("orders")` loads the full order list and its line items. The former query used `LEFT JOIN LATERAL` to look up items separately for each order. The updated query groups line items by `order_id` in one subquery and joins that result to orders. Item ordering by `product_title`, order ordering by `created_at`, and the returned JSON shape are preserved. A regression test ensures the path remains a single grouped-join query.
+
+Measure both query forms on staging with representative data using `EXPLAIN (ANALYZE, BUFFERS)`; record execution time, shared hit/read blocks, and actual row counts. This workspace has no access to a staging or production database, so before/after benchmark measurements could not be captured here and the performance gain still needs confirmation against representative data.

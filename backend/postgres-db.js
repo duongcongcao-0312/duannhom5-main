@@ -1133,6 +1133,43 @@ class PostgresDatabase {
     });
   }
 
+  async createEmailVerificationToken(email, tokenHash, expiresAt) {
+    return this.updateCollection("users", (users) => {
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const user = users.find((entry) => entry.email.toLowerCase() === normalizedEmail);
+      if (!user || user.emailVerified === true) return null;
+      user.emailVerification = { tokenHash, expiresAt };
+      user.updatedAt = new Date().toISOString();
+      return { id: user.id, name: user.name, email: user.email };
+    });
+  }
+
+  async clearEmailVerificationToken(tokenHash) {
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => entry.emailVerification?.tokenHash === tokenHash);
+      if (!user) return false;
+      delete user.emailVerification;
+      return true;
+    });
+  }
+
+  async verifyEmailToken(token) {
+    return this.updateCollection("users", (users) => {
+      const user = users.find((entry) => (
+        Date.parse(entry.emailVerification?.expiresAt) > Date.now() &&
+        (verifyPasswordResetToken(token, entry.emailVerification?.tokenHash) ||
+          (typeof token === "string" &&
+            secureHashPasswordResetToken(token) === entry.emailVerification?.tokenHash))
+      ));
+      if (!user) return null;
+      user.emailVerified = true;
+      user.emailVerifiedAt = new Date().toISOString();
+      delete user.emailVerification;
+      user.updatedAt = user.emailVerifiedAt;
+      return user;
+    });
+  }
+
   async updateUserPasswordHash(id, passwordHash) {
     return this.updateCollection("users", (users) => {
       const user = users.find((entry) => entry.id === id);

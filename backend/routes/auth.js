@@ -30,7 +30,7 @@ function withErrorCode(error, errorCode) {
 }
 
 function createAuthRoutes(dependencies) {
-  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, dispatchMonitoringAlert, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, loginAccountAttemptLimit = 10, loginAccountWindowMs = 15 * 60 * 1000, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetTtlMs = 60 * 60 * 1000, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
+  const { RequestError, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, ROLES, appBaseUrl, auditLogPath, db, dispatchMonitoringAlert, getAuthUser, getClientAddress, hashPasswordResetToken, isPasswordValid, loginAttemptLimit, loginAttemptWindowMs, loginAccountAttemptLimit = 10, loginAccountWindowMs = 15 * 60 * 1000, passwordResetEmailLimit, passwordResetIpLimit, passwordResetWindowMs, passwordResetTtlMs = 60 * 60 * 1000, emailVerificationTtlMs = 24 * 60 * 60 * 1000, passwordResetMailer, payloadSchemas, privacyExportStore, publicUser, randomBytes, rateLimitRequest, clearRateLimit, readJson, registrationAttemptLimit, registrationAttemptWindowMs, requireJsonObject, sanitizePlainText, sendJson, sessionStore, socialTokenVerifier, verifyPassword, verifyPasswordReauthentication, verifySocialIdentity } = dependencies;
   function toRequestError(error) {
     if (error instanceof ProfileUpdateError) {
       return withErrorCode(new RequestError(error.status, error.message), error.errorCode);
@@ -53,6 +53,166 @@ if (
     csrfToken,
     cookieName: CSRF_COOKIE_NAME,
     headerName: "X-CSRF-Token",
+  });
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/auth/verify-email/request" &&
+  request.method === "POST"
+) {
+  const session = await getAuthUser(request);
+  let email = session?.email ? String(session.email).trim().toLowerCase() : "";
+  if (!email && (Number(request.headers["content-length"] || 0) > 0 || request.headers["content-type"])) {
+    const payload = requireJsonObject(
+      await readJson(request),
+      "Email không hợp lệ.",
+      payloadSchemas.passwordReset,
+    );
+    if (typeof payload.email === "string") {
+      email = sanitizePlainText(payload.email, 254).toLowerCase();
+    }
+  }
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new RequestError(400, "Vui lòng nhập địa chỉ email hợp lệ.");
+  }
+
+  let verifyBase;
+  try {
+    verifyBase = new URL(String(appBaseUrl || ""));
+    if (
+      !["http:", "https:"].includes(verifyBase.protocol) ||
+      verifyBase.username ||
+      verifyBase.password ||
+      verifyBase.search ||
+      verifyBase.hash
+    ) {
+      throw new Error("Invalid public app URL.");
+    }
+    if (!verifyBase.pathname.endsWith("/")) verifyBase.pathname += "/";
+  } catch {
+    throw new RequestError(503, "Xác thực email chưa được cấu hình địa chỉ website.");
+  }
+  await db.init();
+  if (!passwordResetMailer || typeof passwordResetMailer.sendEmailVerification !== "function") {
+    throw new RequestError(503, "Xác thực email chưa được cấu hình dịch vụ gửi email.");
+  }
+
+  const address = getClientAddress(request);
+  const tooManyRequests = "Bạn đã yêu cầu gửi xác thực email quá nhiều lần. Vui lòng thử lại sau.";
+  await rateLimitRequest(
+    response,
+    "email-verify-ip",
+    address,
+    passwordResetIpLimit,
+    passwordResetWindowMs,
+    tooManyRequests,
+  );
+  await rateLimitRequest(
+    response,
+    "email-verify-email",
+    email,
+    passwordResetEmailLimit,
+    passwordResetWindowMs,
+    tooManyRequests,
+  );
+
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = hashPasswordResetToken(token);
+  const expiresAt = new Date(Date.now() + emailVerificationTtlMs).toISOString();
+  const user = await db.createEmailVerificationToken(email, tokenHash, expiresAt);
+  if (user) {
+    verifyBase.hash = new URLSearchParams({ verifyEmailToken: token }).toString();
+    try {
+      await passwordResetMailer.sendEmailVerification({
+        to: user.email,
+        name: user.name,
+        url: verifyBase.toString(),
+      });
+    } catch (error) {
+      await db.clearEmailVerificationToken(tokenHash);
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "error",
+        event: "email_verification_delivery_failed",
+        errorCode: typeof error?.code === "string" ? error.code : "UNKNOWN",
+        message: redactLogText(error?.message),
+      }));
+      throw new RequestError(
+        503,
+        "Không thể gửi email xác thực. Vui lòng kiểm tra cấu hình nhà cung cấp email hoặc thử lại sau.",
+      );
+    }
+  }
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.email_verification.requested",
+      actorId: session?.userId || null,
+      actorRole: session?.role || "anonymous",
+      entityType: "auth",
+      entityId: null,
+      outcome: "attempt",
+      statusCode: 200,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: { deliveryAttempted: true },
+    }).catch(() => {});
+  }
+  sendJson(response, 200, {
+    message: "Nếu email chưa được xác minh, liên kết xác thực đã được gửi đến hộp thư của bạn.",
+  });
+  return true;
+}
+
+if (
+  requestUrl.pathname === "/api/auth/verify-email/confirm" &&
+  request.method === "POST"
+) {
+  await rateLimitRequest(
+    response,
+    "email-verify-confirm",
+    getClientAddress(request),
+    passwordResetIpLimit,
+    passwordResetWindowMs,
+    "Bạn đã thử xác thực email quá nhiều lần. Vui lòng thử lại sau.",
+  );
+  const payload = requireJsonObject(
+    await readJson(request),
+    "Yêu cầu xác thực email không hợp lệ.",
+    {
+      allowed: ["token"],
+      required: ["token"],
+      types: { token: "string" },
+      preserveStrings: ["token"],
+    },
+  );
+  const token = sanitizePlainText(
+    typeof payload.token === "string" ? payload.token : String(payload.token || ""),
+    128,
+  );
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    throw new RequestError(400, "Liên kết xác thực email không hợp lệ hoặc đã hết hạn.");
+  }
+  const verifiedUser = await db.verifyEmailToken(token);
+  if (!verifiedUser) {
+    throw new RequestError(400, "Liên kết xác thực email không hợp lệ hoặc đã hết hạn.");
+  }
+  if (auditLogPath) {
+    await appendAuditEntry(auditLogPath, {
+      action: "auth.email_verification.completed",
+      actorId: verifiedUser.id,
+      actorRole: verifiedUser.role,
+      entityType: "user",
+      entityId: verifiedUser.id,
+      outcome: "success",
+      statusCode: 200,
+      requestId: response.getHeader("X-Request-Id"),
+      metadata: { emailVerified: true },
+    }).catch(() => {});
+  }
+  sendJson(response, 200, {
+    verified: true,
+    user: publicUser(verifiedUser),
+    message: "Email đã được xác thực thành công.",
   });
   return true;
 }

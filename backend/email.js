@@ -9,42 +9,52 @@ function wait(milliseconds) {
 }
 
 function createResendMailer(apiKey, from, fetchImpl = fetch) {
+  async function sendResendEmail({ to, subject, text }) {
+    for (let attempt = 0; attempt < resendMaxAttempts; attempt += 1) {
+      let response;
+      try {
+        response = await fetchImpl("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ from, to: [to], subject, text }),
+          signal: AbortSignal.timeout(resendRequestTimeoutMs),
+        });
+      } catch (error) {
+        if (attempt === resendMaxAttempts - 1) throw error;
+        await wait(resendBackoffBaseMs * (2 ** attempt));
+        continue;
+      }
+      if (response.ok) return;
+
+      const retryable = response.status === 429 ||
+        (response.status >= 500 && response.status <= 599);
+      if (retryable && attempt < resendMaxAttempts - 1) {
+        await wait(resendBackoffBaseMs * (2 ** attempt));
+        continue;
+      }
+
+      const detail = await response.text();
+      throw new Error(`Resend trả về HTTP ${response.status}: ${detail.slice(0, 500)}`);
+    }
+  }
+
   return {
     async sendPasswordReset({ to, name, url }) {
-      for (let attempt = 0; attempt < resendMaxAttempts; attempt += 1) {
-        let response;
-        try {
-          response = await fetchImpl("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from,
-              to: [to],
-              subject: "Khôi phục mật khẩu BookNest",
-              text: `Xin chào ${name},\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\n${url}\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.`,
-            }),
-            signal: AbortSignal.timeout(resendRequestTimeoutMs),
-          });
-        } catch (error) {
-          if (attempt === resendMaxAttempts - 1) throw error;
-          await wait(resendBackoffBaseMs * (2 ** attempt));
-          continue;
-        }
-        if (response.ok) return;
-
-        const retryable = response.status === 429 ||
-          (response.status >= 500 && response.status <= 599);
-        if (retryable && attempt < resendMaxAttempts - 1) {
-          await wait(resendBackoffBaseMs * (2 ** attempt));
-          continue;
-        }
-
-        const detail = await response.text();
-        throw new Error(`Resend trả về HTTP ${response.status}: ${detail.slice(0, 500)}`);
-      }
+      await sendResendEmail({
+        to,
+        subject: "Khôi phục mật khẩu BookNest",
+        text: `Xin chào ${name},\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\n${url}\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.`,
+      });
+    },
+    async sendEmailVerification({ to, name, url }) {
+      await sendResendEmail({
+        to,
+        subject: "Xác thực địa chỉ email BookNest",
+        text: `Xin chào ${name},\n\nVui lòng mở liên kết sau để xác thực địa chỉ email tài khoản BookNest của bạn (liên kết có hiệu lực một lần):\n${url}\n\nNếu bạn không thực hiện yêu cầu này, hãy bỏ qua email.`,
+      });
     },
   };
 }
@@ -73,6 +83,14 @@ function createSmtpMailer(env = process.env) {
         to,
         subject: "Khôi phục mật khẩu BookNest",
         text: `Xin chào ${name},\n\nĐể đặt lại mật khẩu BookNest, hãy mở liên kết sau trong vòng 1 giờ:\n${url}\n\nNếu bạn không yêu cầu khôi phục mật khẩu, hãy bỏ qua email này.`,
+      });
+    },
+    async sendEmailVerification({ to, name, url }) {
+      await transport.sendMail({
+        from,
+        to,
+        subject: "Xác thực địa chỉ email BookNest",
+        text: `Xin chào ${name},\n\nVui lòng mở liên kết sau để xác thực địa chỉ email tài khoản BookNest của bạn (liên kết có hiệu lực một lần):\n${url}\n\nNếu bạn không thực hiện yêu cầu này, hãy bỏ qua email.`,
       });
     },
   };

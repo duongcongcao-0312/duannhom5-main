@@ -347,6 +347,7 @@ function publicUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    emailVerified: Boolean(user.emailVerified),
     role: user.role,
     studentType: user.studentType,
     studentId: user.studentId,
@@ -1100,6 +1101,7 @@ function createServer({
   passwordResetEmailLimit = 5,
   passwordResetWindowMs = 15 * 60 * 1000,
   passwordResetTtlMs = 60 * 60 * 1000,
+  emailVerificationTtlMs = 24 * 60 * 60 * 1000,
   orderRequestLimit = 30,
   orderRequestWindowMs = 15 * 60 * 1000,
 } = {}) {
@@ -2016,6 +2018,7 @@ function createServer({
     passwordResetEmailLimit,
     passwordResetWindowMs,
     passwordResetTtlMs,
+    emailVerificationTtlMs,
     passwordResetMailer,
     payloadSchemas,
     privacyExportStore,

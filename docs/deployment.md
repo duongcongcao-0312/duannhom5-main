@@ -146,48 +146,62 @@ byte và chữ ký trên raw body; đây không phải endpoint SePay và không
 
 ## Chạy bằng Docker
 
-Để chạy backend local bằng Docker Compose:
+Để chạy stack phát triển local bằng Docker Compose (Docker Engine và Compose plugin v2):
 
 ```powershell
-Copy-Item .env.example .env
-```
-
-Mở `.env`, đặt `ADMIN_EMAIL` và `ADMIN_PASSWORD` (ít nhất 12 ký tự), sau đó chạy:
-
-```sh
 docker compose up --build -d
 docker compose ps
 ```
+
+Compose khởi chạy PostgreSQL riêng trong network nội bộ, đợi database healthy,
+chạy service `migrate`, rồi mới khởi chạy backend. Cấu hình dùng database và
+credential development cố định, chỉ dành cho stack local; không có `env_file`
+và không đọc secrets production từ `.env`. Cổng backend mặc định bind vào
+loopback `127.0.0.1:8000`; đổi cổng host bằng biến `HOST_PORT` trong file
+`.env` hoặc trong shell. Không dùng credential local này bên ngoài stack phát triển.
+
+Kiểm tra trạng thái và log:
+
+```powershell
+docker compose ps
+docker compose logs -f db migrate backend
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+Migration tự chạy khi `docker compose up` tạo/cập nhật stack. Có thể xem trước
+kế hoạch migration mà không thay đổi schema:
+
+```powershell
+docker compose run --rm --no-deps migrate node scripts/migrate.js --dry-run
+```
+
+Để chạy lại migration sau khi cập nhật code:
+
+```powershell
+docker compose up --build -d migrate
+docker compose up -d backend
+```
+
+`docker compose down` dừng và xóa container/network nhưng giữ database và dữ
+liệu trong named volumes. Chỉ khi muốn xóa hoàn toàn dữ liệu development và
+khởi tạo như máy mới, dùng `docker compose down -v`; thao tác này xóa vĩnh viễn
+database và dữ liệu file trong hai volume local.
 
 Image dùng Node.js 22 Alpine, cài dependency production bằng `npm ci` từ lockfile
 trong stage riêng, chạy với user `node` và có health check trên `/health`. Build
 context loại `.env*`, dữ liệu runtime, test, tài liệu và dependency cục bộ; chỉ
 các migration được đóng gói. Compose bật filesystem chỉ đọc, bỏ Linux capabilities
-và giữ dữ liệu ở volume riêng. Không truyền secret bằng `ARG` hoặc `ENV` lúc build;
-cấp cấu hình runtime qua secret manager hoặc file `.env` local (file này không
-được đưa vào image).
+và giữ dữ liệu ở volume riêng. Không truyền secret bằng `ARG` hoặc `ENV` lúc build.
 
-Truy cập `http://localhost:8000`; xem log bằng `docker compose logs -f backend`
-và dừng bằng `docker compose down`. Cổng host mặc định là `8000`; có thể đổi
-bằng biến `HOST_PORT` trong `.env`. Compose local chạy chế độ development, dùng
-kho dữ liệu dạng file được lưu trong volume `backend-data`, và chỉ bind cổng
-trên loopback của máy.
+Truy cập `http://localhost:8000`; dừng bằng `docker compose down`. Nếu chạy riêng
+frontend bằng VS Code Live Server hoặc Vite, dùng cổng mặc định `5500` hoặc
+`5173`; frontend local sẽ gọi API tại `http://localhost:8000` hoặc
+`http://127.0.0.1:8000`.
 
-Nếu chạy riêng frontend bằng VS Code Live Server hoặc Vite, dùng cổng mặc định
-`5500` hoặc `5173`; frontend local sẽ tự gọi API tại `http://localhost:8000`
-hoặc `http://127.0.0.1:8000`. Cách đơn giản nhất vẫn là mở trực tiếp
-`http://localhost:8000`.
-
-Không commit `.env` hoặc đưa mật khẩu/API key vào repository. Cấu hình Compose
-này dành cho local development; production cần PostgreSQL, `DATABASE_URL`,
-migration trước khi khởi động, và các biến bí mật được cấp qua secret manager.
-Không expose cổng backend trực tiếp ra Internet; dùng HTTPS và reverse proxy
-khi triển khai công khai.
-
-Image xuất bản từ GitHub Actions có tên
-`ghcr.io/duongcongcao-0312/duannhom5-main:<tag>`. Workflow chạy khi push tag
-`v*`; maintainer cần tạo tag và cấu hình quyền/package visibility trên GitHub.
-
+Compose này dành cho local development. Production cần PostgreSQL phù hợp,
+`DATABASE_URL`, migration trước khi khởi động, và secrets được cấp qua secret
+manager. Không expose cổng backend trực tiếp ra Internet; dùng HTTPS và reverse
+proxy khi triển khai công khai.
 ## Dữ liệu và tài khoản
 
 Khi dùng file storage, BookNest lưu tài khoản, khách hàng CRM, sách quản trị,

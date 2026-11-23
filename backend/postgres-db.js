@@ -2480,7 +2480,7 @@ class PostgresDatabase {
               assigned_to, escalation_level, resolution_code, due_at,
               created_by, updated_by, created_at, updated_at, resolved_at
        FROM privacy_data_requests
-       WHERE subject_id = $1::uuid
+       WHERE subject_id = $1::text
        ORDER BY created_at DESC`,
       [subjectId],
     );
@@ -2515,7 +2515,7 @@ class PostgresDatabase {
       `INSERT INTO privacy_data_requests (
          subject_id, request_type, channel, verification_method, due_at, created_by
        )
-       VALUES ($1::uuid, $2, $3, $4, $5::timestamptz, $1::uuid)
+       VALUES ($1::text, $2, $3, $4, $5::timestamptz, $1::text)
        ON CONFLICT (subject_id, request_type)
          WHERE status IN ('pending', 'processing')
        DO NOTHING

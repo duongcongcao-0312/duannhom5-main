@@ -255,6 +255,17 @@ test("CRM migrations upgrade a populated legacy schema without losing records", 
       `INSERT INTO customers (full_name, phone, email, source)
        VALUES ('New CRM Customer', '+84901111111', 'new@example.com', 'api')`,
     );
+
+    const dsar = await client.query(
+      `INSERT INTO privacy_data_requests (subject_id, request_type, created_by)
+       VALUES ('legacy-user-1', 'access', 'legacy-user-1')
+       RETURNING request_id, subject_id`,
+    );
+    assert.equal(dsar.rows[0].subject_id, "legacy-user-1");
+    await assert.rejects(client.query(
+      `INSERT INTO privacy_data_requests (subject_id, request_type, created_by)
+       VALUES ('non-existent-user-id', 'delete', 'non-existent-user-id')`,
+    ));
   } finally {
     await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => {});
     client.release();

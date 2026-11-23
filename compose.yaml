@@ -1,22 +1,93 @@
+name: booknest-local
+
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: booknest_dev
+      POSTGRES_USER: booknest_dev
+      # Local-only credential. Never reuse it outside this isolated dev stack.
+      POSTGRES_PASSWORD: booknest_dev_only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booknest_dev -d booknest_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    build:
+      context: .
+    image: booknest-backend:local
+    command: ["node", "scripts/migrate.js"]
+    init: true
+    environment:
+      APP_ENV: development
+      NODE_ENV: development
+      DATABASE_URL: postgres://booknest_dev:booknest_dev_only@db:5432/booknest_dev
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   backend:
     build:
       context: .
     image: booknest-backend:local
     init: true
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      APP_ENV: development
       NODE_ENV: development
       HOST: 0.0.0.0
       PORT: 8000
-      DATABASE_URL: ""
+      DATABASE_URL: postgres://booknest_dev:booknest_dev_only@db:5432/booknest_dev
       CORS_ORIGINS: "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5173,http://localhost:5173"
     ports:
       - "127.0.0.1:${HOST_PORT:-8000}:8000"
     volumes:
       - backend-data:/app/data
+    networks:
+      - app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  app:
+    driver: bridge
 
 volumes:
   backend-data:
+  postgres-data:

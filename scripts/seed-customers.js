@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { Pool } = require("pg");
+const { createDatabasePoolConfig } = require("../backend/postgres-db");
 require("dotenv").config();
 const { assertSeedAllowed } = require("../backend/env-isolation");
 
@@ -53,10 +54,7 @@ async function seedFile() {
 }
 
 async function seedPostgres() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-  });
+  const pool = new Pool(createDatabasePoolConfig(process.env.DATABASE_URL));
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

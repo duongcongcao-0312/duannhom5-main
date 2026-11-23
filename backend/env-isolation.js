@@ -52,6 +52,9 @@ function validateDatabaseEnvironmentIsolation(env = process.env) {
   }
 
   const rawNodeEnv = String(env.NODE_ENV || "").trim().toLowerCase();
+  if (environment === "staging" && rawNodeEnv && rawNodeEnv !== "production") {
+    errors.push("APP_ENV=staging must use NODE_ENV=production for the production runtime safeguards.");
+  }
   if (environment === "production" && rawNodeEnv && rawNodeEnv !== "production") {
     errors.push("APP_ENV=production không được chạy với NODE_ENV khác production.");
   }
@@ -60,6 +63,9 @@ function validateDatabaseEnvironmentIsolation(env = process.env) {
   if (target) {
     const { hostname, databaseName } = target;
     const expectedDbName = String(env.EXPECTED_DATABASE_NAME || "").trim();
+    if ((environment === "staging" || environment === "production") && !expectedDbName) {
+      errors.push(`APP_ENV=${environment} requires EXPECTED_DATABASE_NAME to pin the database target.`);
+    }
     if (expectedDbName && databaseName !== expectedDbName) {
       errors.push(
         `DATABASE_URL trỏ tới database "${databaseName}" không khớp EXPECTED_DATABASE_NAME ("${expectedDbName}").`,

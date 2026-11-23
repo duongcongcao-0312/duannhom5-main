@@ -97,8 +97,10 @@ npm start
 
 ## Cấu hình môi trường
 
-Máy chủ đọc trực tiếp `HOST` và `PORT` từ môi trường; Node.js không tự nạp
-`.env`. Mẫu cấu hình local nằm trong `.env.example`.
+Danh mục biến môi trường, kiểu dữ liệu, phạm vi áp dụng và quy tắc lưu secret được duy trì tại [docs/environment-variables.md](docs/environment-variables.md). `npm run config:check` kiểm tra cấu hình trước khi chạy; server cũng từ chối khởi động khi cấu hình sai.
+
+Máy chủ nạp `.env` local bằng `dotenv` rồi đọc `HOST` và `PORT` từ môi trường;
+Node.js không tự nạp file này. Mẫu cấu hình local nằm trong `.env.example`.
 
 Tạo `.env` local từ file mẫu. Trên Windows Command Prompt:
 
@@ -112,35 +114,7 @@ Trên macOS/Linux hoặc PowerShell:
 cp .env.example .env
 ```
 
-Các biến thường dùng:
-
-| Biến | Mục đích |
-| --- | --- |
-| `PORT` | Cổng HTTP của backend; local thường dùng `8000`. |
-| `HOST` | Địa chỉ bind của backend; local nên dùng `127.0.0.1`, môi trường cloud thường dùng `0.0.0.0`. |
-| `NODE_ENV` | Môi trường chạy, ví dụ `development` hoặc `production`. |
-| `DATABASE_URL` | Connection string PostgreSQL; local lưu trong `.env` không commit, môi trường deploy lưu trong secret manager. |
-| `DATABASE_SSL_CA_PATH` | Tùy chọn: đường dẫn tới CA certificate PostgreSQL tin cậy, ví dụ `/etc/secrets/supabase-ca.crt` trên Render. TLS vẫn xác minh chứng chỉ máy chủ. |
-| `ADMIN_EMAIL` | Email quản trị do maintainer tự đặt trong môi trường deploy. |
-| `ADMIN_PASSWORD` | Mật khẩu quản trị mạnh, tối thiểu 12 ký tự không phải khoảng trắng và không dùng lại mật khẩu dịch vụ database. |
-| `CORS_ORIGINS` | Danh sách origin frontend được phép, phân tách bằng dấu phẩy. Không thêm path hoặc dấu `/` cuối origin. |
-| `FIREBASE_API_KEY` | Firebase Web API key để backend xác minh ID Token social qua Firebase Identity Toolkit. |
-| `API_BASE_URL` | URL backend được frontend sử dụng khi build Pages; nên cấu hình bằng GitHub Actions Variable, không phải secret nếu chỉ là URL công khai. |
-| `SESSION_TTL_MS` | Thời hạn phiên xác thực tính bằng mili giây; mặc định là 7 ngày và phải lớn hơn 0. |
-| `SESSION_REFRESH_TTL_MS` | Thời hạn refresh token tính bằng mili giây; mặc định là 30 ngày và phải lớn hơn 0. Refresh token được lưu dưới dạng hash SHA-256, không ghi token thô ra dữ liệu hoặc log. |
-| `PAYMENT_WEBHOOK_SECRET` | Secret ngẫu nhiên tối thiểu 32 byte dùng xác minh chữ ký webhook thanh toán; chỉ lưu trong secret manager. |
-| `MONITORING_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn nhận cảnh báo ngưỡng API, database và payment; payload chỉ chứa mã sự kiện, số lượng, ngưỡng và request ID. |
-| `BACKUP_DIR` / `DATA_DIR` | Thư mục backup và thư mục dữ liệu file; không đặt hai thư mục trùng hoặc lồng nhau. |
-| `BACKUP_STATUS_FILE` | File trạng thái backup dùng chung giữa scheduler và backend; mặc định `<DATA_DIR>/backup-status.json`. |
-| `BACKUP_INTERVAL_HOURS` | Chu kỳ backup; mặc định 24 giờ, từ 1 đến 8760. |
-| `BACKUP_RETENTION_DAYS` | Thời gian lưu backup; mặc định 30 ngày. Luôn giữ ít nhất hai bản gần nhất. |
-| `BACKUP_LOG_FILE` | File log JSON Lines cho các lần backup, retention và lỗi. |
-| `BACKUP_ALERT_TIMEOUT_MS` | Timeout webhook backup; mặc định 10 giây. |
-| `BACKUP_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn để nhận cảnh báo khi backup thất bại; cấu hình trong secret manager. |
-| `DATABASE_BACKUP_TIMEOUT_MS` | Timeout cho `pg_dump`/`pg_restore`; mặc định 30 phút, tối đa 24 giờ. |
-| `PG_DUMP_PATH` / `PG_RESTORE_PATH` | Đường dẫn executable PostgreSQL client nếu không có trong `PATH`. |
-| `SMOKE_BASE_URL` / `SMOKE_TIMEOUT_MS` | URL backend và timeout cho smoke checks; mặc định `http://127.0.0.1:8000` và 5 giây. |
-| `SMOKE_ALERT_WEBHOOK_URL` | Webhook HTTPS tùy chọn để cảnh báo khi health/readiness hoặc smoke check thất bại. |
+Toàn bộ danh mục cùng kiểu dữ liệu, điều kiện bắt buộc và môi trường áp dụng nằm trong [docs/environment-variables.md](docs/environment-variables.md).
 
 **Không commit `.env`, connection string, mật khẩu, token hoặc dữ liệu khách hàng.** Nếu một secret đã từng xuất hiện trong repository, cần thu hồi và tạo secret mới; chỉ xóa khỏi file là chưa đủ.
 

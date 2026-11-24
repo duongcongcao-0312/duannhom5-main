@@ -14,6 +14,11 @@ cho nhánh `main`:
 - Require a pull request before merging.
 - Require **1 approval** trước khi merge; dismiss stale approvals khi có commit
   mới và yêu cầu approval mới sau khi push.
+- Require review from Code Owners để các thay đổi trong `.github/CODEOWNERS`
+  được maintainer phụ trách xác nhận. Danh sách owner trong file là người dùng
+  GitHub có quyền review trong repository; cập nhật owner khi chuyển giao trách nhiệm.
+- Bật yêu cầu approval cho push cuối cùng (nếu tùy chọn này khả dụng) để người
+  đẩy commit mới nhất không thể tự đưa thay đổi đó qua review.
 - Require conversation resolution trước khi merge.
 - Require status checks to pass: chọn check có tên **`ci-gate`** từ workflow
   **BookNest CI**. Không chọn tên workflow chung hoặc các check không ổn định.
@@ -23,6 +28,8 @@ cho nhánh `main`:
   cấp cho một team/repository role vận hành được chỉ định; ghi rõ owner, lý do,
   thời hạn rà soát và audit từng lần bypass. Không cấp bypass cho mọi write
   collaborator.
+- GitHub không tính review của PR author làm approval hợp lệ. Bật yêu cầu approval
+  cho push cuối cùng để commit mới nhất cũng phải được người khác review.
 - Không bật yêu cầu signed commits hoặc merge queue nếu chưa có quyết định riêng
   và quy trình tương ứng.
 
@@ -34,10 +41,13 @@ mâu thuẫn cho `main`.
 ## Xác minh sau khi lưu
 
 1. Mở Settings và xác nhận rule đang Active, target đúng `main`, danh sách bypass
-   đúng chính sách, cùng các điều kiện PR/check ở trên.
+   đúng chính sách, cùng các điều kiện PR/check ở trên. Kiểm tra `.github/CODEOWNERS`
+   được nhận diện và yêu cầu code owner approval đang bật.
 2. Mở pull request thử vào `main`. Xác nhận GitHub hiển thị `ci-gate` pending
    rồi pass sau khi workflow **BookNest CI** thành công; merge bị khóa khi check
-   pending/fail, chưa đủ approval hoặc còn conversation chưa resolve.
+   pending/fail, chưa đủ approval hoặc còn conversation chưa resolve. Kiểm tra
+   PR thay đổi file thuộc owner yêu cầu người đó review; approval của tác giả PR
+   hoặc người push commit mới nhất không mở khóa merge.
 3. Xác nhận GitHub từ chối force push và xóa `main`. Thực hiện kiểm tra bằng
    thao tác được kiểm soát trên môi trường/repository thử nghiệm hoặc bằng API
    kiểm tra rule; không thử force push/xóa trên `main` thật.

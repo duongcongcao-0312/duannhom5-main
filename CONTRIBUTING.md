@@ -26,6 +26,9 @@ Mỗi PR nên có:
 - Tiêu đề rõ ràng, phản ánh mục tiêu thay đổi.
 - Mô tả ngắn gọn về vấn đề cần giải quyết.
 - Liên kết tới issue tương ứng hoặc ghi chú logic của task.
+- Mọi thay đổi cần vào pull request và được review độc lập trước khi merge vào `main`;
+  thay đổi backend, dữ liệu, CI/CD và cấu hình triển khai cần maintainer trong
+  `.github/CODEOWNERS` review.
 - Danh sách kiểm tra test và impact.
 - Bằng chứng TDD theo mẫu PR: test case/file hoặc commit được tạo trước implementation, kết quả lần chạy đầu tiên thể hiện test thất bại, và lệnh/kết quả chạy lại sau implementation. Nếu không áp dụng được TDD, nêu rõ lý do cùng cách xác minh thay thế.
 

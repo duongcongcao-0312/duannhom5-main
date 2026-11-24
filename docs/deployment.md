@@ -1,5 +1,42 @@
 # Triển khai BookNest
 
+## Tự động triển khai staging
+
+Staging dùng Blueprint riêng tại `render.staging.yaml`, với `APP_ENV=staging`,
+`EXPECTED_DATABASE_NAME=booknest_staging`, migration trước khi server nhận traffic
+và health check `/ready`. Tạo staging service và PostgreSQL riêng trong Render;
+không kết nối staging vào database, payment, email hoặc credentials production.
+
+Để bật workflow `.github/workflows/staging.yml`:
+
+1. Tạo Render API key chỉ có quyền deploy service staging và lưu thành GitHub
+   Actions secret `RENDER_API_KEY`. Lấy service ID của `duannhom5-staging` và
+   lưu thành repository variable `STAGING_RENDER_SERVICE_ID`.
+2. Thêm GitHub Actions repository variable `STAGING_BASE_URL` là URL HTTPS của
+   staging service (không có thông tin đăng nhập trong URL). Tắt auto-deploy
+   theo commit trên Render; workflow sẽ yêu cầu deploy đúng SHA của commit vừa
+   push lên `staging`.
+3. Cấu hình service bằng database staging riêng, `DATABASE_URL` và
+   `EXPECTED_DATABASE_NAME=booknest_staging`, cùng admin, rate-limit, email,
+   payment và webhook secrets chỉ dùng cho staging. Dùng dữ liệu tổng hợp hoặc
+   đã ẩn danh; không sao chép dữ liệu khách hàng thật.
+4. Merge/cherry-pick commit đã chọn vào nhánh `staging`. Push nhánh này hoặc chạy
+   workflow thủ công sẽ gọi Render deploy hook. Render chạy
+   `predeploy:check`, migration và server startup theo thứ tự trong
+   `startCommand`; workflow chờ Render xác nhận deploy SHA đó ở trạng thái live,
+   đối chiếu commit SHA, chờ `/ready`, rồi chạy `scripts/smoke-test.js`. Kết quả,
+   revision và liên kết workflow được ghi trong Actions run summary.
+
+Workflow triển khai commit SHA cụ thể được push lên nhánh `staging`; kiểm tra
+workflow thành công và smoke checks trước khi promote cùng commit sang
+production. Nếu workflow
+thất bại, xem Render deploy logs và Actions summary, giữ production nguyên trạng,
+rồi sửa lỗi hoặc rollback staging về commit đã biết tốt. Rollback ứng dụng bằng
+cách chọn deploy trước đó trong Render Dashboard; chỉ rollback sau khi xác nhận
+migration mới tương thích ngược. Không tự chạy migration ngược. Nếu schema không
+tương thích, triển khai forward-fix hoặc làm theo
+[runbook backup/restore](./backup-restore-incident-runbook.md).
+
 ## Yêu cầu
 
 - Node.js 20 trở lên hoặc Docker Engine hỗ trợ image Linux.

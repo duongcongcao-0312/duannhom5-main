@@ -34,10 +34,13 @@ Workflow triển khai commit SHA cụ thể được push lên nhánh `staging`;
 workflow thành công và smoke checks trước khi promote cùng commit sang
 production. Nếu workflow
 thất bại, xem Render deploy logs và Actions summary, giữ production nguyên trạng,
-rồi sửa lỗi hoặc rollback staging về commit đã biết tốt. Rollback ứng dụng bằng
-cách chọn deploy trước đó trong Render Dashboard; chỉ rollback sau khi xác nhận
-migration mới tương thích ngược. Không tự chạy migration ngược. Nếu schema không
-tương thích, triển khai forward-fix hoặc làm theo
+rồi sửa lỗi. Sau khi đã kích hoạt deploy, workflow tự ghi nhận deploy live
+trước đó và gọi Render rollback nếu deploy, readiness hoặc smoke check thất bại;
+Actions summary ghi deploy ID và commit đã khôi phục. Deploy đầu tiên không có
+bản trước để khôi phục. Nếu rollback tự động không thành công, dùng deploy
+trước đó trong Render Dashboard. Chỉ rollback sau khi xác nhận migration mới
+tương thích ngược. Không tự chạy migration ngược. Nếu schema không tương thích,
+triển khai forward-fix hoặc làm theo
 [runbook backup/restore](./backup-restore-incident-runbook.md).
 
 ## Yêu cầu

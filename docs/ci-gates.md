@@ -82,6 +82,11 @@ protection/ruleset cho `main` và yêu cầu check `ci-gate` (workflow `BookNest
 CI`) thành công. Đây là cài đặt quyền trên GitHub, không thể áp dụng chỉ bằng
 thay đổi trong repository.
 
+Quy tắc cụ thể, quyền bypass tối thiểu và các bước xác minh được ghi tại
+[Bảo vệ nhánh `main`](./branch-protection.md). Required check phải là job
+`ci-gate`, không phải tên workflow; cần cập nhật rule trên GitHub nếu tên job
+thay đổi.
+
 Trong **Settings → Environments**, cấu hình `staging` và `production`; đặt
 reviewer/approval gate và giới hạn branch/tag được phép deploy theo chính sách
 phát hành. Đưa `RENDER_API_KEY` vào environment secrets `staging`; đặt

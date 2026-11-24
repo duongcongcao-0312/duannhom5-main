@@ -13,14 +13,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
   deploy-and-verify:
+    needs: ci-gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_BASE_URL }}
     steps:
       - name: Checkout deployed revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.sha }}
       - name: Validate staging configuration
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}

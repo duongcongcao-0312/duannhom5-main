@@ -147,6 +147,15 @@ placeholder vào production.
    được nhà cung cấp cấp/gia hạn theo trạng thái dịch vụ; quyền sở hữu domain và
    việc gia hạn đăng ký domain vẫn do chủ tài khoản registrar quản lý.
 
+Build GitHub Pages quét toàn bộ HTML, CSS, JavaScript, JSON, XML và SVG sẽ phát
+hành, đồng thời từ chối artifact nếu tìm thấy URL `http://`. Kiểm tra này ngăn
+tài nguyên hỗn hợp đã khai báo trong bundle; sau deploy vẫn cần kiểm tra trang
+thực tế trong browser vì URL có thể được tạo động từ dữ liệu hoặc cấu hình dịch
+vụ bên ngoài. Backend gửi HSTS trong production khi request đến qua TLS hoặc
+qua reverse proxy HTTPS; probe nội bộ HTTP tiếp tục hoạt động và không nhận
+HSTS. Redirect HTTP và chứng chỉ TLS được cấu hình tại GitHub Pages/Render hoặc
+reverse proxy, không tại cổng HTTP nội bộ của Node.js.
+
 ## Overload handling
 
 HTTP parsing is bounded by a 10 second header timeout and a 30 second request

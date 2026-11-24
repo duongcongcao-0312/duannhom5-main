@@ -31,6 +31,15 @@ async function copyFiles(files, sourceDirectory, destinationDirectory) {
 	)));
 }
 
+async function assertNoMixedContent(directory, files) {
+	for (const file of files) {
+		const contents = await fs.readFile(path.join(directory, file), 'utf8');
+		if (/http:\/\//i.test(contents)) {
+			throw new Error(`Mixed content check failed: ${file} contains an insecure HTTP URL.`);
+		}
+	}
+}
+
 async function buildPages() {
 	const apiBaseUrl = (process.env.API_BASE_URL || 'https://duannhom5-main.onrender.com').trim().replace(/\/+$/, '');
 	const defaultSiteUrl = 'https://duongcongcao-0312.github.io/duannhom5-main/';
@@ -62,6 +71,10 @@ async function buildPages() {
 		`window.BOOKNEST_API_BASE_URL = ${JSON.stringify(apiBaseUrl)};\n`
 	);
 	await fs.writeFile(path.join(outputDirectory, '.nojekyll'), '');
+	await assertNoMixedContent(outputDirectory, [
+		...publicFiles.filter((file) => /\.(?:html|css|js|json|xml)$/i.test(file)),
+		...publicAssets.map((file) => path.join('assets', file)).filter((file) => /\.(?:css|js|json|svg)$/i.test(file)),
+	]);
 	console.log(`GitHub Pages files built for ${siteUrl} in ${path.relative(projectRoot, outputDirectory)}.`);
 }
 

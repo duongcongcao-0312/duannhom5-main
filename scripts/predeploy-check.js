@@ -5,6 +5,58 @@ const { parseTrustedProxyIps } = require("../backend/security");
 const { validateDatabaseEnvironmentIsolation } = require("../backend/env-isolation");
 const { validateEnvironment } = require("../backend/environment-config");
 
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const NON_PRODUCTION_MARKER = /(?:^|[-_.])(dev|development|staging|stage|test|local)(?:$|[-_.])/i;
+
+function validateProductionEndpoints(env, failures) {
+  const environment = String(env.APP_ENV || env.NODE_ENV || "").trim().toLowerCase();
+  if (environment !== "production") return;
+
+  if (String(env.ALLOW_LOCAL_PROD_DB || "").trim().toLowerCase() === "true") {
+    failures.push("ALLOW_LOCAL_PROD_DB must not be enabled for a production release.");
+  }
+
+  for (const name of ["PUBLIC_APP_URL", "API_BASE_URL"]) {
+    const raw = String(env[name] || "").trim();
+    if (!raw) {
+      if (name === "PUBLIC_APP_URL") failures.push("Production requires PUBLIC_APP_URL.");
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      failures.push(`${name} must be a valid public HTTPS URL.`);
+      continue;
+    }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
+        LOCAL_HOSTNAMES.has(parsed.hostname.toLowerCase()) ||
+        NON_PRODUCTION_MARKER.test(parsed.hostname)) {
+      failures.push(`${name} must use a public HTTPS production host without embedded credentials.`);
+    }
+  }
+
+  const origins = String(env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  for (const origin of origins) {
+    try {
+      const hostname = new URL(origin).hostname.toLowerCase();
+      if (LOCAL_HOSTNAMES.has(hostname) || NON_PRODUCTION_MARKER.test(hostname)) {
+        failures.push("Production CORS_ORIGINS must not include local or staging hosts.");
+        break;
+      }
+    } catch {
+      // The canonical environment validator reports malformed origins without echoing them.
+    }
+  }
+
+  if (/(?:^|\s)--(?:inspect|inspect-brk)(?:=|\s|$)/i.test(String(env.NODE_OPTIONS || ""))) {
+    failures.push("NODE_OPTIONS must not enable the Node.js inspector in production.");
+  }
+  if (String(env.DEBUG || "").trim()) {
+    failures.push("DEBUG must not be enabled in production.");
+  }
+}
+
 function assertProductionEnvironment(env = process.env) {
   const failures = [];
   try {
@@ -12,6 +64,7 @@ function assertProductionEnvironment(env = process.env) {
   } catch (error) {
     failures.push(error.message);
   }
+  validateProductionEndpoints(env, failures);
   if (
     env.PAYMENT_WEBHOOK_SECRET !== undefined &&
     String(env.PAYMENT_WEBHOOK_SECRET).trim() !== "" &&
@@ -123,6 +176,37 @@ function assertProductionEnvironment(env = process.env) {
     failures.push(...isolationCheck.errors);
   }
 
+  const packageJsonPath = path.join(__dirname, "..", "package.json");
+  const packageLockPath = path.join(__dirname, "..", "package-lock.json");
+  if (!fs.existsSync(packageLockPath)) {
+    failures.push("package-lock.json is required so production dependencies can be installed reproducibly.");
+  } else {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+      const lock = JSON.parse(fs.readFileSync(packageLockPath, "utf8"));
+      if (lock.lockfileVersion < 2 || lock.packages?.[""]?.name !== manifest.name ||
+          JSON.stringify(lock.packages?.[""]?.dependencies || {}) !== JSON.stringify(manifest.dependencies || {}) ||
+          JSON.stringify(lock.packages?.[""]?.devDependencies || {}) !== JSON.stringify(manifest.devDependencies || {})) {
+        failures.push("package-lock.json must be current and match package.json before release.");
+      }
+    } catch {
+      failures.push("package.json and package-lock.json must be valid JSON release manifests.");
+    }
+  }
+
+  const dockerfilePath = path.join(__dirname, "..", "Dockerfile");
+  if (!fs.existsSync(dockerfilePath)) {
+    failures.push("Dockerfile is required for the production container security checks.");
+  } else {
+    const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+    if (!/^\s*USER\s+(?!0(?:\s|$)|root(?:\s|$))\S+/im.test(dockerfile)) {
+      failures.push("Dockerfile must run the application as a non-root user.");
+    }
+    if (!/npm\s+ci\s+--omit=dev\b/.test(dockerfile)) {
+      failures.push("Dockerfile must install production dependencies from the lockfile with npm ci --omit=dev.");
+    }
+  }
+
   if (failures.length) {
     throw new Error(failures.join(" "));
   }
@@ -141,6 +225,8 @@ function assertProductionEnvironment(env = process.env) {
       }).valid,
     corsOrigins: origins.length,
     migrationCount: filenames.length,
+    dependencyLockfileValid: fs.existsSync(packageLockPath),
+    containerRunsAsNonRoot: fs.existsSync(dockerfilePath),
   };
 }
 

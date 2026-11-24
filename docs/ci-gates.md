@@ -1,5 +1,7 @@
 # CI gates trước deploy
 
+Chi tiết các kiểm tra production và phần operator cần xác nhận: [Production configuration release gate](./production-configuration-release-gate.md).
+
 BookNest dùng GitHub Actions để kiểm tra mọi thay đổi trước khi triển khai.
 
 ## Các kiểm tra bắt buộc

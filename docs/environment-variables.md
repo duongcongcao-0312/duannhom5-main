@@ -30,7 +30,7 @@ Unless marked required below, variables are optional and use the defaults in `.e
 | `REQUEST_TIMEOUT_MS` | Integer 1000–120000 | Optional; default 30000 | Server |
 | `CORS_ORIGINS` | Comma-separated HTTP(S) origins; HTTPS in staging/production | Staging/production | Backend CORS |
 | `MONITORING_ALERT_WEBHOOK_URL` | Secret HTTPS URL without embedded credentials | When runtime alerts are enabled | Monitoring |
-| `PUBLIC_APP_URL` | HTTP(S) URL | When password reset links are enabled | Account email |
+| `PUBLIC_APP_URL` | Public HTTPS URL in production | Required in production; password reset links | Account email |
 | `SESSION_TTL_MS` | Positive integer milliseconds | Optional; default 8 hours | Sessions |
 | `SESSION_IDLE_TIMEOUT_MS` | Non-negative integer milliseconds | Optional; default 2 hours | Sessions |
 | `SESSION_REFRESH_TTL_MS` | Positive integer milliseconds | Optional; default 30 days | Sessions |
@@ -82,7 +82,7 @@ Unless marked required below, variables are optional and use the defaults in `.e
 
 | Variable | Type / constraints | Required when | Used by |
 | --- | --- | --- | --- |
-| `API_BASE_URL` | HTTP(S) URL | Optional; frontend build has a public default | Pages build |
+| `API_BASE_URL` | HTTP(S) URL; HTTPS public host in production | Optional; frontend build has a public default | Pages build |
 | `NODE_VERSION` | Major version integer | Optional; deployment platform | Render blueprint |
 | `HOST_PORT` | Integer 1–65535; default 8000 | Optional | Local Compose |
 | `SMOKE_BASE_URL` | HTTP(S) URL | Optional; default local backend | Smoke checks |

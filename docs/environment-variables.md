@@ -83,6 +83,7 @@ Unless marked required below, variables are optional and use the defaults in `.e
 | Variable | Type / constraints | Required when | Used by |
 | --- | --- | --- | --- |
 | `API_BASE_URL` | HTTP(S) URL; HTTPS public host in production | Optional; frontend build has a public default | Pages build |
+| `SITE_URL` | Public HTTPS storefront URL; include a path only when the host requires one | Optional; defaults to the current GitHub Pages URL | Pages build, canonical metadata, sitemap, robots, and GitHub Pages `CNAME` |
 | `NODE_VERSION` | Major version integer | Optional; deployment platform | Render blueprint |
 | `HOST_PORT` | Integer 1–65535; default 8000 | Optional | Local Compose |
 | `SMOKE_BASE_URL` | HTTP(S) URL | Optional; default local backend | Smoke checks |

@@ -106,6 +106,47 @@ SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP
 API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
 log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
 
+## Custom domain
+
+Repo hiện triển khai storefront bằng GitHub Pages và API bằng Render. Không có tên
+domain đã đăng ký nào được lưu trong repo; domain thực tế phải được chọn/đăng ký
+trong tài khoản quản lý DNS rồi mới điền vào cấu hình dưới đây. Không đưa domain
+placeholder vào production.
+
+### Storefront
+
+1. Thêm GitHub Actions repository variable `SITE_URL` với URL HTTPS chuẩn, ví dụ
+   `https://shop.example.com/`. Nếu dùng GitHub Pages ở domain gốc, build tự thêm
+   file `CNAME`; URL có đường dẫn vẫn dùng được cho GitHub Pages mặc định.
+2. Trong Settings → Pages đặt cùng custom domain và bật Enforce HTTPS sau khi
+   chứng chỉ được cấp. Tại nhà cung cấp DNS, thêm đúng bản ghi A/AAAA cho apex hoặc
+   CNAME cho subdomain theo hướng dẫn GitHub Pages hiện hành. Không tạo đồng thời
+   các bản ghi xung đột cho cùng hostname.
+3. Chờ DNS cập nhật, xác nhận domain trong GitHub Pages, mở cả HTTP và HTTPS để
+   kiểm tra HTTPS/redirect, rồi kiểm tra canonical, Open Graph, `/robots.txt` và
+   `/sitemap.xml`. Build cũng cập nhật các URL SEO từ `SITE_URL`.
+
+### API, CORS và tích hợp
+
+1. Nếu có custom API hostname, gắn hostname đó vào Render service trong Dashboard
+   và tạo bản ghi DNS mà Render chỉ định. Chờ trạng thái verified và TLS ready;
+   API phải trả HTTPS trước khi chuyển frontend sang hostname mới.
+2. Đặt GitHub Actions variable `API_BASE_URL` bằng origin API HTTPS, không có path,
+   ví dụ `https://api.example.com`. Đặt Render `CORS_ORIGINS` chính xác bằng origin
+   storefront, không có path hoặc dấu `/` cuối. Đặt `PUBLIC_APP_URL` bằng URL
+   storefront đầy đủ, thường là `https://shop.example.com/`.
+3. Cập nhật allowlist/authorized domains trong Firebase và URL redirect/callback
+   của từng nhà cung cấp thanh toán, email hoặc đăng nhập nếu các tích hợp đó đang
+   bật. Payment webhook vẫn phải trỏ tới endpoint API HTTPS của môi trường tương
+   ứng; không dùng callback production cho staging.
+4. Sau khi deploy, kiểm tra `/health` và `/ready`, đăng nhập, khôi phục mật khẩu,
+   luồng thanh toán/callback bằng giao dịch thử, CORS từ browser và redirect HTTP
+   sang HTTPS. Lưu chủ sở hữu tài khoản registrar, DNS, GitHub Pages, Render và
+   ngày gia hạn trong kho quản lý vận hành có kiểm soát; bật tự động gia hạn nếu
+   registrar hỗ trợ, đặt nhắc hạn và kiểm tra DNS/TLS định kỳ. TLS của hosting
+   được nhà cung cấp cấp/gia hạn theo trạng thái dịch vụ; quyền sở hữu domain và
+   việc gia hạn đăng ký domain vẫn do chủ tài khoản registrar quản lý.
+
 ## Overload handling
 
 HTTP parsing is bounded by a 10 second header timeout and a 30 second request

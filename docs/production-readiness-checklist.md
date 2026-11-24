@@ -118,6 +118,10 @@ Các mục trên vẫn pending cho đến khi operator đính kèm bằng chứn
 
 ## Versioning và rollback
 
+Theo [quy trình phát hành](./release-process.md) để đối chiếu version/tag,
+commit, CI run, checksum artifact và approval trước promotion. Ghi version cùng
+deployment ID vào evidence mỗi lần triển khai.
+
 API tiếp tục dùng `/api`; thay đổi deploy hiện tại chỉ là migration nội bộ và
 kiểm tra vận hành, không tạo version mới. Chỉ thêm `/api/v2` khi có thay đổi
 request/response không tương thích; khi đó phải duy trì `/api` trong thời gian

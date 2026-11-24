@@ -1,0 +1,76 @@
+name: Create BookNest release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: booknest-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a stable semantic version matching package.json
+        id: version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="$(node -p 'require("./package.json").version')"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "Tag must use stable vMAJOR.MINOR.PATCH format."; exit 1; }
+          test "${tag#v}" = "$version" || { echo "Tag $tag does not match package.json version $version."; exit 1; }
+          test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA" || { echo "Tag does not resolve to this workflow commit."; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download the CI-verified site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: booknest-site-${{ github.sha }}
+          path: dist
+
+      - name: Prepare immutable release assets and provenance
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p release-assets
+          tar -czf "release-assets/booknest-site-${VERSION}.tar.gz" -C dist .
+          sha256sum release-assets/* > release-assets/SHA256SUMS
+          node -e 'const fs=require("node:fs"); const cp=require("node:child_process"); const version=process.env.VERSION; const asset=`release-assets/booknest-site-${version}.tar.gz`; const sha=cp.execFileSync("sha256sum",[asset],{encoding:"utf8"}).split(/\s+/)[0]; const data={version:`v${version}`,repository:process.env.GITHUB_REPOSITORY,commit:process.env.GITHUB_SHA,artifact:asset,sha256:sha,ciRun:`${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,createdAt:new Date().toISOString()}; fs.writeFileSync("release-assets/release-manifest.json",JSON.stringify(data,null,2)+"\n")'
+
+      - name: Create GitHub Release with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "v${VERSION}" release-assets/* --verify-tag --generate-notes --title "BookNest v${VERSION}"
+
+      - name: Record release traceability
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## BookNest release created"
+            echo "- Version: v${VERSION}"
+            echo "- Source commit: \`${COMMIT}\`"
+            echo "- Release: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/v${VERSION}"
+            echo "- CI run: ${RUN_URL}"
+            echo "- Assets include the CI-verified Pages site, SHA-256 checksums, and release manifest."
+            echo "- Production promotion remains subject to the configured environment approval and deployment checks."
+          } >> "$GITHUB_STEP_SUMMARY"

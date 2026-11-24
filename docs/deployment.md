@@ -1,5 +1,8 @@
 # Triển khai BookNest
 
+Quy ước SemVer, tạo tag, release artifact, promotion, hotfix và thu hồi release
+được mô tả trong [quy trình phát hành](./release-process.md).
+
 ## Tự động triển khai staging
 
 Staging dùng Blueprint riêng tại `render.staging.yaml`, với `APP_ENV=staging`,

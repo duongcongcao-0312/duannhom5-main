@@ -328,7 +328,7 @@ Sau khi deploy, kiểm tra tối thiểu:
 - Tra cứu đơn hàng.
 - Quyền truy cập các endpoint quản trị.
 
-Sao lưu dữ liệu trước khi nâng cấp hoặc rollback. GitHub Pages chỉ phục vụ frontend tĩnh và không chạy được Node.js API.
+Sao lưu dữ liệu trước khi nâng cấp hoặc rollback. GitHub Pages chỉ phục vụ frontend tĩnh và không chạy được Node.js API. Xem [quy trình phát hành](docs/release-process.md) để tạo version/tag, kiểm tra artifact và xử lý hotfix/thu hồi.
 
 ### Production và Docker
 

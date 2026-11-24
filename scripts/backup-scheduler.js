@@ -1,5 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const { createBackup, verifyBackup } = require("./backup");
 const { createPostgresBackup, validateDatabaseUrl } = require("./postgres-backup");
 const { redactLogText } = require("../backend/monitoring");
@@ -7,6 +9,7 @@ const { resolveBackupEncryptionConfig } = require("./backup-encryption");
 
 const BACKUP_PREFIX = "booknest-";
 const MIN_RETAINED_BACKUPS = 2;
+const execFileAsync = promisify(execFile);
 
 function pathsOverlap(left, right) {
   const leftRelative = path.relative(left, right);
@@ -54,6 +57,13 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
   const databaseUrl = env.DATABASE_URL || "";
   if (databaseUrl) validateDatabaseUrl(databaseUrl);
   const encryption = resolveBackupEncryptionConfig({ env });
+  const remoteUrl = String(env.BACKUP_S3_URL || "").trim();
+  if (remoteUrl && (!/^s3:\/\/[a-z0-9][a-z0-9.-]*\/[a-zA-Z0-9!_.*'()-][^\s]*$/.test(remoteUrl) || remoteUrl.includes(".."))) {
+    throw new Error("BACKUP_S3_URL phải là đường dẫn s3://bucket/prefix hợp lệ.");
+  }
+  if (remoteUrl && !encryption.required) {
+    throw new Error("BACKUP_ENCRYPTION_REQUIRED=true là bắt buộc khi dùng BACKUP_S3_URL.");
+  }
   const databaseBackupTimeoutMs = positiveInteger(
     env.DATABASE_BACKUP_TIMEOUT_MS,
     "DATABASE_BACKUP_TIMEOUT_MS",
@@ -74,12 +84,39 @@ function loadBackupConfig(env = process.env, root = path.resolve(__dirname, ".."
     databaseUrl,
     backupEncryptionKey: encryption.key,
     backupEncryptionRequired: encryption.required,
+    remoteUrl: remoteUrl.replace(/\/+$/, ""),
+    awsCliPath: env.AWS_CLI_PATH || "aws",
     pgOptions: {
       timeoutMs: databaseBackupTimeoutMs,
       pgDumpPath: env.PG_DUMP_PATH || "pg_dump",
       pgRestorePath: env.PG_RESTORE_PATH || "pg_restore",
     },
   };
+}
+
+async function replicateAndVerify(config, backupPath, backupName, dependencies = {}) {
+  if (!config.remoteUrl) return null;
+  const destination = `${config.remoteUrl}/${backupName}`;
+  const run = dependencies.runAws || (async (args) => execFileAsync(config.awsCliPath, args, {
+    windowsHide: true,
+    timeout: config.pgOptions.timeoutMs,
+    maxBuffer: 1024 * 1024,
+    env: process.env,
+  }));
+  await run(["s3", "cp", backupPath, destination, "--recursive", "--only-show-errors", "--sse", "AES256"]);
+  const tempRoot = await fs.mkdtemp(path.join(require("node:os").tmpdir(), "booknest-backup-verify-"));
+  const downloadedPath = path.join(tempRoot, backupName);
+  try {
+    await run(["s3", "cp", destination, downloadedPath, "--recursive", "--only-show-errors"]);
+    await (dependencies.verifyBackup || verifyBackup)(downloadedPath, {
+      ...config.pgOptions,
+      encryptionKey: config.backupEncryptionKey,
+      encryptionRequired: true,
+    });
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+  return destination;
 }
 
 async function writeBackupStatus(config, status, details) {
@@ -268,6 +305,7 @@ async function runBackupCycle(config, dependencies = {}) {
       encryptionKey: config.backupEncryptionKey,
       encryptionRequired: config.backupEncryptionRequired,
     })))(backupPath);
+    const remoteBackup = await replicateAndVerify(config, backupPath, backupName, dependencies);
     const pruned = await pruneOldBackups(config, now.getTime(), {
       runCommand: dependencies.pgRunCommand,
       encryptionKey: config.backupEncryptionKey,
@@ -277,12 +315,15 @@ async function runBackupCycle(config, dependencies = {}) {
       timestamp: now.toISOString(),
       backup: backupName,
       storage: config.databaseUrl ? "postgresql" : "file",
+      remote: Boolean(remoteBackup),
       durationMs: Date.now() - startedAt,
     });
     await log(config, "backup_succeeded", {
       backup: backupName,
       storage: config.databaseUrl ? "postgresql" : "file",
       retentionRemoved: pruned,
+      remote: remoteBackup ? "verified" : "disabled",
+      remoteDestination: remoteBackup ? config.remoteUrl : undefined,
     }, loggingEnv);
     return backupPath;
   } catch (error) {
@@ -363,4 +404,5 @@ module.exports = {
   startBackupScheduler,
   writeBackupStatus,
   writeLog,
+  replicateAndVerify,
 };

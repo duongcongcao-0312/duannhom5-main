@@ -45,7 +45,7 @@ triển khai forward-fix hoặc làm theo
 
 ## Yêu cầu
 
-- Node.js 20 trở lên hoặc Docker Engine hỗ trợ image Linux.
+- Node.js 22 trở lên hoặc Docker Engine hỗ trợ image Linux.
 - Một volume `/app/data` có quyền ghi khi chạy file storage; triển khai
   PostgreSQL dùng database quản lý và không cần volume này cho dữ liệu ứng dụng.
 - HTTPS tại reverse proxy khi phục vụ qua mạng công cộng.
@@ -79,6 +79,12 @@ nhận traffic. Hãy tạo backup/snapshot ở provider trước khi deploy, sau
 tra `/ready` và chạy smoke test sau deploy. Checklist bằng
 chứng không chứa secret nằm tại
 [production-readiness-checklist.md](./production-readiness-checklist.md).
+
+Nếu service được tạo thủ công trong Dashboard, các Build/Start command và biến
+môi trường của service có thể khác `render.yaml`. Hãy đồng bộ Blueprint hoặc
+đặt thủ công `npm ci` và `npm run predeploy:check && npm run migrate && npm start`.
+Các biến `sync: false` phải được nhập riêng trong Environment; production cần
+`EXPECTED_DATABASE_NAME` khớp tên database trong `DATABASE_URL`.
 
 Nếu deploy lỗi, ghi lại deploy ID và giữ log; không xóa dữ liệu hay tự chạy
 migration ngược. Chỉ rollback ứng dụng về deploy trước nếu migration vừa áp

@@ -459,6 +459,12 @@ test('SePay production settings are declared as environment variables without re
 		assert.match(envExample, new RegExp(`^${key}=$`, 'm'));
 		assert.match(renderConfig, new RegExp(`key: ${key}[\\s\\S]*?sync: false`));
 	});
+	['DATABASE_SSL_CA_PATH', 'EXPECTED_DATABASE_NAME', 'RATE_LIMIT_HMAC_KEY']
+		.forEach((key) => assert.match(renderConfig, new RegExp(`key: ${key}[\\s\\S]*?sync: false`)));
+	assert.match(renderConfig, /key: NODE_VERSION\s+value: 22/);
+	assert.match(renderConfig, /buildCommand: npm ci/);
+	assert.match(renderConfig, /startCommand: npm run predeploy:check && npm run migrate && npm start/);
+	assert.match(renderConfig, /healthCheckPath: \/ready/);
 	[
 		'ADMIN_EMAIL',
 		'ADMIN_PASSWORD',

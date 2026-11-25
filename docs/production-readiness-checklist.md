@@ -7,9 +7,13 @@ thời lượng.
 
 ## 1. PostgreSQL và Render
 
-- [ ] Render service dùng Node.js 20 hoặc mới hơn và health check `/ready`.
+- [ ] Render service dùng Node.js 22 hoặc mới hơn và health check `/ready`.
 - [ ] `DATABASE_URL` được nhập qua Environment/secret manager, không nằm trong
   blueprint, command line hoặc log.
+- [ ] `EXPECTED_DATABASE_NAME` khớp chính xác tên database trong `DATABASE_URL`;
+  production/staging fail closed nếu thiếu giá trị ghim này.
+- [ ] Nếu dùng CA riêng, `DATABASE_SSL_CA_PATH` trỏ tới Secret File đã mount và
+  certificate còn hiệu lực; không tắt xác minh CA cho database bên ngoài.
 - [ ] Database cùng region với web service nếu dùng Render Postgres; đã kiểm tra
   giới hạn kết nối/dung lượng và chính sách retention hiện tại của gói.
 - [ ] `CORS_ORIGINS` chỉ chứa các origin frontend cần thiết, phân tách bằng dấu

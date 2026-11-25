@@ -107,15 +107,148 @@ const requestedTitle = params.get('title');
 const catalog = Array.isArray(globalThis.BOOKNEST_BOOKS) ? globalThis.BOOKNEST_BOOKS : [];
 const book = catalog.find((item) => item.title === requestedTitle);
 const detail = document.querySelector('#bookDetail');
+const detailStatus = document.querySelector('#detailStatus');
+
+function setDetailFeedback(container, stateName, message, retry) {
+	if (!container) return;
+	container.replaceChildren();
+	container.dataset.state = stateName;
+	container.setAttribute('role', stateName === 'error' ? 'alert' : 'status');
+	container.setAttribute('aria-live', stateName === 'error' ? 'assertive' : 'polite');
+	container.hidden = !message && !retry;
+	if (message) {
+		const text = document.createElement('span');
+		text.textContent = message;
+		container.appendChild(text);
+	}
+	if (retry) {
+		const button = document.createElement('button');
+		button.className = 'secondary-button';
+		button.type = 'button';
+		button.textContent = 'Thử lại';
+		button.addEventListener('click', () => { void retry(); });
+		container.appendChild(button);
+	}
+}
+
+function renderDetail(content) {
+	const status = detail.querySelector('#detailStatus');
+	detail.innerHTML = content;
+	if (status) detail.prepend(status);
+}
+
+function updateBookMetadata(remoteBook) {
+	const copy = detail.querySelector('.detail-copy');
+	if (!copy) return;
+	const heading = copy.querySelector('h1');
+	const author = copy.querySelector('.detail-author strong');
+	const category = copy.querySelector('.eyebrow');
+	const price = copy.querySelector('.detail-price');
+	const description = copy.querySelector('.detail-description');
+	if (heading) heading.textContent = remoteBook.title;
+	if (author && remoteBook.author) author.textContent = remoteBook.author;
+	if (category) category.textContent = categoryLabels[remoteBook.category] || 'BookNest';
+	if (price && Number.isFinite(Number(remoteBook.price))) price.textContent = formatPrice(remoteBook.price);
+	if (description) description.textContent = remoteBook.description || 'Chưa có mô tả cho cuốn sách này.';
+	document.title = `${remoteBook.title} | BookNest`;
+
+	if (remoteBook.publisher) {
+		let publisher = copy.querySelector('.detail-publisher');
+		if (!publisher) {
+			publisher = document.createElement('p');
+			publisher.className = 'detail-publisher';
+			copy.querySelector('.detail-author')?.after(publisher);
+		}
+		publisher.innerHTML = `Nhà xuất bản: <strong>${escapeHtml(remoteBook.publisher)}</strong>`;
+	}
+	if (remoteBook.isbn && !copy.querySelector('.detail-isbn')) {
+		const isbn = document.createElement('p');
+		isbn.className = 'detail-isbn';
+		isbn.textContent = `ISBN: ${remoteBook.isbn}`;
+		copy.querySelector('.detail-price')?.after(isbn);
+	}
+	if (remoteBook.stock !== undefined && remoteBook.stock !== null && Number.isFinite(Number(remoteBook.stock))) {
+		const stock = Number(remoteBook.stock);
+		let stockStatus = copy.querySelector('.detail-stock');
+		if (!stockStatus) {
+			stockStatus = document.createElement('p');
+			stockStatus.className = 'detail-stock';
+			price?.after(stockStatus);
+		}
+		stockStatus.textContent = stock > 0 ? `Còn ${stock} cuốn` : 'Tạm hết hàng';
+		const buyButton = detail.querySelector('#buyBook');
+		if (buyButton) {
+			buyButton.disabled = stock < 1;
+			buyButton.textContent = stock < 1 ? 'Hết hàng' : 'Mua ngay';
+		}
+	}
+}
+
+function detailErrorMessage(error, section) {
+	const status = Number(error?.status || error?.response?.status);
+	const message = String(error?.message || '');
+	if (error?.name === 'AbortError' || status === 408 || status === 504 || /timeout|quá thời gian|không phản hồi/i.test(message)) {
+		return `Tải ${section} quá thời gian. Vui lòng thử lại.`;
+	}
+	if (status === 401 || status === 403) return `Bạn cần đăng nhập hoặc không có quyền xem ${section}.`;
+	if (status >= 500) return `Máy chủ chưa thể tải ${section}. Vui lòng thử lại.`;
+	if (error instanceof TypeError || /network|failed to fetch|kết nối/i.test(message)) {
+		return `Không thể kết nối để tải ${section}. Kiểm tra mạng và thử lại.`;
+	}
+	return `Không thể tải ${section}. Vui lòng thử lại.`;
+}
+
+async function loadBookReviews(remoteBook, reviewsSection) {
+	const summary = reviewsSection.querySelector('.review-summary');
+	const list = reviewsSection.querySelector('.review-list');
+	setDetailFeedback(summary, 'loading', 'Đang tải đánh giá...');
+	try {
+		const response = await window.booknestApiFetch(`/api/books/${encodeURIComponent(remoteBook.id)}/reviews`);
+		if (!response.ok) {
+			const error = new Error('Không thể tải đánh giá.');
+			error.status = response.status;
+			throw error;
+		}
+		const reviewData = await response.json();
+		if (!Array.isArray(reviewData?.reviews)) throw new Error('Dữ liệu đánh giá không hợp lệ.');
+		setDetailFeedback(summary, reviewData.reviews.length ? 'ready' : 'empty',
+			`${reviewData.averageRating} / 5 · ${reviewData.reviewCount} đánh giá`);
+		list.innerHTML = reviewData.reviews.length
+			? reviewData.reviews.map((review) => `<article class="book-review"><strong>${escapeHtml(review.userName)}</strong><span>${escapeHtml(review.rating)} / 5</span><p>${escapeHtml(review.content)}</p><button type="button" data-report-review="${escapeHtml(review.id)}">Báo cáo</button></article>`).join('')
+			: '<p>Chưa có đánh giá được duyệt.</p>';
+	} catch (error) {
+		setDetailFeedback(summary, 'error', detailErrorMessage(error, 'đánh giá'), () => loadBookReviews(remoteBook, reviewsSection));
+	}
+}
+
+async function loadRelatedBooks(remoteBook, relatedSection) {
+	const relatedGrid = relatedSection.querySelector('.related-book-grid');
+	const status = relatedSection.querySelector('.related-status');
+	setDetailFeedback(status, 'loading', 'Đang tải sách liên quan...');
+	try {
+		const response = await window.booknestApiFetch(`/api/books/${encodeURIComponent(remoteBook.id)}/related`);
+		if (!response.ok) {
+			const error = new Error('Không thể tải sách liên quan.');
+			error.status = response.status;
+			throw error;
+		}
+		const relatedBooks = await response.json();
+		if (!Array.isArray(relatedBooks)) throw new Error('Dữ liệu sách liên quan không hợp lệ.');
+		relatedGrid.innerHTML = relatedBooks.map((relatedBook) => `<a class="related-book-card" href="${getBookDetailsUrl(relatedBook)}"><img src="${escapeHtml(getBookImage(relatedBook))}" alt="" loading="lazy" decoding="async"><strong>${escapeHtml(relatedBook.title)}</strong><small>${escapeHtml(relatedBook.author)}</small><b>${formatPrice(relatedBook.price)}</b></a>`).join('') || '<p>Chưa có sách phù hợp để gợi ý.</p>';
+		setDetailFeedback(status, relatedBooks.length ? 'ready' : 'empty', '');
+	} catch (error) {
+		setDetailFeedback(status, 'error', detailErrorMessage(error, 'sách liên quan'), () => loadRelatedBooks(remoteBook, relatedSection));
+	}
+}
 
 if (!book) {
-	detail.innerHTML = '<div class="detail-empty"><p class="eyebrow">Không tìm thấy sách</p><h1>Thông tin sách không hợp lệ.</h1><a class="primary-button" href="index.html#books">Về danh sách sách</a></div>';
+	renderDetail('<div class="detail-empty"><p class="eyebrow">Không tìm thấy sách</p><h1>Thông tin sách không hợp lệ.</h1><a class="primary-button" href="index.html#books">Về danh sách sách</a></div>');
 } else {
 	const relatedBooks = catalog.filter((item) => item.category === book.category && item.title !== book.title).slice(0, 4);
 	const navigation = getBookNavigation(book);
 	const pictureSources = getBookPictureSources(book.images?.[0]);
 	document.title = `${book.title} | BookNest`;
-	detail.innerHTML = `
+	renderDetail(`
 		<a class="detail-back" href="index.html#books">← Quay lại danh sách sách</a>
 		<nav class="detail-navigation" aria-label="Chuyển đổi sách">
 			${navigation.previous ? `<a href="${getBookDetailsUrl(navigation.previous)}">← <span>Sách trước</span><strong>${escapeHtml(navigation.previous.title)}</strong></a>` : '<span class="detail-navigation-placeholder"></span>'}
@@ -141,8 +274,9 @@ if (!book) {
 		</section>
 		<section class="related-books" aria-labelledby="relatedBooksTitle">
 			<div class="section-heading"><div><p class="eyebrow">Có thể bạn sẽ thích</p><h2 id="relatedBooksTitle">Sách khác cùng thể loại</h2></div><a class="back-link" href="index.html#books">Xem toàn bộ sách →</a></div>
+			<div class="detail-feedback related-status" role="status" aria-live="polite" hidden></div>
 			<div class="related-book-grid">${relatedBooks.map((relatedBook) => `<a class="related-book-card" href="${getBookDetailsUrl(relatedBook)}"><div class="related-book-cover ${getBookCoverStyle(relatedBook)}"><span>${escapeHtml(relatedBook.label || relatedBook.title).replace(/\n/g, '<br>')}</span></div><strong>${escapeHtml(relatedBook.title)}</strong><small>${escapeHtml(relatedBook.author)}</small><b>${formatPrice(relatedBook.price)}</b></a>`).join('')}</div>
-		</section>`;
+		</section>`);
 	document.querySelector('#buyBook').addEventListener('click', () => addBookToCart(book));
 	const detailImage = detail.querySelector('.detail-cover img');
 	detailImage.addEventListener('error', () => {
@@ -152,17 +286,30 @@ if (!book) {
 }
 
 async function hydrateBookDetails() {
-	if (typeof window.booknestApiFetch !== 'function' || !requestedTitle) return;
+	if (!window.BOOKNEST_API_BASE_URL || !requestedTitle) return;
+	setDetailFeedback(detailStatus, 'loading', 'Đang tải thông tin sách...');
 	try {
+		if (typeof window.booknestApiFetch !== 'function') throw new Error('API client chưa được khởi tạo.');
 		const catalogResponse = await window.booknestApiFetch(`/api/books?search=${encodeURIComponent(requestedTitle)}&limit=100`);
-		if (!catalogResponse.ok) throw new Error('Không thể tải thông tin sách.');
+		if (!catalogResponse.ok) {
+			const error = new Error('Không thể tải thông tin sách.');
+			error.status = catalogResponse.status;
+			throw error;
+		}
 		const remoteBooks = await catalogResponse.json();
 		const remoteBook = Array.isArray(remoteBooks)
 			? remoteBooks.find((item) => item.title === requestedTitle)
 			: null;
-		if (!remoteBook) return;
+		if (!remoteBook) {
+			if (book) {
+				renderDetail('<div class="detail-empty"><p class="eyebrow">Không tìm thấy sách</p><h1>Cuốn sách này không còn trong danh mục.</h1><a class="primary-button" href="index.html#books">Về danh sách sách</a></div>');
+				document.title = 'Không tìm thấy sách | BookNest';
+			}
+			setDetailFeedback(detailStatus, 'empty', '');
+			return;
+		}
 		if (!book) {
-			detail.innerHTML = `
+			renderDetail(`
 				<a class="detail-back" href="index.html#books">← Quay lại danh sách sách</a>
 				<div class="book-detail-grid">
 					<div class="detail-cover">${getBookPictureSources(remoteBook.images?.[0]) ? `<picture>${getBookPictureSources(remoteBook.images?.[0])}` : ''}<img width="400" height="600" src="${escapeHtml(getBookImage(remoteBook))}" alt="Bìa sách ${escapeHtml(remoteBook.title)}" loading="eager" decoding="async">${getBookPictureSources(remoteBook.images?.[0]) ? '</picture>' : ''}</div>
@@ -175,10 +322,10 @@ async function hydrateBookDetails() {
 						<p class="detail-description">${escapeHtml(remoteBook.description || 'Chưa có mô tả cho cuốn sách này.')}</p>
 						<p class="detail-stock">${Number(remoteBook.stock) > 0 ? `Còn ${Number(remoteBook.stock)} cuốn` : 'Tạm hết hàng'}</p>
 						${remoteBook.isbn ? `<p class="detail-isbn">ISBN: <strong>${escapeHtml(remoteBook.isbn)}</strong></p>` : ''}
-						<div class="detail-actions"><button class="primary-button" id="buyBook" type="button" ${Number(remoteBook.stock) < 1 ? 'disabled' : ''}>Thêm vào giỏ</button></div>
+						<div class="detail-actions"><button class="primary-button" id="buyBook" type="button" ${Number(remoteBook.stock) < 1 ? 'disabled' : ''}>${Number(remoteBook.stock) < 1 ? 'Hết hàng' : 'Thêm vào giỏ'}</button></div>
 					</div>
 				</div>
-				<section class="related-books" aria-labelledby="relatedBooksTitle"><h2 id="relatedBooksTitle">Sách liên quan</h2><div class="related-book-grid"></div></section>`;
+				<section class="related-books" aria-labelledby="relatedBooksTitle"><h2 id="relatedBooksTitle">Sách liên quan</h2><div class="detail-feedback related-status" role="status" aria-live="polite" hidden></div><div class="related-book-grid"></div></section>`);
 			document.title = `${remoteBook.title} | BookNest`;
 			detail.querySelector('.detail-cover img')?.addEventListener('error', (event) => {
 				const image = event.currentTarget;
@@ -189,21 +336,9 @@ async function hydrateBookDetails() {
 				detail.querySelector('#buyBook').addEventListener('click', () => addBookToCart(remoteBook));
 			}
 		} else {
-			const description = detail.querySelector('.detail-description');
-			if (description) description.textContent = remoteBook.description || 'Chưa có mô tả cho cuốn sách này.';
-			const copy = detail.querySelector('.detail-copy');
-			if (copy && remoteBook.isbn && !copy.querySelector('.detail-isbn')) {
-				const isbn = document.createElement('p');
-				isbn.className = 'detail-isbn';
-				isbn.textContent = `ISBN: ${remoteBook.isbn}`;
-				copy.querySelector('.detail-price')?.after(isbn);
-			}
-			const buyButton = detail.querySelector('#buyBook');
-			if (buyButton) {
-				buyButton.disabled = Number(remoteBook.stock) < 1;
-				buyButton.textContent = Number(remoteBook.stock) < 1 ? 'Hết hàng' : 'Mua ngay';
-			}
+			updateBookMetadata(remoteBook);
 		}
+		setDetailFeedback(detailStatus, 'ready', '');
 
 		const imageList = Array.isArray(remoteBook.images) && remoteBook.images.length
 			? remoteBook.images
@@ -250,16 +385,9 @@ async function hydrateBookDetails() {
 		const reviewsSection = document.createElement('section');
 		reviewsSection.className = 'book-reviews';
 		reviewsSection.setAttribute('aria-labelledby', 'bookReviewsTitle');
-		reviewsSection.innerHTML = '<h2 id="bookReviewsTitle">Đánh giá của độc giả</h2><p class="review-summary" aria-live="polite">Đang tải đánh giá...</p><div class="review-list"></div><form class="review-form"><label>Điểm đánh giá <select name="rating" required><option value="5">5 — Rất hay</option><option value="4">4 — Hay</option><option value="3">3 — Bình thường</option><option value="2">2 — Chưa phù hợp</option><option value="1">1 — Không hài lòng</option></select></label><label>Nhận xét <textarea name="content" maxlength="1000" required></textarea></label><button type="submit">Gửi đánh giá</button><p class="review-form-message" role="status"></p></form>';
+		reviewsSection.innerHTML = '<h2 id="bookReviewsTitle">Đánh giá của độc giả</h2><div class="review-summary detail-feedback" role="status" aria-live="polite"></div><div class="review-list"></div><form class="review-form"><label>Điểm đánh giá <select name="rating" required><option value="5">5 — Rất hay</option><option value="4">4 — Hay</option><option value="3">3 — Bình thường</option><option value="2">2 — Chưa phù hợp</option><option value="1">1 — Không hài lòng</option></select></label><label>Nhận xét <textarea name="content" maxlength="1000" required></textarea></label><button type="submit">Gửi đánh giá</button><p class="review-form-message" role="status"></p></form>';
 		detail.querySelector('.related-books')?.before(reviewsSection);
-		const reviewsResponse = await window.booknestApiFetch(`/api/books/${encodeURIComponent(remoteBook.id)}/reviews`);
-		if (!reviewsResponse.ok) throw new Error('Không thể tải đánh giá.');
-		const reviewData = await reviewsResponse.json();
-		reviewsSection.querySelector('.review-summary').textContent =
-			`${reviewData.averageRating} / 5 · ${reviewData.reviewCount} đánh giá`;
-		reviewsSection.querySelector('.review-list').innerHTML = reviewData.reviews.length
-			? reviewData.reviews.map((review) => `<article class="book-review"><strong>${escapeHtml(review.userName)}</strong><span>${escapeHtml(review.rating)} / 5</span><p>${escapeHtml(review.content)}</p><button type="button" data-report-review="${escapeHtml(review.id)}">Báo cáo</button></article>`).join('')
-			: '<p>Chưa có đánh giá được duyệt.</p>';
+		await loadBookReviews(remoteBook, reviewsSection);
 		reviewsSection.querySelector('.review-list').addEventListener('click', async (event) => {
 			const reportButton = event.target.closest('[data-report-review]');
 			if (!reportButton) return;
@@ -313,17 +441,10 @@ async function hydrateBookDetails() {
 			}
 		});
 
-		const relatedResponse = await window.booknestApiFetch(`/api/books/${encodeURIComponent(remoteBook.id)}/related`);
-		if (!relatedResponse.ok) throw new Error('Không thể tải sách liên quan.');
-		const relatedBooks = await relatedResponse.json();
-		const relatedGrid = detail.querySelector('.related-book-grid');
-		if (relatedGrid) {
-			relatedGrid.innerHTML = relatedBooks.map((relatedBook) => `<a class="related-book-card" href="${getBookDetailsUrl(relatedBook)}"><img src="${escapeHtml(getBookImage(relatedBook))}" alt="" loading="lazy" decoding="async"><strong>${escapeHtml(relatedBook.title)}</strong><small>${escapeHtml(relatedBook.author)}</small><b>${formatPrice(relatedBook.price)}</b></a>`).join('') || '<p>Chưa có sách phù hợp để gợi ý.</p>';
-		}
+		const relatedSection = detail.querySelector('.related-books');
+		if (relatedSection) await loadRelatedBooks(remoteBook, relatedSection);
 	} catch (error) {
-		const status = detail.querySelector('.review-summary');
-		if (status) status.textContent = error.message || 'Không thể tải thông tin sách bổ sung.';
-		else console.error('Không thể tải thông tin sách:', error);
+		setDetailFeedback(detailStatus, 'error', detailErrorMessage(error, 'thông tin sách'), () => hydrateBookDetails());
 	}
 }
 

@@ -401,6 +401,7 @@ Các tài khoản social cũ vẫn giữ provider ID đã lưu và có thể đ�
 - [Kiến trúc hệ thống](ARCHITECTURE.md)
 - [Quản lý khách hàng](docs/CUSTOMER_MANAGEMENT.md)
 - [Thiết kế CRM](docs/crm-design.md)
+- [Quy trình chăm sóc khách hàng](docs/customer-support-procedure.md)
 - [Lịch sử thay đổi](CHANGELOG.md)
 
 ## Đóng góp

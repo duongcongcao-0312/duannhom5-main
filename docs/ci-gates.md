@@ -1,11 +1,14 @@
 # CI gates trước deploy
 
+Chi tiết các kiểm tra production và phần operator cần xác nhận: [Production configuration release gate](./production-configuration-release-gate.md).
+
 BookNest dùng GitHub Actions để kiểm tra mọi thay đổi trước khi triển khai.
 
 ## Các kiểm tra bắt buộc
 
-Workflow `BookNest CI` chạy trên các nhánh khác `main` và trên pull request vào
-`main`. Workflow gồm một gate duy nhất, phải hoàn thành thành công toàn bộ các
+Workflow `BookNest CI` chạy trên mọi nhánh, pull request vào `main`, và được
+gọi lại trước mỗi lần deploy staging, deploy GitHub Pages hoặc publish container.
+Mọi luồng deploy đều chờ gate này thành công. Gate phải hoàn thành toàn bộ các
 bước sau:
 
 1. Cài dependency bằng `npm ci` theo `package-lock.json`.
@@ -46,12 +49,28 @@ một PostgreSQL database local chỉ dành cho test qua `E2E_DATABASE_URL`; kh�
 dùng database production. Trước khi bật lại, cần hoàn thiện và xác minh suite
 trên database dùng một lần. Screenshot, video và trace hiện được tắt.
 
-## Quy tắc deploy
+## Artifact và kết quả
+
+- CI lưu site đã build theo commit trong artifact `booknest-site-<sha>` trong
+  30 ngày. GitHub Pages tải đúng artifact này sau khi CI thành công, không build
+  lại một bản khác.
+- CI lưu metadata gồm repository, commit, ref, workflow run, event, phiên bản
+  Node.js và thời điểm build trong artifact `build-metadata-<sha>` trong 90 ngày.
+- Báo cáo test/coverage và E2E được lưu trong 14 ngày. Workflow summary ghi kết
+  quả, revision và liên kết run; staging cũng ghi revision deploy và kết quả
+  smoke check. GitHub Checks/notifications tiếp tục phản ánh trạng thái gate.
+- Container release chỉ publish sau CI, tạo SBOM và provenance cùng image.
+
+## Quy tắc deploy và secrets
 
 - GitHub Pages gọi lại workflow CI và chỉ build/deploy khi job `ci-gate` thành
   công.
 - Container cũng gọi lại workflow CI và chỉ publish image khi job `ci-gate`
-  thành công.
+  thành công; job publish cần quyền `packages: write` riêng và dùng environment
+  `production`.
+- Deploy staging chỉ bắt đầu sau `ci-gate`, dùng environment `staging`, triển
+  khai đúng commit đã kiểm tra, đợi trạng thái Render, readiness và smoke check.
+- GitHub Pages deploy artifact đã qua CI vào environment `production`.
 - Nếu bất kỳ bước nào thất bại, job deploy/publish bị chặn bởi `needs` và không
   được chạy.
 - Khi thêm kiểm tra mới, cần thêm vào `.github/workflows/ci.yml` để mọi luồng
@@ -62,3 +81,21 @@ này thất bại. Để GitHub chặn merge thực sự, maintainer cần bật
 protection/ruleset cho `main` và yêu cầu check `ci-gate` (workflow `BookNest
 CI`) thành công. Đây là cài đặt quyền trên GitHub, không thể áp dụng chỉ bằng
 thay đổi trong repository.
+
+Quy tắc cụ thể, quyền bypass tối thiểu và các bước xác minh được ghi tại
+[Bảo vệ nhánh `main`](./branch-protection.md). Required check phải là job
+`ci-gate`, không phải tên workflow; cần cập nhật rule trên GitHub nếu tên job
+thay đổi.
+
+Trong **Settings → Environments**, cấu hình `staging` và `production`; đặt
+reviewer/approval gate và giới hạn branch/tag được phép deploy theo chính sách
+phát hành. Đưa `RENDER_API_KEY` vào environment secrets `staging`; đặt
+`STAGING_RENDER_SERVICE_ID` và `STAGING_BASE_URL` ở environment variables cùng
+tên. Dùng environment secrets/variables thay vì repository-wide secrets để
+giới hạn phạm vi truy cập. `GITHUB_TOKEN` được tạo tự động và quyền được cấp
+theo từng job; không lưu token này thủ công.
+
+GitHub Pages cần bật **Source: GitHub Actions**. Render staging cần một service
+và database riêng, dùng Blueprint `render.staging.yaml`; không trỏ biến staging
+vào tài nguyên production. Cấu hình giới hạn tag phát hành (ví dụ `v*.*.*`)
+trong environment `production` để chỉ tag version mới có thể publish container.

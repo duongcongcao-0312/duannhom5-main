@@ -213,6 +213,25 @@ và thực hiện riêng theo phê duyệt incident.
 khi URL được cấu hình; cần có `pg_dump` và `pg_restore` trong PATH (hoặc đặt
 `PG_DUMP_PATH`/`PG_RESTORE_PATH`). Không dán URL vào command line hay log.
 
+Để tự động sao chép bản sao đã verify ra S3/S3-compatible, cấu hình
+`BACKUP_S3_URL=s3://<bucket>/<prefix>` và `BACKUP_ENCRYPTION_REQUIRED=true` cho
+worker backup. Cấp cho worker AWS role/credential tối thiểu quyền ghi và đọc
+trong prefix này; không đặt access key trong URL. Cài AWS CLI (`aws`) trên worker
+hoặc cấu hình `AWS_CLI_PATH`. Mỗi chu kỳ upload cả thư mục backup sau khi verify,
+tải lại vào thư mục tạm và xác minh checksum/manifest trước khi báo thành công.
+Lỗi upload hoặc round-trip verify làm chu kỳ thất bại và kích hoạt
+`BACKUP_ALERT_WEBHOOK_URL`. Bật versioning/retention/lifecycle và giới hạn quyền
+xóa ở bucket bằng cấu hình provider; scheduler chỉ prune bản local.
+
+Lịch mặc định chạy ngay khi tiến trình khởi động rồi mỗi 24 giờ. Chạy scheduler
+trong worker riêng có restart tự động sau crash/reboot; tránh đặt trong web
+instance autoscale vì mỗi instance có thể tạo bản trùng. RPO mục tiêu PostgreSQL
+15 phút cần thêm PITR/provider backup độc lập; lịch 24 giờ chỉ đạt RPO tối đa 24
+giờ. Restore drill cần tải một bản từ bucket vào môi trường cô lập, chạy `verify`
+rồi restore vào database thử nghiệm và lưu thời gian/biên bản để đo RTO. Code không
+tự tạo bucket, role, lịch retention của provider hoặc xác nhận một restore drill
+thực tế đã thành công.
+
 Kiểm tra thủ công một bản đã tạo:
 
 ```sh
@@ -221,9 +240,9 @@ node scripts/backup.js verify ./backups/booknest-YYYYMMDDTHHMMSSmmmZ
 
 Giữ PostgreSQL provider backup/PITR làm lớp bảo vệ độc lập. Khi bật mã hóa,
 `database.dump` được mã hóa bằng AES-256-GCM và chỉ giải mã trong thư mục tạm
-giới hạn quyền truy cập cho bước verify/restore. Repository không tự tạo worker
-Render độc lập, remote storage, lịch backup ngoài tiến trình hoặc biên bản
-restore drill; các bước đó cần operator cấu hình và xác minh riêng.
+giới hạn quyền truy cập cho bước verify/restore. Worker, bucket, role, lịch
+retention của provider và biên bản restore drill vẫn cần operator cấu hình và
+xác minh riêng.
 
 ### Restore
 

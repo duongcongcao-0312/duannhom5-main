@@ -276,6 +276,11 @@ npm audit --omit=dev
 2. Workflow GitHub Actions deploy thư mục `dist/`.
 3. GitHub Pages mặc định gọi backend `https://duannhom5-main.onrender.com`;
    đặt `API_BASE_URL` trong GitHub Actions Variables nếu backend dùng URL khác.
+   Để dùng domain storefront riêng, đặt `SITE_URL` (URL HTTPS công khai, ví dụ
+   `https://booknest.example/`) trong GitHub Actions Variables. Build sẽ cập nhật
+   canonical/Open Graph, sitemap, robots và tạo `CNAME` cho custom domain gốc.
+   Cấu hình domain tương ứng trong Settings → Pages và khai báo DNS theo hướng dẫn
+   của GitHub Pages; xem [quy trình domain](docs/deployment.md#custom-domain).
 4. Đảm bảo frontend gọi backend qua HTTPS.
 5. Để bật khôi phục mật khẩu, cấu hình `PUBLIC_APP_URL` theo đúng URL storefront
    (bao gồm đường dẫn GitHub Pages nếu có) và thông tin nhà cung cấp email trên
@@ -323,7 +328,7 @@ Sau khi deploy, kiểm tra tối thiểu:
 - Tra cứu đơn hàng.
 - Quyền truy cập các endpoint quản trị.
 
-Sao lưu dữ liệu trước khi nâng cấp hoặc rollback. GitHub Pages chỉ phục vụ frontend tĩnh và không chạy được Node.js API.
+Sao lưu dữ liệu trước khi nâng cấp hoặc rollback. GitHub Pages chỉ phục vụ frontend tĩnh và không chạy được Node.js API. Xem [quy trình phát hành](docs/release-process.md) để tạo version/tag, kiểm tra artifact và xử lý hotfix/thu hồi.
 
 ### Production và Docker
 

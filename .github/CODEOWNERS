@@ -1,0 +1,8 @@
+# Require an independent maintainer review for server-side, data, and release controls.
+/server.js @duongcongcao-0312
+/backend/ @duongcongcao-0312
+/scripts/ @duongcongcao-0312
+/.github/workflows/ @duongcongcao-0312
+/Dockerfile @duongcongcao-0312
+/compose.yaml @duongcongcao-0312
+/render*.yaml @duongcongcao-0312

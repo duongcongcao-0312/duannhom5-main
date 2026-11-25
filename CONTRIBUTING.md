@@ -16,7 +16,7 @@ Tài liệu này mô tả quy trình làm việc thông dụng cho repository Bo
 Trước khi tạo pull request, đảm bảo:
 
 - Mã nguồn đã được kiểm tra bằng lệnh phù hợp (`npm test`, `npm run build:pages`, `npm run check` nếu có).
-- `npm run test:coverage` đạt ngưỡng tối thiểu 60% line, 60% branch và 45% function coverage; báo cáo được in trong log kiểm tra CI.
+- `npm run test:coverage` đạt ngưỡng CI hiện tại: 70% line, 65% branch và 60% function coverage; báo cáo được in trong log kiểm tra CI.
 - Thay đổi được giới hạn trong phạm vi của issue hoặc task.
 - Nếu có thay đổi cấu hình/deploy, đã cập nhật tài liệu liên quan.
 - Không commit secret, `.env`, dữ liệu thật hoặc thông tin nhạy cảm.
@@ -26,6 +26,9 @@ Mỗi PR nên có:
 - Tiêu đề rõ ràng, phản ánh mục tiêu thay đổi.
 - Mô tả ngắn gọn về vấn đề cần giải quyết.
 - Liên kết tới issue tương ứng hoặc ghi chú logic của task.
+- Mọi thay đổi cần vào pull request và được review độc lập trước khi merge vào `main`;
+  thay đổi backend, dữ liệu, CI/CD và cấu hình triển khai cần maintainer trong
+  `.github/CODEOWNERS` review.
 - Danh sách kiểm tra test và impact.
 - Bằng chứng TDD theo mẫu PR: test case/file hoặc commit được tạo trước implementation, kết quả lần chạy đầu tiên thể hiện test thất bại, và lệnh/kết quả chạy lại sau implementation. Nếu không áp dụng được TDD, nêu rõ lý do cùng cách xác minh thay thế.
 
@@ -67,6 +70,9 @@ Nếu mô tả PR thiếu thông tin, người tạo PR phải bổ sung trướ
 - Ưu tiên merge theo quy trình đã được project quy định ở thời điểm đó, thường là merge vào `main` sau khi review và kiểm thử đạt tiêu chuẩn.
 - Không merge nếu có thay đổi chưa xử lý hoặc CI đang fail.
 - Trong trường hợp có conflict, giải quyết trước khi tiến hành merge.
+- Với PR vào `main`, làm theo branch protection/ruleset và required check `ci-gate`;
+  xem [quy trình bảo vệ nhánh](docs/branch-protection.md) để biết các điều kiện
+  và bằng chứng cần xác minh.
 
 ## 7. Checklist cuối cùng trước khi merge
 

@@ -1,0 +1,187 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: booknest-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  ci-gate:
+    uses: ./.github/workflows/ci.yml
+
+  deploy-and-verify:
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_BASE_URL }}
+    steps:
+      - name: Checkout deployed revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Validate staging configuration
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          STAGING_RENDER_SERVICE_ID: ${{ vars.STAGING_RENDER_SERVICE_ID }}
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+        run: |
+          test "$GITHUB_REF_NAME" = "staging" || { echo "Run this workflow from the staging branch"; exit 1; }
+          test -n "$RENDER_API_KEY" || { echo "Missing RENDER_API_KEY secret"; exit 1; }
+          test -n "$STAGING_RENDER_SERVICE_ID" || { echo "Missing STAGING_RENDER_SERVICE_ID variable"; exit 1; }
+          test -n "$STAGING_BASE_URL" || { echo "Missing STAGING_BASE_URL variable"; exit 1; }
+          node -e 'const u = new URL(process.env.STAGING_BASE_URL); if (u.protocol !== "https:" || !u.hostname.includes("staging")) process.exit(1)'
+      - name: Record current live deploy for rollback
+        id: previous-live
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          STAGING_RENDER_SERVICE_ID: ${{ vars.STAGING_RENDER_SERVICE_ID }}
+        run: |
+          response=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/deploys?limit=20")
+          deploy_id=$(printf '%s' "$response" | jq -r '[.[] | (.deploy // .) | select(.status == "live")][0].id // empty')
+          if [ -n "$deploy_id" ]; then
+            echo "Found current live deploy $deploy_id."
+          else
+            echo "No previous live deploy found; automatic rollback is unavailable for this first deploy."
+          fi
+          printf 'deploy_id=%s\n' "$deploy_id" >> "$GITHUB_OUTPUT"
+      - name: Trigger Render deploy for this revision
+        id: trigger-render-deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          STAGING_RENDER_SERVICE_ID: ${{ vars.STAGING_RENDER_SERVICE_ID }}
+        run: |
+          response=$(curl --fail --silent --show-error \
+            --request POST "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/deploys" \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "{\"commitId\":\"$GITHUB_SHA\",\"clearCache\":\"do_not_clear\"}")
+          deploy_id=$(printf '%s' "$response" | jq -er '.id')
+          printf 'deploy_id=%s\n' "$deploy_id" >> "$GITHUB_OUTPUT"
+      - name: Wait for this Render deploy to finish
+        id: render-deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          STAGING_RENDER_SERVICE_ID: ${{ vars.STAGING_RENDER_SERVICE_ID }}
+          DEPLOY_ID: ${{ steps.trigger-render-deploy.outputs.deploy_id }}
+        run: |
+          for attempt in $(seq 1 90); do
+            response=$(curl --fail --silent --show-error \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/deploys/$DEPLOY_ID")
+            status=$(printf '%s' "$response" | jq -er '.status')
+            echo "Render deploy status: $status"
+            case "$status" in
+              live)
+                deployed_commit=$(printf '%s' "$response" | jq -er '.commit.id')
+                test "$deployed_commit" = "$GITHUB_SHA"
+                printf 'deployed_commit=%s\n' "$deployed_commit" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deploy ended in $status."
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Render deploy did not finish within 15 minutes."
+          exit 1
+      - name: Wait for staging readiness
+        env:
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error "$STAGING_BASE_URL/ready"; then
+              echo "Staging is ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Staging did not become ready within 10 minutes."
+          exit 1
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run staging smoke checks
+        env:
+          SMOKE_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+          SMOKE_TIMEOUT_MS: 10000
+        run: node scripts/smoke-test.js
+      - name: Roll back staging after a failed deploy or verification
+        id: rollback
+        if: failure() && steps.previous-live.outputs.deploy_id != ''
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          STAGING_RENDER_SERVICE_ID: ${{ vars.STAGING_RENDER_SERVICE_ID }}
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous-live.outputs.deploy_id }}
+        run: |
+          response=$(curl --fail --silent --show-error \
+            --request POST "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/rollback" \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "{\"deployId\":\"$PREVIOUS_DEPLOY_ID\"}")
+          rollback_id=$(printf '%s' "$response" | jq -er '.id')
+          printf 'deploy_id=%s\n' "$rollback_id" >> "$GITHUB_OUTPUT"
+          for attempt in $(seq 1 90); do
+            response=$(curl --fail --silent --show-error \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/deploys/$rollback_id")
+            status=$(printf '%s' "$response" | jq -er '.status')
+            echo "Render rollback status: $status"
+            case "$status" in
+              live)
+                rollback_commit=$(printf '%s' "$response" | jq -er '.commit.id')
+                printf 'commit=%s\n' "$rollback_commit" >> "$GITHUB_OUTPUT"
+                test "$rollback_commit" = "$(curl --fail --silent --show-error \
+                  --header "Authorization: Bearer $RENDER_API_KEY" \
+                  "https://api.render.com/v1/services/$STAGING_RENDER_SERVICE_ID/deploys/$PREVIOUS_DEPLOY_ID" | jq -er '.commit.id')"
+                echo "Restored previous staging commit $rollback_commit."
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render rollback ended in $status."
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Render rollback did not finish within 15 minutes."
+          exit 1
+      - name: Report deployment
+        if: always()
+        env:
+          DEPLOYED_REVISION: ${{ steps.render-deploy.outputs.deployed_commit || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESULT: ${{ job.status }}
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous-live.outputs.deploy_id }}
+          ROLLBACK_DEPLOY_ID: ${{ steps.rollback.outputs.deploy_id }}
+          ROLLBACK_COMMIT: ${{ steps.rollback.outputs.commit }}
+          ROLLBACK_RESULT: ${{ steps.rollback.outcome }}
+        run: |
+          {
+            echo "## Staging deployment"
+            echo "- Revision: \`$DEPLOYED_REVISION\`"
+            echo "- Result: **$RESULT**"
+            echo "- Workflow: $RUN_URL"
+            echo "- Startup runs pre-deploy validation and migrations before the service starts."
+            echo "- Post-deploy readiness and smoke checks must pass before considering this revision verified."
+            if [ -n "$ROLLBACK_DEPLOY_ID" ]; then
+              echo "- Rollback deploy: `$ROLLBACK_DEPLOY_ID` (restored commit `$ROLLBACK_COMMIT`, result: $ROLLBACK_RESULT)."
+            elif [ "$RESULT" != "success" ] && [ -n "$PREVIOUS_DEPLOY_ID" ]; then
+              echo "- Rollback to `$PREVIOUS_DEPLOY_ID` was attempted; inspect the rollback step for its result."
+            elif [ "$RESULT" != "success" ]; then
+              echo "- No previous live deploy was available for automatic rollback."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

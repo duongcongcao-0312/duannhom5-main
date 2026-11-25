@@ -1,5 +1,48 @@
 # Triển khai BookNest
 
+Quy ước SemVer, tạo tag, release artifact, promotion, hotfix và thu hồi release
+được mô tả trong [quy trình phát hành](./release-process.md).
+
+## Tự động triển khai staging
+
+Staging dùng Blueprint riêng tại `render.staging.yaml`, với `APP_ENV=staging`,
+`EXPECTED_DATABASE_NAME=booknest_staging`, migration trước khi server nhận traffic
+và health check `/ready`. Tạo staging service và PostgreSQL riêng trong Render;
+không kết nối staging vào database, payment, email hoặc credentials production.
+
+Để bật workflow `.github/workflows/staging.yml`:
+
+1. Tạo Render API key chỉ có quyền deploy service staging và lưu thành GitHub
+   Actions secret `RENDER_API_KEY`. Lấy service ID của `duannhom5-staging` và
+   lưu thành repository variable `STAGING_RENDER_SERVICE_ID`.
+2. Thêm GitHub Actions repository variable `STAGING_BASE_URL` là URL HTTPS của
+   staging service (không có thông tin đăng nhập trong URL). Tắt auto-deploy
+   theo commit trên Render; workflow sẽ yêu cầu deploy đúng SHA của commit vừa
+   push lên `staging`.
+3. Cấu hình service bằng database staging riêng, `DATABASE_URL` và
+   `EXPECTED_DATABASE_NAME=booknest_staging`, cùng admin, rate-limit, email,
+   payment và webhook secrets chỉ dùng cho staging. Dùng dữ liệu tổng hợp hoặc
+   đã ẩn danh; không sao chép dữ liệu khách hàng thật.
+4. Merge/cherry-pick commit đã chọn vào nhánh `staging`. Push nhánh này hoặc chạy
+   workflow thủ công sẽ gọi Render deploy hook. Render chạy
+   `predeploy:check`, migration và server startup theo thứ tự trong
+   `startCommand`; workflow chờ Render xác nhận deploy SHA đó ở trạng thái live,
+   đối chiếu commit SHA, chờ `/ready`, rồi chạy `scripts/smoke-test.js`. Kết quả,
+   revision và liên kết workflow được ghi trong Actions run summary.
+
+Workflow triển khai commit SHA cụ thể được push lên nhánh `staging`; kiểm tra
+workflow thành công và smoke checks trước khi promote cùng commit sang
+production. Nếu workflow
+thất bại, xem Render deploy logs và Actions summary, giữ production nguyên trạng,
+rồi sửa lỗi. Sau khi đã kích hoạt deploy, workflow tự ghi nhận deploy live
+trước đó và gọi Render rollback nếu deploy, readiness hoặc smoke check thất bại;
+Actions summary ghi deploy ID và commit đã khôi phục. Deploy đầu tiên không có
+bản trước để khôi phục. Nếu rollback tự động không thành công, dùng deploy
+trước đó trong Render Dashboard. Chỉ rollback sau khi xác nhận migration mới
+tương thích ngược. Không tự chạy migration ngược. Nếu schema không tương thích,
+triển khai forward-fix hoặc làm theo
+[runbook backup/restore](./backup-restore-incident-runbook.md).
+
 ## Yêu cầu
 
 - Node.js 22 trở lên hoặc Docker Engine hỗ trợ image Linux.
@@ -74,6 +117,56 @@ domain gửi thư với Resend, rồi redeploy. API HTTPS không phụ thuộc k
 SMTP. Có thể dùng SMTP thay thế bằng cách cấu hình các biến `SMTP_*`. Không đưa
 API key hoặc mật khẩu SMTP vào repository. Nếu gửi thư vẫn thất bại, kiểm tra
 log dịch vụ Render để xem phản hồi lỗi từ nhà cung cấp.
+
+## Custom domain
+
+Repo hiện triển khai storefront bằng GitHub Pages và API bằng Render. Không có tên
+domain đã đăng ký nào được lưu trong repo; domain thực tế phải được chọn/đăng ký
+trong tài khoản quản lý DNS rồi mới điền vào cấu hình dưới đây. Không đưa domain
+placeholder vào production.
+
+### Storefront
+
+1. Thêm GitHub Actions repository variable `SITE_URL` với URL HTTPS chuẩn, ví dụ
+   `https://shop.example.com/`. Nếu dùng GitHub Pages ở domain gốc, build tự thêm
+   file `CNAME`; URL có đường dẫn vẫn dùng được cho GitHub Pages mặc định.
+2. Trong Settings → Pages đặt cùng custom domain và bật Enforce HTTPS sau khi
+   chứng chỉ được cấp. Tại nhà cung cấp DNS, thêm đúng bản ghi A/AAAA cho apex hoặc
+   CNAME cho subdomain theo hướng dẫn GitHub Pages hiện hành. Không tạo đồng thời
+   các bản ghi xung đột cho cùng hostname.
+3. Chờ DNS cập nhật, xác nhận domain trong GitHub Pages, mở cả HTTP và HTTPS để
+   kiểm tra HTTPS/redirect, rồi kiểm tra canonical, Open Graph, `/robots.txt` và
+   `/sitemap.xml`. Build cũng cập nhật các URL SEO từ `SITE_URL`.
+
+### API, CORS và tích hợp
+
+1. Nếu có custom API hostname, gắn hostname đó vào Render service trong Dashboard
+   và tạo bản ghi DNS mà Render chỉ định. Chờ trạng thái verified và TLS ready;
+   API phải trả HTTPS trước khi chuyển frontend sang hostname mới.
+2. Đặt GitHub Actions variable `API_BASE_URL` bằng origin API HTTPS, không có path,
+   ví dụ `https://api.example.com`. Đặt Render `CORS_ORIGINS` chính xác bằng origin
+   storefront, không có path hoặc dấu `/` cuối. Đặt `PUBLIC_APP_URL` bằng URL
+   storefront đầy đủ, thường là `https://shop.example.com/`.
+3. Cập nhật allowlist/authorized domains trong Firebase và URL redirect/callback
+   của từng nhà cung cấp thanh toán, email hoặc đăng nhập nếu các tích hợp đó đang
+   bật. Payment webhook vẫn phải trỏ tới endpoint API HTTPS của môi trường tương
+   ứng; không dùng callback production cho staging.
+4. Sau khi deploy, kiểm tra `/health` và `/ready`, đăng nhập, khôi phục mật khẩu,
+   luồng thanh toán/callback bằng giao dịch thử, CORS từ browser và redirect HTTP
+   sang HTTPS. Lưu chủ sở hữu tài khoản registrar, DNS, GitHub Pages, Render và
+   ngày gia hạn trong kho quản lý vận hành có kiểm soát; bật tự động gia hạn nếu
+   registrar hỗ trợ, đặt nhắc hạn và kiểm tra DNS/TLS định kỳ. TLS của hosting
+   được nhà cung cấp cấp/gia hạn theo trạng thái dịch vụ; quyền sở hữu domain và
+   việc gia hạn đăng ký domain vẫn do chủ tài khoản registrar quản lý.
+
+Build GitHub Pages quét toàn bộ HTML, CSS, JavaScript, JSON, XML và SVG sẽ phát
+hành, đồng thời từ chối artifact nếu tìm thấy URL `http://`. Kiểm tra này ngăn
+tài nguyên hỗn hợp đã khai báo trong bundle; sau deploy vẫn cần kiểm tra trang
+thực tế trong browser vì URL có thể được tạo động từ dữ liệu hoặc cấu hình dịch
+vụ bên ngoài. Backend gửi HSTS trong production khi request đến qua TLS hoặc
+qua reverse proxy HTTPS; probe nội bộ HTTP tiếp tục hoạt động và không nhận
+HSTS. Redirect HTTP và chứng chỉ TLS được cấu hình tại GitHub Pages/Render hoặc
+reverse proxy, không tại cổng HTTP nội bộ của Node.js.
 
 ## Overload handling
 

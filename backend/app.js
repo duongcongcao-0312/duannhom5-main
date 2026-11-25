@@ -2207,6 +2207,20 @@ function createServer({
     for (const [name, value] of Object.entries(securityHeaders)) {
       response.setHeader(name, value);
     }
+    const forwardedProto = String(request.headers["x-forwarded-proto"] || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase();
+    if (
+      request.socket?.encrypted === true ||
+      (String(process.env.NODE_ENV || "").toLowerCase() === "production" &&
+        forwardedProto === "https")
+    ) {
+      response.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+      );
+    }
     void handleRequest(request, response).catch((error) => {
       const isExpectedError =
         error instanceof RequestError ||

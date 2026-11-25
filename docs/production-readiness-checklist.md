@@ -25,6 +25,19 @@ thời lượng.
   xác minh, giữ mặc định `0` và chấp nhận giới hạn theo socket peer.
 - [ ] Ghi lại `deploy_id`, thời điểm UTC và kết quả `GET /health`, `GET /ready`.
 
+## 1.1. HTTPS và TLS
+
+- [ ] GitHub Pages bật **Enforce HTTPS** và kiểm tra URL HTTP của storefront được
+  chuyển hướng sang HTTPS.
+- [ ] Render/reverse proxy có chứng chỉ TLS hợp lệ, gia hạn tự động và chuyển
+  hướng HTTP sang HTTPS cho hostname public; cổng Node.js nội bộ không public.
+- [ ] Kiểm tra storefront, API, login/reset, thanh toán và callback chỉ dùng URL
+  HTTPS; build Pages phải qua kiểm tra mixed content.
+- [ ] Response production qua HTTPS có `Strict-Transport-Security`; probe `/health`
+  và `/ready` qua mạng nội bộ vẫn hoạt động.
+- [ ] Ghi nhận kết quả kiểm tra chứng chỉ, redirect và HSTS sau deploy; không đánh
+  dấu hoàn tất nếu chưa kiểm tra trên hostname production thực tế.
+
 ## 2. Migration và deploy
 
 1. Tạo provider snapshot/backup trước deploy và ghi `backup_id` (không ghi URL).
@@ -108,6 +121,10 @@ database đích cô lập. Không restore trực tiếp vào production trong di
 Các mục trên vẫn pending cho đến khi operator đính kèm bằng chứng vận hành.
 
 ## Versioning và rollback
+
+Theo [quy trình phát hành](./release-process.md) để đối chiếu version/tag,
+commit, CI run, checksum artifact và approval trước promotion. Ghi version cùng
+deployment ID vào evidence mỗi lần triển khai.
 
 API tiếp tục dùng `/api`; thay đổi deploy hiện tại chỉ là migration nội bộ và
 kiểm tra vận hành, không tạo version mới. Chỉ thêm `/api/v2` khi có thay đổi

@@ -36,6 +36,8 @@ jobs:
       DATABASE_URL: postgresql://booknest:booknest-test-password@localhost:5432/booknest_test
       E2E_DATABASE_URL: postgresql://booknest:booknest-test-password@127.0.0.1:5432/booknest_test
       ADMIN_EMAIL: integration-1gration-password-123
+      SITE_URL: ${{ vars.SITE_URL }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,6 +78,25 @@ jobs:
           retention-days: 14
       - name: Build application
         run: npm run build:pages
+      - name: Save verified site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: booknest-site-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Save build metadata
+        shell: bash
+        run: |
+          mkdir -p release-metadata
+          node -e 'const fs=require("node:fs"); fs.writeFileSync("release-metadata/release.json", JSON.stringify({repository:process.env.GITHUB_REPOSITORY,commit:process.env.GITHUB_SHA,ref:process.env.GITHUB_REF,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT,event:process.env.GITHUB_EVENT_NAME,node:process.version,createdAt:new Date().toISOString()},null,2)+"\n")'
+      - name: Upload build metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-metadata-${{ github.sha }}
+          path: release-metadata/release.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Install cross-browser test browsers
         run: npx playwright install --with-deps chrome msedge webkit
       - name: Run Chrome, Edge, and mobile Safari E2E
@@ -92,3 +113,17 @@ jobs:
           retention-days: 14
       - name: Security audit
         run: npm audit
+      - name: Report CI result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          REVISION: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## BookNest CI result"
+            echo "- Result: **$RESULT**"
+            echo "- Revision: `$REVISION`"
+            echo "- Workflow: $RUN_URL"
+            echo "- CI-verified site artifact is retained for 30 days; build metadata is retained for 90 days when produced."
+          } >> "$GITHUB_STEP_SUMMARY"

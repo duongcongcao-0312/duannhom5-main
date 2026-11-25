@@ -52,7 +52,7 @@ Frontend không tự chạy API trên GitHub Pages. Khi deploy tách frontend v�
 
 ## Yêu cầu
 
-- Node.js 20 trở lên.
+- Node.js 22 trở lên.
 - npm đi kèm Node.js.
 - PostgreSQL chỉ bắt buộc cho các luồng migration/seed hoặc khi muốn dùng database cloud.
 

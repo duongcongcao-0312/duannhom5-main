@@ -245,8 +245,13 @@ function createDatabasePoolConfig(connectionString, caPath = process.env.DATABAS
 
   const productionLike = [process.env.APP_ENV, process.env.NODE_ENV]
     .some((environment) => ["staging", "production"].includes(String(environment || "").toLowerCase()));
+  const isRenderInternalDatabase = Boolean(process.env.RENDER) &&
+    databaseHost.startsWith("dpg-") &&
+    !databaseHost.includes(".");
   const ssl = isLoopbackDatabase && !productionLike && !caPath
     ? false
+    : isRenderInternalDatabase && !caPath
+      ? { rejectUnauthorized: false }
     : createDatabaseSslConfig(caPath);
   return {
     connectionString: parsedUrl.toString(),

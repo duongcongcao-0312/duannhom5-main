@@ -15,7 +15,7 @@ trong vòng đời trước, trong và sau khi mua. Quy trình dưới đây dù
 | --- | --- | --- | --- |
 | Yêu cầu dịch vụ qua `POST /api/services` | Thuê, thu mua, trao đổi sách và câu hỏi dịch vụ | Được triển khai | Support |
 | Tài khoản khách hàng và tra cứu đơn | Xem đơn thuộc tài khoản, trạng thái thanh toán/xử lý | Được triển khai | Support hướng dẫn; Sales xử lý vận hành đơn |
-| Tra cứu đơn bằng mã đơn/UUID | Khách nhận UUID ở luồng đặt hàng khách | Được triển khai; UUID là bí mật tra cứu | Support xác minh và hướng dẫn |
+| Tra cứu đơn bằng mã đơn/UUID | Khách nhận mã truy cập ở luồng đặt hàng khách | Được triển khai; UUID là bí danh, mã truy cập là bí mật tra cứu | Khách tra cứu tự phục vụ; Sales/Admin hỗ trợ kiểm tra có thẩm quyền |
 | Hàng đợi tương tác CRM | Ghi nhận và theo dõi chăm sóc theo hồ sơ khách hàng | Được triển khai | Support ghi tương tác; Admin quản trị |
 | Email / điện thoại / chat mạng xã hội chính thức | Hỗ trợ trực tiếp do đơn vị vận hành công bố | **Chưa khai báo** | Cần gán kênh và lịch trực trước go-live |
 
@@ -73,16 +73,20 @@ duyệt trước khi công khai cam kết.
 ## 3. Quy trình tiếp nhận và tra cứu
 
 1. Ghi nhận kênh, thời gian, mã yêu cầu hoặc mã đơn, loại câu hỏi và mức ưu tiên.
-2. Xác nhận tối thiểu: loại yêu cầu và một trong mã đơn/UUID, thông tin tài khoản
-   đã đăng nhập hoặc thông tin liên hệ đã dùng để đặt hàng.
+2. Xác nhận tối thiểu: loại yêu cầu và thông tin định danh phù hợp. Với đơn tài
+   khoản, dùng phiên đăng nhập hợp lệ; với đơn khách, yêu cầu khách thực hiện
+   tra cứu bằng UUID và mã truy cập do luồng đặt hàng cấp.
 3. Yêu cầu chỉ dữ liệu cần thiết để xác minh; không yêu cầu mật khẩu, mã OTP,
    token, cccd/kết quả thanh toán đầy đủ hoặc ảnh thẻ thanh toán.
-4. Khi khách đã đăng nhập, tra cứu theo tài khoản; khi là đơn khách, dùng
-   `GET /api/orders/:id/status` cùng UUID ngẫu nhiên do ứng dụng cấp. Không truy
-   cập đơn hoặc hồ sơ không thuộc phạm vi.
-5. Với yêu cầu dịch vụ, tìm mã yêu cầu trong hàng đợi `GET /api/admin/services`
+4. Khi khách đã đăng nhập, hướng dẫn chủ tài khoản tra cứu chính đơn của họ;
+   Support không có quyền đọc đơn của khách hoặc hồ sơ của khách khác.
+5. Khi là đơn khách, hướng dẫn khách dùng UUID và `X-Order-Access-Code` do luồng
+   đặt hàng cung cấp tại `GET /api/orders/:id/status`. UUID không thay thế mã truy cập
+   và không phải bằng chứng ủy quyền cho nhân viên Support.
+   Support không giữ/mượn mã truy cập hay thực hiện tra cứu thay khách.
+6. Với yêu cầu dịch vụ, tìm mã yêu cầu trong hàng đợi `GET /api/admin/services`
    và đối chiếu trạng thái; Support có thể đọc/cập nhật trạng thái dịch vụ.
-6. Ghi rõ kết quả tra cứu là đơn nào, trạng thái đơn hiện tại, trạng thái thanh toán
+7. Ghi rõ kết quả tra cứu là đơn nào, trạng thái đơn hiện tại, trạng thái thanh toán
    nếu được phép xem và bước tiếp theo; không suy đoán hoặc hứa thay đổi quyền.
 
 Các trạng thái vận hành đơn hợp lệ là `received`, `processing`, `shipping`,
@@ -96,7 +100,7 @@ không được xác nhận thanh toán.
 | --- | --- |
 | Thêm/cập nhật giỏ hàng | Hướng dẫn khách kiểm tra giỏ trên trình duyệt; không tự truy cập hoặc sửa giỏ của tài khoản khác |
 | Cách đặt hàng/COD/chuyển khoản QR | Hướng dẫn theo cấu hình trang thanh toán và không yêu cầu gửi ảnh thẻ hoặc mật khẩu |
-| Tra cứu đơn | Dùng tài khoản chủ đơn hoặc mã đơn/UUID; nếu UUID bị mất, hướng dẫn khách kiểm tra thông tin nhận đơn đã cung cấp |
+| Tra cứu đơn | Chủ tài khoản tra cứu bằng phiên đăng nhập; đơn khách tự tra cứu bằng UUID và mã truy cập. Support không dùng tên/điện thoại hoặc UUID đơn độc lập để xem đơn |
 | Thay đổi địa chỉ/kích hoạt hủy | Kiểm tra trạng thái đơn; Support ghi nhận và chuyển Sales/Admin. Không hứa đổi nếu đơn đã bàn giao hoặc đã hoàn tất |
 | Giao hàng chậm/thất bại | Đối chiếu quy trình giao nhận và phản hồi theo chính sách công khai; chuyển Sales/Admin nếu cần cập nhật trạng thái |
 | Hoàn trả/hoàn tiền | Hướng dẫn theo chính sách `refund.html`/`returns.html`; không tự ra quyết định hoặc xác nhận thanh toán |

@@ -16,6 +16,91 @@
         window.booknestToast?.(message, type);
     }
 
+    function setTableState(tbody, colspan, state, message, action) {
+        tbody.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
+        tbody.dataset.state = state;
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = colspan;
+        cell.className = `text-center admin-table-state admin-table-state--${state}`;
+        cell.setAttribute('role', state === 'error' ? 'alert' : 'status');
+        cell.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
+        cell.dataset.state = state;
+        cell.textContent = message;
+        if (action) {
+            const button = document.createElement('button');
+            button.className = 'btn-link admin-table-state-action';
+            button.type = 'button';
+            button.textContent = action.label;
+            button.addEventListener('click', action.run);
+            cell.append(' ');
+            cell.appendChild(button);
+        }
+        row.appendChild(cell);
+        tbody.replaceChildren(row);
+    }
+
+    function markTableLoaded(tbody) {
+        tbody.setAttribute('aria-busy', 'false');
+        delete tbody.dataset.state;
+    }
+
+    function adminLoadError(resource, error) {
+        const status = Number(error?.status);
+        if (error?.name === 'AbortError' || status === 408 || status === 504) {
+            return `Tải ${resource} quá thời gian. Vui lòng thử lại.`;
+        }
+        if (status === 401 || status === 403) {
+            return `Phiên đăng nhập hết hạn hoặc bạn không có quyền xem ${resource}.`;
+        }
+        if (status >= 500) {
+            return `Máy chủ chưa thể tải ${resource}. Vui lòng thử lại.`;
+        }
+        if (!status || error instanceof TypeError) {
+            return `Không thể kết nối để tải ${resource}. Kiểm tra mạng và thử lại.`;
+        }
+        return `Không thể tải ${resource}. Vui lòng thử lại.`;
+    }
+
+    function responseError(response) {
+        const error = new Error('Admin request failed');
+        error.status = response.status;
+        return error;
+    }
+
+    async function runWithBusyControl(control, busyLabel, action) {
+        if (control?.dataset.busy === 'true') return undefined;
+        if (!control) return action();
+
+        control.dataset.busy = 'true';
+        control.setAttribute('aria-busy', 'true');
+        const controls = control instanceof HTMLFormElement
+            ? Array.from(control.querySelectorAll('button[type="submit"], input[type="submit"]'))
+            : [control];
+        const previous = controls.map((element) => ({
+            element,
+            disabled: element.disabled,
+            text: element instanceof HTMLSelectElement ? null : element.textContent
+        }));
+        controls.forEach((element, index) => {
+            element.disabled = true;
+            if (index === 0 && busyLabel && !(element instanceof HTMLSelectElement)) {
+                element.textContent = busyLabel;
+            }
+        });
+
+        try {
+            return await action();
+        } finally {
+            previous.forEach(({ element, disabled, text }) => {
+                element.disabled = disabled;
+                if (text !== null) element.textContent = text;
+            });
+            control.dataset.busy = 'false';
+            control.setAttribute('aria-busy', 'false');
+        }
+    }
+
     // Helper: Format Currency VND
     function formatCurrency(amount) {
         return new Intl.NumberFormat('vi-VN').format(amount || 0) + ' đ';
@@ -108,60 +193,74 @@
 
     adminLoginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        adminLoginError.hidden = true;
-        const formData = new FormData(adminLoginForm);
-        const email = formData.get('email');
-        const password = formData.get('password');
+        await runWithBusyControl(adminLoginForm, 'Đang đăng nhập...', async () => {
+            adminLoginError.hidden = true;
+            const formData = new FormData(adminLoginForm);
+            const email = formData.get('email');
+            const password = formData.get('password');
 
-        try {
-            const res = await window.booknestApiFetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                adminLoginError.textContent = data.error || 'Đăng nhập không thành công.';
+            try {
+                const res = await window.booknestApiFetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    adminLoginError.textContent = data.error || 'Đăng nhập không thành công.';
+                    adminLoginError.hidden = false;
+                    return;
+                }
+
+                const user = data.user;
+                const isAdmin = user && user.role === 'admin';
+                if (!isAdmin) {
+                    adminLoginError.textContent = 'Tài khoản này không có quyền quản trị viên.';
+                    adminLoginError.hidden = false;
+                    return;
+                }
+
+                window.booknestAuth.setToken(data.token, data.expiresAt);
+                currentAdmin = user;
+                document.getElementById('adminUserName').textContent = currentAdmin.name || 'Quản trị viên';
+                hideLoginOverlay();
+                showToast('Đăng nhập quản trị thành công!');
+                loadCurrentView();
+            } catch (err) {
+                adminLoginError.textContent = 'Không thể kết nối đến máy chủ.';
                 adminLoginError.hidden = false;
-                return;
             }
-
-            const user = data.user;
-            const isAdmin = user && user.role === 'admin';
-            if (!isAdmin) {
-                adminLoginError.textContent = 'Tài khoản này không có quyền quản trị viên.';
-                adminLoginError.hidden = false;
-                return;
-            }
-
-            window.booknestAuth.setToken(data.token, data.expiresAt);
-            currentAdmin = user;
-            document.getElementById('adminUserName').textContent = currentAdmin.name || 'Quản trị viên';
-            hideLoginOverlay();
-            showToast('Đăng nhập quản trị thành công!');
-            loadCurrentView();
-        } catch (err) {
-            adminLoginError.textContent = 'Không thể kết nối đến máy chủ.';
-            adminLoginError.hidden = false;
-        }
+        });
     });
 
 
 
-    async function performAdminLogout(endpoint, message) {
-        try {
-            await apiFetch(endpoint, { method: 'POST' });
-        } catch (error) {
-            console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
-        }
-        window.booknestAuth.clearToken();
-        currentAdmin = null;
-        showLoginOverlay();
-        showToast(message);
+    async function performAdminLogout(endpoint, message, button) {
+        await runWithBusyControl(button, 'Đang đăng xuất...', async () => {
+            let serverRevoked = false;
+            let failure;
+            try {
+                const response = await apiFetch(endpoint, { method: 'POST' });
+                if (!response.ok) throw responseError(response);
+                serverRevoked = true;
+            } catch (error) {
+                failure = error;
+                console.error('Không thể thu hồi phiên đăng nhập trên máy chủ:', error);
+            }
+            window.booknestAuth.clearToken();
+            currentAdmin = null;
+            showLoginOverlay();
+            showToast(serverRevoked
+                ? message
+                : `Đã đăng xuất trên thiết bị này nhưng chưa thể xác nhận thu hồi phiên máy chủ. ${adminLoadError('phiên đăng nhập', failure)}`,
+            serverRevoked ? 'success' : 'warning');
+        });
     }
 
-    document.getElementById('adminLogoutBtn').addEventListener('click', () => performAdminLogout('/api/auth/logout', 'Đã đăng xuất.'));
-    document.getElementById('adminLogoutAllBtn')?.addEventListener('click', () => performAdminLogout('/api/auth/logout-all', 'Đã đăng xuất khỏi tất cả thiết bị.'));
+    document.getElementById('adminLogoutBtn').addEventListener('click', (event) =>
+        performAdminLogout('/api/auth/logout', 'Đã đăng xuất.', event.currentTarget));
+    document.getElementById('adminLogoutAllBtn')?.addEventListener('click', (event) =>
+        performAdminLogout('/api/auth/logout-all', 'Đã đăng xuất khỏi tất cả thiết bị.', event.currentTarget));
 
     // Navigation & Views
     let activeView = 'dashboard';
@@ -183,7 +282,12 @@
             const targetView = tab.dataset.view;
             if (targetView && views[targetView]) {
                 activeView = targetView;
-                navTabs.forEach((t) => t.classList.toggle('active', t === tab));
+                navTabs.forEach((t) => {
+                    const selected = t === tab;
+                    t.classList.toggle('active', selected);
+                    if (selected) t.setAttribute('aria-current', 'page');
+                    else t.removeAttribute('aria-current');
+                });
                 Object.entries(views).forEach(([key, viewEl]) => {
                     viewEl.classList.toggle('active', key === targetView);
                 });
@@ -198,11 +302,14 @@
     });
 
     document.getElementById('refreshStatsBtn')?.addEventListener('click', () => {
-        loadDashboard();
-        showToast('Đã làm mới dữ liệu!');
+        const button = document.getElementById('refreshStatsBtn');
+        return runWithBusyControl(button, 'Đang làm mới...', async () => {
+            if (await loadDashboard()) showToast('Đã làm mới dữ liệu!');
+        });
     });
 
-    document.getElementById('refreshMonitoringBtn')?.addEventListener('click', loadMonitoringSummary);
+    document.getElementById('refreshMonitoringBtn')?.addEventListener('click', (event) =>
+        runWithBusyControl(event.currentTarget, 'Đang tải...', () => loadMonitoringSummary()));
 
     function loadCurrentView() {
         if (activeView === 'dashboard') loadDashboard();
@@ -218,24 +325,31 @@
 
     // --- VIEW: DASHBOARD ---
     async function loadDashboard() {
+        const recentOrdersBody = document.getElementById('recentOrdersBody');
+        setTableState(recentOrdersBody, 6, 'loading', 'Đang tải dữ liệu...');
         const monitoringLoad = loadMonitoringSummary();
         try {
             const res = await apiFetch('/api/admin/stats');
-            if (res.ok) {
-                const stats = await res.json();
-                document.getElementById('statRevenue').textContent = formatCurrency(stats.totalRevenue);
-                document.getElementById('statOrders').textContent = stats.totalOrders;
-                document.getElementById('statActiveOrders').textContent = `${stats.activeOrders || 0} đơn đang hoạt động`;
-                document.getElementById('statBooks').textContent = stats.totalBooks;
-                document.getElementById('statUsers').textContent = stats.totalUsers;
-                document.getElementById('statServices').textContent = `${stats.totalServices || 0} yêu cầu dịch vụ`;
-
-                renderRecentOrders(stats.recentOrders || []);
-            }
-        } catch (e) {
-            console.error('Lỗi tải thống kê:', e);
+            if (!res.ok) throw responseError(res);
+            const stats = await res.json();
+            document.getElementById('statRevenue').textContent = formatCurrency(stats.totalRevenue);
+            document.getElementById('statOrders').textContent = stats.totalOrders;
+            document.getElementById('statActiveOrders').textContent = `${stats.activeOrders || 0} đơn đang hoạt động`;
+            document.getElementById('statBooks').textContent = stats.totalBooks;
+            document.getElementById('statUsers').textContent = stats.totalUsers;
+            document.getElementById('statServices').textContent = `${stats.totalServices || 0} yêu cầu dịch vụ`;
+            renderRecentOrders(stats.recentOrders || []);
+            await monitoringLoad;
+            return true;
+        } catch (error) {
+            setTableState(recentOrdersBody, 6, 'error', adminLoadError('thống kê', error), {
+                label: 'Thử lại',
+                run: () => loadDashboard()
+            });
+            showToast(adminLoadError('thống kê', error), 'error');
+            await monitoringLoad;
+            return false;
         }
-        await monitoringLoad;
     }
 
     async function loadMonitoringSummary() {
@@ -293,10 +407,11 @@
         const tbody = document.getElementById('recentOrdersBody');
         if (!tbody) return;
         if (!orders.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center">Chưa có đơn hàng nào được ghi nhận.</td></tr>';
+            setTableState(tbody, 6, 'empty', 'Chưa có đơn hàng nào được ghi nhận.');
             return;
         }
 
+        markTableLoaded(tbody);
         tbody.innerHTML = orders.map((order) => {
             const date = new Date(order.createdAt).toLocaleDateString('vi-VN', {
                 hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit'
@@ -317,17 +432,17 @@
     // --- VIEW: ORDERS ---
     async function loadOrders() {
         const tbody = document.getElementById('ordersTableBody');
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">Đang tải đơn hàng...</td></tr>';
+        setTableState(tbody, 9, 'loading', 'Đang tải đơn hàng...');
         try {
             const res = await apiFetch('/api/admin/orders');
-            if (res.ok) {
-                allOrders = await res.json();
-                renderFilteredOrders();
-            } else {
-                tbody.innerHTML = '<tr><td colspan="9" class="text-center">Không thể tải đơn hàng.</td></tr>';
-            }
-        } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            if (!res.ok) throw responseError(res);
+            allOrders = await res.json();
+            renderFilteredOrders();
+        } catch (error) {
+            setTableState(tbody, 9, 'error', adminLoadError('đơn hàng', error), {
+                label: 'Thử lại',
+                run: () => loadOrders()
+            });
         }
     }
 
@@ -345,8 +460,23 @@
             return matchStatus && matchSearch;
         });
 
+        markTableLoaded(tbody);
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center">Không tìm thấy đơn hàng phù hợp.</td></tr>';
+            const hasFilters = statusFilter !== 'all' || Boolean(searchQuery);
+            setTableState(
+                tbody,
+                9,
+                'empty',
+                hasFilters ? 'Không tìm thấy đơn hàng phù hợp.' : 'Chưa có đơn hàng nào.',
+                hasFilters ? {
+                    label: 'Xóa bộ lọc',
+                    run: () => {
+                        document.getElementById('orderStatusFilter').value = 'all';
+                        document.getElementById('orderSearchInput').value = '';
+                        renderFilteredOrders();
+                    }
+                } : null
+            );
             return;
         }
 
@@ -400,32 +530,29 @@
         // Attach event listeners for status changes
         tbody.querySelectorAll('.order-status-select').forEach((select) => {
             select.addEventListener('change', async (e) => {
+                if (select.dataset.busy === 'true') return;
                 const orderId = e.target.dataset.id;
                 const newStatus = e.target.value;
-                try {
-                    const payload = {
-                        status: newStatus,
-                    };
-                    if (newStatus === 'completed' && order.paymentStatus === 'paid') {
-                        payload.paymentStatus = 'paid';
-                    }
-                    const res = await apiFetch(`/api/admin/orders/${orderId}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify(payload)
-                    });
-                    if (res.ok) {
+                const order = allOrders.find((entry) => entry.orderId === orderId);
+                if (!order) return;
+                await runWithBusyControl(select, null, async () => {
+                    try {
+                        const payload = { status: newStatus };
+                        if (newStatus === 'completed' && order.paymentStatus === 'paid') {
+                            payload.paymentStatus = 'paid';
+                        }
+                        const res = await apiFetch(`/api/admin/orders/${encodeURIComponent(orderId)}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify(payload)
+                        });
+                        if (!res.ok) throw responseError(res);
+                        order.status = newStatus;
                         showToast(`Đã cập nhật trạng thái đơn sang "${newStatus}"`);
-                        const order = allOrders.find((o) => o.orderId === orderId);
-                        if (order) order.status = newStatus;
-                        renderFilteredOrders();
-                    } else {
-                        showToast('Không thể cập nhật trạng thái đơn.', 'error');
-                        renderFilteredOrders();
+                    } catch (error) {
+                        showToast(adminLoadError('trạng thái đơn hàng', error), 'error');
                     }
-                } catch (err) {
-                    showToast('Lỗi mạng khi cập nhật.', 'error');
-                    renderFilteredOrders();
-                }
+                });
+                renderFilteredOrders();
             });
         });
     }
@@ -443,7 +570,7 @@
 
     async function loadBooks() {
         const tbody = document.getElementById('booksTableBody');
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center">Đang tải danh mục sách...</td></tr>';
+        setTableState(tbody, 8, 'loading', 'Đang tải danh mục sách...');
         try {
             const categoryRes = await apiFetch('/api/admin/categories');
             if (categoryRes.ok) {
@@ -458,14 +585,14 @@
                 syncPublisherControls(await publisherRes.json());
             }
             const res = await apiFetch('/api/admin/books');
-            if (res.ok) {
-                allBooks = await res.json();
-                renderFilteredBooks();
-            } else {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center">Không thể tải sách.</td></tr>';
-            }
-        } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            if (!res.ok) throw responseError(res);
+            allBooks = await res.json();
+            renderFilteredBooks();
+        } catch (error) {
+            setTableState(tbody, 8, 'error', adminLoadError('sách', error), {
+                label: 'Thử lại',
+                run: () => loadBooks()
+            });
         }
     }
 
@@ -493,8 +620,21 @@
         if (sortMode === 'stock-asc') filtered.sort((a, b) => ((a.stock !== undefined ? a.stock : 12) - (b.stock !== undefined ? b.stock : 12)));
         if (sortMode === 'stock-desc') filtered.sort((a, b) => ((b.stock !== undefined ? b.stock : 12) - (a.stock !== undefined ? a.stock : 12)));
 
+        markTableLoaded(tbody);
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center">Không tìm thấy sách nào.</td></tr>';
+            const hasFilters = catFilter !== 'all' || Boolean(searchQuery) || sortMode !== 'default';
+            setTableState(tbody, 8, 'empty',
+                hasFilters ? 'Không tìm thấy sách phù hợp với bộ lọc.' : 'Chưa có sách nào.',
+                hasFilters ? {
+                    label: 'Xóa bộ lọc',
+                    run: () => {
+                        document.getElementById('bookCategoryFilter').value = 'all';
+                        document.getElementById('bookSearchInput').value = '';
+                        document.getElementById('bookSortFilter').value = 'default';
+                        renderFilteredBooks();
+                    }
+                } : null
+            );
             return;
         }
 
@@ -566,17 +706,16 @@
             btn.addEventListener('click', async () => {
                 const id = btn.dataset.id;
                 if (!confirm('Bạn có chắc muốn xoá cuốn sách này khỏi kho?')) return;
-                try {
-                    const res = await apiFetch(`/api/admin/books/${encodeURIComponent(id)}`, { method: 'DELETE' });
-                    if (res.ok) {
+                await runWithBusyControl(btn, 'Đang xóa...', async () => {
+                    try {
+                        const res = await apiFetch(`/api/admin/books/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                        if (!res.ok) throw responseError(res);
                         showToast('Đã xoá sách thành công.');
-                        loadBooks();
-                    } else {
-                        showToast('Không thể xoá sách.', 'error');
+                        await loadBooks();
+                    } catch (error) {
+                        showToast(adminLoadError('sách', error), 'error');
                     }
-                } catch {
-                    showToast('Lỗi mạng.', 'error');
-                }
+                });
             });
         });
     }
@@ -590,11 +729,13 @@
         const list = document.getElementById('bookHistoryList');
         if (!panel || !list || !bookId) return;
         panel.hidden = false;
-        list.innerHTML = '<li>Đang tải lịch sử...</li>';
+        list.setAttribute('aria-busy', 'true');
+        list.innerHTML = '<li role="status" aria-live="polite">Đang tải lịch sử...</li>';
         try {
             const response = await apiFetch(`/api/admin/books/${encodeURIComponent(bookId)}/history`);
-            if (!response.ok) throw new Error('Không thể tải lịch sử sách.');
+            if (!response.ok) throw responseError(response);
             const history = await response.json();
+            list.setAttribute('aria-busy', 'false');
             list.innerHTML = history.length
                 ? history.map((entry) => {
                     const changes = Object.entries(entry.changes || {})
@@ -602,20 +743,32 @@
                         .join('; ');
                     return `<li><time>${escapeHtml(new Date(entry.createdAt).toLocaleString('vi-VN'))}</time> · ${escapeHtml(entry.actorRole || 'staff')} · ${changes}</li>`;
                 }).join('')
-                : '<li>Chưa có thay đổi giá hoặc trạng thái.</li>';
+                : '<li role="status">Chưa có thay đổi giá hoặc trạng thái.</li>';
         } catch (error) {
-            list.innerHTML = `<li>${escapeHtml(error.message || 'Không thể tải lịch sử sách.')}</li>`;
+            list.setAttribute('aria-busy', 'false');
+            list.replaceChildren();
+            const item = document.createElement('li');
+            item.setAttribute('role', 'alert');
+            item.textContent = adminLoadError('lịch sử sách', error);
+            const retry = document.createElement('button');
+            retry.className = 'btn-link';
+            retry.type = 'button';
+            retry.textContent = 'Thử lại';
+            retry.addEventListener('click', () => loadBookHistory(bookId));
+            item.append(' ', retry);
+            list.appendChild(item);
         }
     }
 
     async function loadReviewQueue() {
         const tbody = document.getElementById('reviewQueueBody');
         if (!tbody) return;
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Đang tải đánh giá...</td></tr>';
+        setTableState(tbody, 6, 'loading', 'Đang tải đánh giá...');
         try {
             const response = await apiFetch('/api/admin/reviews?limit=100');
-            if (!response.ok) throw new Error('Không thể tải hàng chờ đánh giá.');
+            if (!response.ok) throw responseError(response);
             const reviews = await response.json();
+            markTableLoaded(tbody);
             tbody.innerHTML = reviews.length
                 ? reviews.filter((review) => review.status === 'pending' || Number(review.reportCount) > 0).map((review) => `<tr>
                     <td>${escapeHtml(review.bookTitle)}</td>
@@ -627,29 +780,36 @@
                         ? `<button class="btn-sm btn-delete" data-review-id="${escapeHtml(review.id)}" data-review-status="hidden" type="button">Ẩn</button>`
                         : `<button class="btn-sm btn-edit" data-review-id="${escapeHtml(review.id)}" data-review-status="visible" type="button">Duyệt</button> <button class="btn-sm btn-delete" data-review-id="${escapeHtml(review.id)}" data-review-status="rejected" type="button">Từ chối</button>`}</td>
                 </tr>`).join('')
-                : '<tr><td colspan="6" class="text-center">Không có đánh giá chờ duyệt.</td></tr>';
+                : '';
+            if (!reviews.length || !tbody.children.length) {
+                setTableState(tbody, 6, 'empty', 'Không có đánh giá chờ duyệt.');
+            }
         } catch (error) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center">${escapeHtml(error.message || 'Không thể tải đánh giá.')}</td></tr>`;
+            setTableState(tbody, 6, 'error', adminLoadError('đánh giá', error), {
+                label: 'Thử lại',
+                run: () => loadReviewQueue()
+            });
         }
     }
 
-    document.getElementById('loadReviewQueue')?.addEventListener('click', loadReviewQueue);
+    document.getElementById('loadReviewQueue')?.addEventListener('click', (event) =>
+        runWithBusyControl(event.currentTarget, 'Đang tải...', () => loadReviewQueue()));
     document.getElementById('reviewQueueBody')?.addEventListener('click', async (event) => {
         const button = event.target.closest('[data-review-id]');
         if (!button) return;
-        try {
-            const response = await apiFetch(`/api/admin/reviews/${encodeURIComponent(button.dataset.reviewId)}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ status: button.dataset.reviewStatus })
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Không thể cập nhật đánh giá.');
+        await runWithBusyControl(button, 'Đang cập nhật...', async () => {
+            try {
+                const response = await apiFetch(`/api/admin/reviews/${encodeURIComponent(button.dataset.reviewId)}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: button.dataset.reviewStatus })
+                });
+                if (!response.ok) throw responseError(response);
+                showToast('Đã cập nhật trạng thái đánh giá.');
+                await loadReviewQueue();
+            } catch (error) {
+                showToast(adminLoadError('đánh giá', error), 'error');
             }
-            await loadReviewQueue();
-        } catch (error) {
-            showToast(error.message || 'Không thể cập nhật đánh giá.', 'error');
-        }
+        });
     });
 
     document.getElementById('openAddBookBtn')?.addEventListener('click', () => {
@@ -676,6 +836,12 @@
         }
         const selectedFiles = files.slice(0, availableSlots);
         bookImageUpload.disabled = true;
+        bookImageUpload.setAttribute('aria-busy', 'true');
+        if (bookImageUploadStatus) {
+            bookImageUploadStatus.setAttribute('role', 'status');
+            bookImageUploadStatus.setAttribute('aria-live', 'polite');
+            bookImageUploadStatus.setAttribute('aria-busy', 'true');
+        }
         if (bookImageUploadStatus) bookImageUploadStatus.textContent = 'Đang tối ưu ảnh...';
         try {
             for (const file of selectedFiles) {
@@ -709,12 +875,15 @@
             showToast(error.message || 'Không thể tải ảnh.', 'error');
         } finally {
             bookImageUpload.disabled = false;
+            bookImageUpload.setAttribute('aria-busy', 'false');
+            bookImageUploadStatus?.setAttribute('aria-busy', 'false');
             bookImageUpload.value = '';
         }
     });
 
     bookForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        await runWithBusyControl(bookForm, 'Đang lưu...', async () => {
         const data = new FormData(bookForm);
         const bookId = data.get('id');
         const currentBook = bookId
@@ -794,6 +963,7 @@
         } catch {
             showToast('Lỗi kết nối máy chủ.', 'error');
         }
+        });
     });
 
     // --- VIEW: COUPONS ---
@@ -819,11 +989,17 @@
 
     async function loadCategories() {
         const tbody = document.getElementById('categoriesTableBody');
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải danh mục...</td></tr>';
+        setTableState(tbody, 5, 'loading', 'Đang tải danh mục...');
         try {
             const res = await apiFetch('/api/admin/categories');
-            if (!res.ok) throw new Error('Không thể tải danh mục.');
+            if (!res.ok) throw responseError(res);
             const categories = await res.json();
+            markTableLoaded(tbody);
+            if (!categories.length) {
+                setTableState(tbody, 5, 'empty', 'Chưa có danh mục nào. Dùng nút "Thêm danh mục" để tạo mới.');
+                syncCategoryControls(categories);
+                return;
+            }
             syncCategoryControls(categories);
             tbody.innerHTML = categories.map((category) => `
                 <tr>
@@ -846,19 +1022,28 @@
             tbody.querySelectorAll('.delete-category-btn').forEach((button) => {
                 button.addEventListener('click', async () => {
                     if (!confirm('Xóa danh mục này? Danh mục có sách liên kết sẽ không thể xóa.')) return;
-                    const res = await apiFetch(`/api/admin/categories/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
-                    const result = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                        showToast(result.error || 'Không thể xóa danh mục.', 'error');
-                        return;
-                    }
-                    showToast('Đã xóa danh mục.');
-                    await loadCategories();
+                    await runWithBusyControl(button, 'Đang xóa...', async () => {
+                        try {
+                            const res = await apiFetch(`/api/admin/categories/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                            const result = await res.json().catch(() => ({}));
+                            if (!res.ok) {
+                                const error = new Error(result.error || adminLoadError('danh mục', responseError(res)));
+                                error.status = res.status;
+                                throw error;
+                            }
+                            showToast('Đã xóa danh mục.');
+                            await loadCategories();
+                        } catch (error) {
+                            showToast(error.status ? error.message : adminLoadError('danh mục', error), 'error');
+                        }
+                    });
                 });
             });
         } catch (error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải danh mục.</td></tr>';
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            setTableState(tbody, 5, 'error', adminLoadError('danh mục', error), {
+                label: 'Thử lại',
+                run: () => loadCategories()
+            });
         }
     }
 
@@ -881,27 +1066,33 @@
     document.getElementById('cancelCategoryModal')?.addEventListener('click', () => categoryModal.close());
     categoryForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const data = new FormData(categoryForm);
-        const slug = data.get('slug');
-        const payload = {
-            name: data.get('name'),
-            slug: data.get('categorySlug'),
-            status: data.get('status'),
-            description: data.get('description')
-        };
-        try {
-            const res = await apiFetch(
-                slug ? `/api/admin/categories/${encodeURIComponent(slug)}` : '/api/admin/categories',
-                { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
-            );
-            const result = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(result.error || 'Không thể lưu danh mục.');
-            showToast(slug ? 'Đã cập nhật danh mục.' : 'Đã tạo danh mục.');
-            categoryModal.close();
-            await loadCategories();
-        } catch (error) {
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
-        }
+        await runWithBusyControl(categoryForm, 'Đang lưu...', async () => {
+            const data = new FormData(categoryForm);
+            const slug = data.get('slug');
+            const payload = {
+                name: data.get('name'),
+                slug: data.get('categorySlug'),
+                status: data.get('status'),
+                description: data.get('description')
+            };
+            try {
+                const res = await apiFetch(
+                    slug ? `/api/admin/categories/${encodeURIComponent(slug)}` : '/api/admin/categories',
+                    { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
+                );
+                const result = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    const error = new Error(result.error || adminLoadError('danh mục', responseError(res)));
+                    error.status = res.status;
+                    throw error;
+                }
+                showToast(slug ? 'Đã cập nhật danh mục.' : 'Đã tạo danh mục.');
+                categoryModal.close();
+                await loadCategories();
+            } catch (error) {
+                showToast(error.status ? error.message : adminLoadError('danh mục', error), 'error');
+            }
+        });
     });
 
     let allAuthors = [];
@@ -927,15 +1118,17 @@
 
     async function loadAuthors() {
         const tbody = document.getElementById('authorsTableBody');
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải tác giả...</td></tr>';
+        setTableState(tbody, 5, 'loading', 'Đang tải tác giả...');
         try {
             const res = await apiFetch('/api/admin/authors');
-            if (!res.ok) throw new Error('Không thể tải danh sách tác giả.');
+            if (!res.ok) throw responseError(res);
             allAuthors = await res.json();
             renderFilteredAuthors();
         } catch (error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải tác giả.</td></tr>';
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            setTableState(tbody, 5, 'error', adminLoadError('tác giả', error), {
+                label: 'Thử lại',
+                run: () => loadAuthors()
+            });
         }
     }
 
@@ -948,8 +1141,19 @@
             escapeSearchText(author.displayName).includes(query) ||
             escapeSearchText(author.slug).includes(query)
         );
+        markTableLoaded(tbody);
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không tìm thấy tác giả nào.</td></tr>';
+            const hasQuery = Boolean(query);
+            setTableState(tbody, 5, 'empty',
+                hasQuery ? 'Không tìm thấy tác giả phù hợp.' : 'Chưa có tác giả nào. Dùng nút "Thêm tác giả" để tạo mới.',
+                hasQuery ? {
+                    label: 'Xóa tìm kiếm',
+                    run: () => {
+                        document.getElementById('authorSearchInput').value = '';
+                        renderFilteredAuthors();
+                    }
+                } : null
+            );
             return;
         }
         tbody.innerHTML = filtered.map((author) => `
@@ -973,14 +1177,21 @@
         tbody.querySelectorAll('.delete-author-btn').forEach((button) => {
             button.addEventListener('click', async () => {
                 if (!confirm('Xóa tác giả này? Tác giả đang liên kết với sách sẽ không thể xóa.')) return;
-                const res = await apiFetch(`/api/admin/authors/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
-                const result = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    showToast(result.error || 'Không thể xóa tác giả.', 'error');
-                    return;
-                }
-                showToast('Đã xóa tác giả.');
-                await loadAuthors();
+                await runWithBusyControl(button, 'Đang xóa...', async () => {
+                    try {
+                        const res = await apiFetch(`/api/admin/authors/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                        const result = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            const error = new Error(result.error || adminLoadError('tác giả', responseError(res)));
+                            error.status = res.status;
+                            throw error;
+                        }
+                        showToast('Đã xóa tác giả.');
+                        await loadAuthors();
+                    } catch (error) {
+                        showToast(error.status ? error.message : adminLoadError('tác giả', error), 'error');
+                    }
+                });
             });
         });
     }
@@ -1006,6 +1217,7 @@
     document.getElementById('authorSearchInput')?.addEventListener('input', renderFilteredAuthors);
     authorForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
+        await runWithBusyControl(authorForm, 'Đang lưu...', async () => {
         const data = new FormData(authorForm);
         const slug = data.get('slug');
         const payload = {
@@ -1021,14 +1233,19 @@
                 { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
             );
             const result = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(result.error || 'Không thể lưu tác giả.');
+            if (!res.ok) {
+                const error = new Error(result.error || adminLoadError('tác giả', responseError(res)));
+                error.status = res.status;
+                throw error;
+            }
             showToast(slug ? 'Đã cập nhật tác giả.' : 'Đã tạo tác giả.');
             authorModal.close();
             await loadAuthors();
             await loadBooks();
         } catch (error) {
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            showToast(error.status ? error.message : adminLoadError('tác giả', error), 'error');
         }
+        });
     });
 
     let allPublishers = [];
@@ -1046,16 +1263,18 @@
 
     async function loadPublishers() {
         const tbody = document.getElementById('publishersTableBody');
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải nhà xuất bản...</td></tr>';
+        setTableState(tbody, 5, 'loading', 'Đang tải nhà xuất bản...');
         try {
             const res = await apiFetch('/api/admin/publishers');
-            if (!res.ok) throw new Error('Không thể tải danh sách nhà xuất bản.');
+            if (!res.ok) throw responseError(res);
             allPublishers = await res.json();
             syncPublisherControls(allPublishers);
             renderFilteredPublishers();
         } catch (error) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải nhà xuất bản.</td></tr>';
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            setTableState(tbody, 5, 'error', adminLoadError('nhà xuất bản', error), {
+                label: 'Thử lại',
+                run: () => loadPublishers()
+            });
         }
     }
 
@@ -1068,8 +1287,19 @@
             escapeSearchText(publisher.displayName).includes(query) ||
             escapeSearchText(publisher.slug).includes(query)
         );
+        markTableLoaded(tbody);
         if (!filtered.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Không tìm thấy nhà xuất bản nào.</td></tr>';
+            const hasQuery = Boolean(query);
+            setTableState(tbody, 5, 'empty',
+                hasQuery ? 'Không tìm thấy nhà xuất bản phù hợp.' : 'Chưa có nhà xuất bản nào. Dùng nút "Thêm nhà xuất bản" để tạo mới.',
+                hasQuery ? {
+                    label: 'Xóa tìm kiếm',
+                    run: () => {
+                        document.getElementById('publisherSearchInput').value = '';
+                        renderFilteredPublishers();
+                    }
+                } : null
+            );
             return;
         }
         tbody.innerHTML = filtered.map((publisher) => `
@@ -1092,14 +1322,21 @@
         tbody.querySelectorAll('.delete-publisher-btn').forEach((button) => {
             button.addEventListener('click', async () => {
                 if (!confirm('Xóa nhà xuất bản này? Nhà xuất bản đang được sách tham chiếu sẽ không thể xóa.')) return;
-                const res = await apiFetch(`/api/admin/publishers/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
-                const result = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    showToast(result.error || 'Không thể xóa nhà xuất bản.', 'error');
-                    return;
-                }
-                showToast('Đã xóa nhà xuất bản.');
-                await loadPublishers();
+                await runWithBusyControl(button, 'Đang xóa...', async () => {
+                    try {
+                        const res = await apiFetch(`/api/admin/publishers/${encodeURIComponent(button.dataset.slug)}`, { method: 'DELETE' });
+                        const result = await res.json().catch(() => ({}));
+                        if (!res.ok) {
+                            const error = new Error(result.error || adminLoadError('nhà xuất bản', responseError(res)));
+                            error.status = res.status;
+                            throw error;
+                        }
+                        showToast('Đã xóa nhà xuất bản.');
+                        await loadPublishers();
+                    } catch (error) {
+                        showToast(error.status ? error.message : adminLoadError('nhà xuất bản', error), 'error');
+                    }
+                });
             });
         });
     }
@@ -1124,6 +1361,7 @@
     document.getElementById('publisherSearchInput')?.addEventListener('input', renderFilteredPublishers);
     publisherForm?.addEventListener('submit', async (event) => {
         event.preventDefault();
+        await runWithBusyControl(publisherForm, 'Đang lưu...', async () => {
         const data = new FormData(publisherForm);
         const slug = data.get('slug');
         const payload = {
@@ -1140,14 +1378,19 @@
                 { method: slug ? 'PUT' : 'POST', body: JSON.stringify(payload) }
             );
             const result = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(result.error || 'Không thể lưu nhà xuất bản.');
+            if (!res.ok) {
+                const error = new Error(result.error || adminLoadError('nhà xuất bản', responseError(res)));
+                error.status = res.status;
+                throw error;
+            }
             showToast(slug ? 'Đã cập nhật nhà xuất bản.' : 'Đã tạo nhà xuất bản.');
             publisherModal.close();
             await loadPublishers();
             await loadBooks();
         } catch (error) {
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            showToast(error.status ? error.message : adminLoadError('nhà xuất bản', error), 'error');
         }
+        });
     });
 
     const couponModal = document.getElementById('couponModal');
@@ -1155,25 +1398,25 @@
 
     async function loadCoupons() {
         const tbody = document.getElementById('couponsTableBody');
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center">Đang tải coupon...</td></tr>';
+        setTableState(tbody, 7, 'loading', 'Đang tải coupon...');
         try {
             const res = await apiFetch('/api/admin/coupons');
-            if (!res.ok) {
-                const error = await res.json();
-                throw new Error(error.error || 'Không thể tải coupon.');
-            }
+            if (!res.ok) throw responseError(res);
             allCoupons = await res.json();
             renderCoupons();
         } catch (error) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Không thể tải danh sách coupon.</td></tr>';
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            setTableState(tbody, 7, 'error', adminLoadError('coupon', error), {
+                label: 'Thử lại',
+                run: () => loadCoupons()
+            });
         }
     }
 
     function renderCoupons() {
         const tbody = document.getElementById('couponsTableBody');
+        markTableLoaded(tbody);
         if (!allCoupons.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center">Chưa có coupon nào.</td></tr>';
+            setTableState(tbody, 7, 'empty', 'Chưa có coupon nào. Dùng nút "Tạo coupon" để bắt đầu.');
             return;
         }
         tbody.innerHTML = allCoupons.map((coupon) => {
@@ -1228,19 +1471,25 @@
             button.addEventListener('click', async () => {
                 const coupon = allCoupons.find((entry) => entry.code === button.dataset.code);
                 if (!coupon) return;
-                try {
-                    const res = await apiFetch(`/api/admin/coupons/${encodeURIComponent(coupon.code)}`, {
-                        method: 'PATCH',
-                        headers: { 'If-Match': coupon.updatedAt || '' },
-                        body: JSON.stringify({ enabled: !coupon.enabled })
-                    });
-                    const result = await res.json();
-                    if (!res.ok) throw new Error(result.error || 'Không thể cập nhật coupon.');
-                    showToast(result.enabled ? 'Đã bật coupon.' : 'Đã tắt coupon.');
-                    await loadCoupons();
-                } catch (error) {
-                    showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
-                }
+                await runWithBusyControl(button, 'Đang cập nhật...', async () => {
+                    try {
+                        const res = await apiFetch(`/api/admin/coupons/${encodeURIComponent(coupon.code)}`, {
+                            method: 'PATCH',
+                            headers: { 'If-Match': coupon.updatedAt || '' },
+                            body: JSON.stringify({ enabled: !coupon.enabled })
+                        });
+                        const result = await res.json();
+                        if (!res.ok) {
+                            const error = new Error(result.error || adminLoadError('coupon', responseError(res)));
+                            error.status = res.status;
+                            throw error;
+                        }
+                        showToast(result.enabled ? 'Đã bật coupon.' : 'Đã tắt coupon.');
+                        await loadCoupons();
+                    } catch (error) {
+                        showToast(error.status ? error.message : adminLoadError('coupon', error), 'error');
+                    }
+                });
             });
         });
     }
@@ -1258,6 +1507,7 @@
 
     couponForm.addEventListener('submit', async (event) => {
         event.preventDefault();
+        await runWithBusyControl(couponForm, 'Đang lưu...', async () => {
         const formData = new FormData(couponForm);
         const code = String(couponForm.elements.code.value || '').trim().toUpperCase();
         const existing = allCoupons.find((coupon) => coupon.code === code);
@@ -1282,36 +1532,42 @@
                 }
             );
             const result = await res.json();
-            if (!res.ok) throw new Error(result.error || 'Không thể lưu coupon.');
+            if (!res.ok) {
+                const error = new Error(result.error || adminLoadError('coupon', responseError(res)));
+                error.status = res.status;
+                throw error;
+            }
             showToast(existing ? 'Đã cập nhật coupon.' : 'Đã tạo coupon.');
             couponModal.close();
             await loadCoupons();
         } catch (error) {
-            showToast(error.message || 'Lỗi kết nối máy chủ.', 'error');
+            showToast(error.status ? error.message : adminLoadError('coupon', error), 'error');
         }
+        });
     });
 
     // --- VIEW: SERVICES ---
     async function loadServices() {
         const tbody = document.getElementById('servicesTableBody');
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">Đang tải yêu cầu dịch vụ...</td></tr>';
+        setTableState(tbody, 9, 'loading', 'Đang tải yêu cầu dịch vụ...');
         try {
             const res = await apiFetch('/api/admin/services');
-            if (res.ok) {
-                allServices = await res.json();
-                renderServices();
-            } else {
-                tbody.innerHTML = '<tr><td colspan="9" class="text-center">Không thể tải danh sách dịch vụ.</td></tr>';
-            }
-        } catch {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+            if (!res.ok) throw responseError(res);
+            allServices = await res.json();
+            renderServices();
+        } catch (error) {
+            setTableState(tbody, 9, 'error', adminLoadError('yêu cầu dịch vụ', error), {
+                label: 'Thử lại',
+                run: () => loadServices()
+            });
         }
     }
 
     function renderServices() {
         const tbody = document.getElementById('servicesTableBody');
+        markTableLoaded(tbody);
         if (!allServices.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="text-center">Chưa có yêu cầu dịch vụ nào.</td></tr>';
+            setTableState(tbody, 9, 'empty', 'Chưa có yêu cầu dịch vụ nào.');
             return;
         }
 
@@ -1345,22 +1601,24 @@
 
         tbody.querySelectorAll('.service-status-select').forEach((sel) => {
             sel.addEventListener('change', async (e) => {
+                if (sel.dataset.busy === 'true') return;
                 const id = e.target.dataset.id;
                 const status = e.target.value;
-                try {
-                    const res = await apiFetch(`/api/admin/services/${id}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify({ status })
-                    });
-                    if (res.ok) {
+                await runWithBusyControl(sel, null, async () => {
+                    try {
+                        const res = await apiFetch(`/api/admin/services/${encodeURIComponent(id)}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ status })
+                        });
+                        if (!res.ok) throw responseError(res);
+                        const service = allServices.find((entry) => entry.id === id);
+                        if (service) service.status = status;
                         showToast('Đã cập nhật trạng thái yêu cầu dịch vụ.');
-                        const s = allServices.find((x) => x.id === id);
-                        if (s) s.status = status;
-                        renderServices();
+                    } catch (error) {
+                        showToast(adminLoadError('trạng thái yêu cầu dịch vụ', error), 'error');
                     }
-                } catch {
-                    showToast('Lỗi cập nhật.', 'error');
-                }
+                });
+                renderServices();
             });
         });
     }
@@ -1369,30 +1627,48 @@
     async function loadUsers() {
         const usersBody = document.getElementById('usersTableBody');
         const staffBody = document.getElementById('staffTableBody');
-        usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Đang tải danh sách người dùng...</td></tr>';
-        staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Đang tải nhân viên...</td></tr>';
+        setTableState(usersBody, 8, 'loading', 'Đang tải danh sách người dùng...');
+        setTableState(staffBody, 5, 'loading', 'Đang tải nhân viên...');
         try {
-            const [usersResponse, staffResponse] = await Promise.all([
+            const [usersResult, staffResult] = await Promise.allSettled([
                 apiFetch('/api/admin/users'),
                 apiFetch('/api/admin/staff')
             ]);
-            if (usersResponse.ok) {
-                allUsers = await usersResponse.json();
+            if (usersResult.status === 'fulfilled' && usersResult.value.ok) {
+                allUsers = await usersResult.value.json();
                 renderUsers();
             } else {
-                usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Không thể tải danh sách người dùng.</td></tr>';
+                const error = usersResult.status === 'rejected'
+                    ? usersResult.reason
+                    : responseError(usersResult.value);
+                setTableState(usersBody, 8, 'error', adminLoadError('người dùng', error), {
+                    label: 'Thử lại',
+                    run: () => loadUsers()
+                });
             }
-            if (staffResponse.ok) {
-                const data = await staffResponse.json();
+            if (staffResult.status === 'fulfilled' && staffResult.value.ok) {
+                const data = await staffResult.value.json();
                 allStaff = Array.isArray(data.staff) ? data.staff : [];
                 staffRolePermissions = data.rolePermissions || {};
                 renderStaff();
             } else {
-                staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Không thể tải danh sách nhân viên.</td></tr>';
+                const error = staffResult.status === 'rejected'
+                    ? staffResult.reason
+                    : responseError(staffResult.value);
+                setTableState(staffBody, 5, 'error', adminLoadError('nhân viên', error), {
+                    label: 'Thử lại',
+                    run: () => loadUsers()
+                });
             }
-        } catch {
-            usersBody.innerHTML = '<tr><td colspan="8" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
-            staffBody.innerHTML = '<tr><td colspan="5" class="text-center">Lỗi kết nối máy chủ.</td></tr>';
+        } catch (error) {
+            setTableState(usersBody, 8, 'error', adminLoadError('người dùng', error), {
+                label: 'Thử lại',
+                run: () => loadUsers()
+            });
+            setTableState(staffBody, 5, 'error', adminLoadError('nhân viên', error), {
+                label: 'Thử lại',
+                run: () => loadUsers()
+            });
         }
     }
 
@@ -1416,8 +1692,9 @@
 
     function renderStaff() {
         const tbody = document.getElementById('staffTableBody');
+        markTableLoaded(tbody);
         if (!allStaff.length) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Chưa có tài khoản nhân viên.</td></tr>';
+            setTableState(tbody, 5, 'empty', 'Chưa có tài khoản nhân viên. Dùng biểu mẫu tạo nhân viên để bắt đầu.');
             return;
         }
 
@@ -1452,7 +1729,7 @@
             select.addEventListener('change', async (event) => {
                 const staff = allStaff.find((entry) => entry.id === event.target.dataset.id);
                 if (!staff || staff.role === event.target.value) return;
-                await updateStaff(staff.id, { role: event.target.value }, 'Đã cập nhật vai trò nhân viên.');
+                await updateStaff(staff.id, { role: event.target.value }, 'Đã cập nhật vai trò nhân viên.', event.currentTarget);
             });
         });
 
@@ -1465,7 +1742,7 @@
                 if (!window.confirm(message)) return;
                 await updateStaff(button.dataset.id, { isActive: !active }, active
                     ? 'Đã vô hiệu hóa và thu hồi phiên đăng nhập của nhân viên.'
-                    : 'Đã kích hoạt tài khoản nhân viên.');
+                    : 'Đã kích hoạt tài khoản nhân viên.', button);
             });
         });
 
@@ -1482,26 +1759,28 @@
         });
     }
 
-    async function updateStaff(id, changes, successMessage) {
-        try {
-            const response = await apiFetch(`/api/admin/staff/${encodeURIComponent(id)}`, {
-                method: 'PATCH',
-                body: JSON.stringify(changes)
-            });
-            if (!response.ok) {
-                const result = await response.json();
-                showToast(result.error || 'Không thể cập nhật nhân viên.', 'error');
+    async function updateStaff(id, changes, successMessage, control) {
+        return runWithBusyControl(control, 'Đang cập nhật...', async () => {
+            try {
+                const response = await apiFetch(`/api/admin/staff/${encodeURIComponent(id)}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(changes)
+                });
+                if (!response.ok) {
+                    const result = await response.json();
+                    showToast(result.error || adminLoadError('nhân viên', responseError(response)), 'error');
+                    await loadUsers();
+                    return false;
+                }
+                showToast(successMessage);
+                await loadUsers();
+                return true;
+            } catch (error) {
+                showToast(adminLoadError('nhân viên', error), 'error');
                 await loadUsers();
                 return false;
             }
-            showToast(successMessage);
-            await loadUsers();
-            return true;
-        } catch (error) {
-            showToast('Lỗi kết nối khi cập nhật nhân viên.', 'error');
-            await loadUsers();
-            return false;
-        }
+        });
     }
 
     const staffEditDialog = document.getElementById('staffEditDialog');
@@ -1510,46 +1789,47 @@
     document.getElementById('cancelStaffEditDialog').addEventListener('click', () => staffEditDialog.close());
     staffEditForm.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const formData = new FormData(staffEditForm);
-        const id = formData.get('id');
-        const saved = await updateStaff(id, {
-            name: formData.get('name'),
-            email: formData.get('email')
-        }, 'Đã cập nhật thông tin nhân viên.');
-        if (saved) staffEditDialog.close();
+        await runWithBusyControl(staffEditForm, 'Đang lưu...', async () => {
+            const formData = new FormData(staffEditForm);
+            const id = formData.get('id');
+            const saved = await updateStaff(id, {
+                name: formData.get('name'),
+                email: formData.get('email')
+            }, 'Đã cập nhật thông tin nhân viên.');
+            if (saved) staffEditDialog.close();
+        });
     });
 
     document.getElementById('staffForm').addEventListener('submit', async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
-        const submitButton = form.querySelector('button[type="submit"]');
-        const formData = new FormData(form);
-        const staff = Object.fromEntries(formData.entries());
-        submitButton.disabled = true;
-        try {
-            const response = await apiFetch('/api/admin/staff', {
-                method: 'POST',
-                body: JSON.stringify(staff)
-            });
-            if (!response.ok) {
-                const result = await response.json();
-                showToast(result.error || 'Không thể tạo tài khoản nhân viên.', 'error');
-                return;
+        await runWithBusyControl(form, 'Đang tạo...', async () => {
+            const formData = new FormData(form);
+            const staff = Object.fromEntries(formData.entries());
+            try {
+                const response = await apiFetch('/api/admin/staff', {
+                    method: 'POST',
+                    body: JSON.stringify(staff)
+                });
+                if (!response.ok) {
+                    const result = await response.json();
+                    showToast(result.error || adminLoadError('tài khoản nhân viên', responseError(response)), 'error');
+                    return;
+                }
+                form.reset();
+                showToast('Đã tạo tài khoản nhân viên.');
+                await loadUsers();
+            } catch (error) {
+                showToast(adminLoadError('tài khoản nhân viên', error), 'error');
             }
-            form.reset();
-            showToast('Đã tạo tài khoản nhân viên.');
-            await loadUsers();
-        } catch (error) {
-            showToast('Lỗi kết nối khi tạo tài khoản nhân viên.', 'error');
-        } finally {
-            submitButton.disabled = false;
-        }
+        });
     });
 
     function renderUsers() {
         const tbody = document.getElementById('usersTableBody');
+        markTableLoaded(tbody);
         if (!allUsers.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center">Chưa có người dùng nào.</td></tr>';
+            setTableState(tbody, 8, 'empty', 'Chưa có người dùng nào.');
             return;
         }
 
@@ -1579,21 +1859,26 @@
         tbody.querySelectorAll('.student-verification-select').forEach((select) => {
             select.addEventListener('change', async (event) => {
                 const control = event.currentTarget;
-                try {
-                    const response = await apiFetch(`/api/admin/users/${encodeURIComponent(control.dataset.id)}`, {
-                        method: 'PATCH',
-                        body: JSON.stringify({ studentVerificationStatus: control.value })
-                    });
-                    if (!response.ok) {
-                        showToast((await response.json()).error || 'Không thể cập nhật xác minh sinh viên.', 'error');
-                        await loadUsers();
-                        return;
+                const user = allUsers.find((entry) => entry.id === control.dataset.id);
+                if (!user || control.dataset.busy === 'true') return;
+                const previousStatus = user.studentVerification?.status || 'pending';
+                await runWithBusyControl(control, null, async () => {
+                    try {
+                        const response = await apiFetch(`/api/admin/users/${encodeURIComponent(control.dataset.id)}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify({ studentVerificationStatus: control.value })
+                        });
+                        if (!response.ok) throw responseError(response);
+                        user.studentVerification = {
+                            ...user.studentVerification,
+                            status: control.value
+                        };
+                        showToast('Đã cập nhật trạng thái xác minh sinh viên.');
+                    } catch (error) {
+                        control.value = previousStatus;
+                        showToast(adminLoadError('trạng thái xác minh sinh viên', error), 'error');
                     }
-                    showToast('Đã cập nhật trạng thái xác minh sinh viên.');
-                } catch {
-                    showToast('Lỗi kết nối khi cập nhật xác minh sinh viên.', 'error');
-                    await loadUsers();
-                }
+                });
             });
         });
     }

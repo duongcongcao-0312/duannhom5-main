@@ -27,6 +27,26 @@ test('guest checkout creates access codes with Web Crypto and only sends them in
 	assert.doesNotMatch(script, /(?:sessionStorage|localStorage)\.setItem\([^,]*accessCode/i);
 });
 
+test('mobile storefront navigation exposes a controller for the primary routes', () => {
+	const html = read('index.html');
+	assert.match(html, /<button(?=[^>]*id="mobileNavToggle")(?=[^>]*aria-controls="mainNavigation")(?=[^>]*aria-expanded="false")[^>]*>/);
+	assert.match(html, /<nav[^>]+id="mainNavigation"/);
+	assert.match(html, /href="#books"/);
+	assert.match(html, /href="#categories"/);
+});
+
+test('catalog empty states provide an action to recover from active filters', () => {
+	const html = read('index.html');
+	assert.match(html, /<button[^>]+id="emptyStateResetBtn"[^>]*>/);
+	assert.match(read('main.js'), /emptyStateResetBtn/);
+});
+
+test('admin page skips directly to the main content', () => {
+	const html = read('admin.html');
+	assert.match(html, /<a[^>]+class="skip-link"[^>]+href="#adminMain"/);
+	assert.match(html, /<main[^>]+id="adminMain"[^>]+tabindex="-1"/);
+});
+
 test('modular server preserves public, auth, admin, privacy, and payment route contracts', async (t) => {
 	const temporaryDirectory = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'booknest-route-contract-'));
 	const server = createServer({
@@ -323,6 +343,18 @@ test('cart opens as a floating window above the BookNest assistant', () => {
 	assert.match(css, /\.cart-panel \{[^}]*bottom: 84px/);
 	assert.match(css, /\.cart-panel\.open \{[^}]*pointer-events: auto/);
 	assert.match(script, /if \(open\) toggleCart\(false\)/);
+});
+
+test('cart exposes quote and storage states with dialog keyboard semantics', () => {
+	const html = read('index.html');
+	const cartPanel = html.match(/<aside class="cart-panel"[\s\S]*?<\/aside>/)?.[0];
+	assert.ok(cartPanel);
+	assert.match(cartPanel, /role="dialog"/);
+	assert.match(cartPanel, /id="cartQuoteStatus"/);
+	assert.match(cartPanel, /id="cartStorageStatus"/);
+	const script = read('main.js');
+	assert.match(script, /event\.key === 'Escape'[\s\S]*?toggleCart\(false\)/);
+	assert.match(script, /cartReturnFocus/);
 });
 
 test('responsive CSS includes tablet and mobile breakpoints', () => {

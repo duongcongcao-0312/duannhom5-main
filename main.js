@@ -17,6 +17,8 @@ const CART_STORAGE_KEY = 'booknest-cart';
 const FAVORITES_STORAGE_KEY = 'booknest-favorites';
 const COUPON_STORAGE_KEY = 'booknest-coupon';
 const DEFAULT_BOOK_STOCK = 12;
+let cartStorageError = '';
+let cartStorageWritable = true;
 const USERS_STORAGE_KEY = 'booknest-users';
 const CURRENT_USER_STORAGE_KEY = 'booknest-current-user';
 const SERVICE_REQUESTS_STORAGE_KEY = 'booknest-service-requests';
@@ -71,12 +73,28 @@ const serviceDetails = {
 };
 
 function loadCart() {
+	let savedCart;
 	try {
-		const savedCart = JSON.parse(localStorage.getItem(CART_STORAGE_KEY) || '[]');
-		if (!Array.isArray(savedCart)) return [];
-		return savedCart.map((title) => books.find((book) => book.title === title)).filter(Boolean);
+		const serializedCart = localStorage.getItem(CART_STORAGE_KEY);
+		savedCart = serializedCart ? JSON.parse(serializedCart) : [];
 	} catch (error) {
+		cartStorageError = 'Không thể đọc giỏ hàng đã lưu trên thiết bị này.';
+		cartStorageWritable = false;
 		return [];
+	}
+	if (!Array.isArray(savedCart)) {
+		cartStorageError = 'Dữ liệu giỏ hàng đã lưu không đúng định dạng.';
+		cartStorageWritable = false;
+		return [];
+	}
+	return savedCart.map((title) => books.find((book) => book.title === title)).filter(Boolean);
+}
+
+function loadCoupon() {
+	try {
+		return localStorage.getItem(COUPON_STORAGE_KEY) || '';
+	} catch (error) {
+		return '';
 	}
 }
 
@@ -254,7 +272,7 @@ function loadFavorites() {
 	}
 }
 
-const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavorites(), coupon: localStorage.getItem(COUPON_STORAGE_KEY) || '' };
+const state = { cart: loadCart(), user: loadCurrentUser(), favorites: loadFavorites(), coupon: loadCoupon() };
 
 async function syncFavoritesFromServer() {
 	const token = window.booknestAuth?.getToken?.();
@@ -305,6 +323,7 @@ async function toggleFavorite(title) {
 	renderBooks();
 }
 let cartQuoteVersion = 0;
+let cartReturnFocus = null;
 const bookGrid = document.querySelector('#bookGrid');
 const searchInput = document.querySelector('#searchInput');
 const categoryFilter = document.querySelector('#categoryFilter');
@@ -313,21 +332,73 @@ const tagFilter = document.querySelector('#tagFilter');
 const sortFilter = document.querySelector('#sortFilter');
 const favoritesFilter = document.querySelector('#favoritesFilter');
 const resetFiltersBtn = document.querySelector('#resetFiltersBtn');
+const catalogStatus = document.querySelector('#catalogStatus');
 let showFavoritesOnly = false;
 const hasCatalogShell = Boolean(bookGrid && searchInput && categoryFilter);
 
+function setCatalogState(stateName, message, canRetry = false) {
+	if (!catalogStatus) return;
+	catalogStatus.replaceChildren();
+	catalogStatus.dataset.state = stateName;
+	catalogStatus.hidden = !message;
+	catalogStatus.setAttribute('role', stateName === 'error' ? 'alert' : 'status');
+	catalogStatus.setAttribute('aria-live', stateName === 'error' ? 'assertive' : 'polite');
+	if (message) {
+		const text = document.createElement('span');
+		text.textContent = message;
+		catalogStatus.appendChild(text);
+	}
+	if (canRetry) {
+		const retryButton = document.createElement('button');
+		retryButton.className = 'secondary-button catalog-retry';
+		retryButton.type = 'button';
+		retryButton.textContent = 'Thử lại';
+		retryButton.addEventListener('click', () => { void hydrateCatalog(); });
+		catalogStatus.appendChild(retryButton);
+	}
+}
+
+function catalogErrorMessage(error) {
+	const status = Number(error?.status || error?.response?.status);
+	const message = String(error?.message || '');
+	if (error?.name === 'AbortError' || status === 408 || status === 504 || /timeout|quá thời gian|không phản hồi/i.test(message)) {
+		return 'Tải danh mục sách quá thời gian. Vui lòng thử lại.';
+	}
+	if (status === 401 || status === 403) {
+		return 'Phiên đăng nhập hết hạn hoặc bạn không có quyền xem danh mục sách.';
+	}
+	if (status >= 500) return 'Máy chủ chưa thể tải danh mục sách. Vui lòng thử lại.';
+	if (error instanceof TypeError || /kết nối|network|failed to fetch/i.test(message)) {
+		return 'Không thể kết nối để tải danh mục sách. Kiểm tra mạng và thử lại.';
+	}
+	return 'Không thể tải danh mục sách. Vui lòng thử lại.';
+}
+
 async function hydrateCatalog() {
-	if (typeof window.booknestApiFetch !== 'function') return;
+	if (!window.BOOKNEST_API_BASE_URL) {
+		setCatalogState('static', 'Đang xem danh mục sách mẫu.');
+		return;
+	}
+	setCatalogState('loading', 'Đang tải danh mục sách...');
 	try {
+		if (typeof window.booknestApiFetch !== 'function') throw new Error('API client chưa được khởi tạo.');
 		const response = await window.booknestApiFetch('/api/books?page=1&limit=100&sort=popularity&order=desc');
-		if (!response.ok) throw new Error('Không thể tải danh mục sách.');
+		if (!response.ok) {
+			const error = new Error('Không thể tải danh mục sách.');
+			error.status = response.status;
+			throw error;
+		}
 		const remoteBooks = await response.json();
 		if (!Array.isArray(remoteBooks)) throw new Error('Danh mục sách trả về không hợp lệ.');
 		const pagination = JSON.parse(response.headers.get('x-pagination') || '{}');
 		const allRemoteBooks = [...remoteBooks];
 		for (let page = 2; page <= Number(pagination.totalPages || 1); page += 1) {
 			const pageResponse = await window.booknestApiFetch(`/api/books?page=${page}&limit=100&sort=popularity&order=desc`);
-			if (!pageResponse.ok) throw new Error('Không thể tải đầy đủ danh mục sách.');
+			if (!pageResponse.ok) {
+				const error = new Error('Không thể tải đầy đủ danh mục sách.');
+				error.status = pageResponse.status;
+				throw error;
+			}
 			const pageBooks = await pageResponse.json();
 			if (!Array.isArray(pageBooks)) throw new Error('Trang danh mục sách không hợp lệ.');
 			allRemoteBooks.push(...pageBooks);
@@ -346,23 +417,37 @@ async function hydrateCatalog() {
 			}
 		}
 		const savedCartTitles = state.cart.map((book) => book.title);
-		books.splice(0, books.length, ...allRemoteBooks.filter((book) =>
+		const validRemoteBooks = allRemoteBooks.filter((book) =>
 			book && typeof book.title === 'string' && typeof book.author === 'string' &&
 			Number.isFinite(Number(book.price))
-		));
+		);
+		books.splice(0, books.length, ...validRemoteBooks);
 		state.cart = savedCartTitles
 			.map((title) => books.find((book) => book.title === title))
 			.filter(Boolean);
 		if (window.booknestAuth?.getToken?.()) {
-			await syncFavoritesFromServer();
+			try {
+				await syncFavoritesFromServer();
+			} catch (error) {
+				showToast(error.message || 'Không thể đồng bộ sách yêu thích.', 'error');
+			}
 		}
 		if (hasCatalogShell) {
 			renderCategories();
 			renderBooks();
 		}
 		renderCart();
+		setCatalogState(
+			validRemoteBooks.length ? 'ready' : 'empty',
+			validRemoteBooks.length ? '' : 'Chưa có sách nào trong danh mục.'
+		);
 	} catch (error) {
 		console.error('Không thể đồng bộ danh mục sách:', error);
+		setCatalogState(
+			'error',
+			`${catalogErrorMessage(error)} Đang hiển thị danh mục sách mẫu.`,
+			true
+		);
 	}
 }
 
@@ -615,6 +700,14 @@ function renderBooks() {
 	if (sortFilter?.value === 'popular') visibleBooks.sort((a, b) => Number(b.popularity || b.soldCount || 0) - Number(a.popularity || a.soldCount || 0));
 
 	const totalVisible = visibleBooks.length;
+	const hasActiveFilters = Boolean(
+		query ||
+		category !== 'all' ||
+		priceRange !== 'all' ||
+		selectedTag !== 'all' ||
+		showFavoritesOnly ||
+		(sortFilter?.value && sortFilter.value !== 'featured')
+	);
 	const totalPages = Math.max(1, Math.ceil(totalVisible / catalogPageSize));
 	currentCatalogPage = Math.min(currentCatalogPage, totalPages);
 	const visiblePage = visibleBooks.slice((currentCatalogPage - 1) * catalogPageSize, currentCatalogPage * catalogPageSize);
@@ -637,8 +730,19 @@ function renderBooks() {
 	}).join('');
 	removeFailedImages(bookGrid);
 	const emptyState = document.querySelector('#emptyState');
+	const emptyStateMessage = document.querySelector('#emptyStateMessage');
+	const emptyStateResetBtn = document.querySelector('#emptyStateResetBtn');
 	const bookCount = document.querySelector('#bookCount');
 	if (emptyState) emptyState.hidden = visibleBooks.length > 0;
+	if (emptyStateMessage) {
+		emptyStateMessage.textContent = showFavoritesOnly
+			? 'Bạn chưa có sách nào trong danh sách yêu thích.'
+			: 'Không tìm thấy cuốn sách phù hợp.';
+	}
+	if (emptyStateResetBtn) {
+		emptyStateResetBtn.hidden = !hasActiveFilters;
+		emptyStateResetBtn.textContent = showFavoritesOnly ? 'Bỏ lọc yêu thích' : 'Đặt lại bộ lọc';
+	}
 	if (bookCount) bookCount.textContent = totalVisible;
 	const pagination = document.querySelector('#catalogPagination');
 	const pageStatus = document.querySelector('#booksPageStatus');
@@ -655,14 +759,6 @@ function renderBooks() {
 		btn.setAttribute('aria-pressed', String(Boolean(isMatch)));
 	});
 
-	const hasActiveFilters = Boolean(
-		query ||
-		category !== 'all' ||
-		priceRange !== 'all' ||
-		selectedTag !== 'all' ||
-		showFavoritesOnly ||
-		(sortFilter?.value && sortFilter.value !== 'featured')
-	);
 	if (resetFiltersBtn) {
 		resetFiltersBtn.hidden = !hasActiveFilters;
 	}
@@ -727,9 +823,19 @@ function removeFailedImages(container) {
 }
 
 function renderCart() {
-	try {
-		localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.cart.map((book) => book.title)));
-	} catch (error) {
+	if (cartStorageWritable) {
+		try {
+			localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(state.cart.map((book) => book.title)));
+		} catch (error) {
+			cartStorageError = 'Không thể lưu giỏ hàng trên thiết bị này.';
+			cartStorageWritable = false;
+		}
+	}
+	const storageStatus = document.querySelector('#cartStorageStatus');
+	if (storageStatus) {
+		storageStatus.dataset.state = cartStorageError ? 'error' : 'ready';
+		storageStatus.textContent = cartStorageError;
+		storageStatus.hidden = !cartStorageError;
 	}
 	const cartCount = document.querySelector('#cartCount');
 	const quickCartSummary = document.querySelector('#quickCartSummary');
@@ -738,6 +844,10 @@ function renderCart() {
 	const cartGroups = getCartGroups();
 	if (cartCount) cartCount.textContent = state.cart.length;
 	if (quickCartSummary) quickCartSummary.textContent = state.cart.length ? `${state.cart.length} cuốn sách trong giỏ hàng` : 'Chưa có sách được chọn';
+	setCartQuoteStatus(
+		state.cart.length ? 'loading' : 'empty',
+		state.cart.length ? 'Đang tính và xác minh giá...' : 'Giỏ hàng đang trống.'
+	);
 	cartItems.innerHTML = cartGroups.length ? cartGroups.map(({ book, quantity }) => {
 		const pictureSources = getBookPictureSources(book);
 		return `<div class="cart-item"><div class="mini-cover ${getBookCoverStyle(book)}">${pictureSources ? '<picture>' : ''}${pictureSources}<img data-book-title="${escapeHtml(book.title)}" data-book-author="${escapeHtml(book.author)}" src="${escapeHtml(getBookImage(book))}" alt="Bìa sách ${escapeHtml(book.title)} - ${escapeHtml(book.author)}" loading="lazy" decoding="async">${pictureSources ? '</picture>' : ''}</div><div class="cart-item-copy"><p>${escapeHtml(book.title)}</p><strong data-cart-price="${escapeHtml(book.title)}">${formatPrice(roundMoney(book.price) * quantity)}</strong><div class="quantity-control" aria-label="Số lượng ${escapeHtml(book.title)}"><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-1" type="button" aria-label="Giảm số lượng ${escapeHtml(book.title)}">−</button><span>${quantity}</span><button class="quantity-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="1" type="button" aria-label="Tăng số lượng ${escapeHtml(book.title)}">+</button><button class="remove-button" data-cart-title="${escapeHtml(book.title)}" data-cart-change="-${quantity}" type="button" aria-label="Xóa ${escapeHtml(book.title)} khỏi giỏ hàng">Xóa</button></div></div></div>`;
@@ -769,6 +879,23 @@ function renderCart() {
 	}
 	const couponInput = document.querySelector('#couponInput');
 	if (couponInput && state.coupon) couponInput.value = state.coupon;
+}
+
+function setCartQuoteStatus(status, message, canRetry = false) {
+	const quoteStatus = document.querySelector('#cartQuoteStatus');
+	if (!quoteStatus) return;
+	quoteStatus.replaceChildren();
+	quoteStatus.dataset.state = status;
+	quoteStatus.hidden = !message;
+	if (message) quoteStatus.append(document.createTextNode(message));
+	if (canRetry) {
+		const retryButton = document.createElement('button');
+		retryButton.className = 'cart-retry-button';
+		retryButton.type = 'button';
+		retryButton.textContent = 'Thử lại';
+		retryButton.addEventListener('click', renderCart);
+		quoteStatus.append(' ', retryButton);
+	}
 }
 
 async function refreshCartQuote(version, cartGroups) {
@@ -807,6 +934,7 @@ async function refreshCartQuote(version, cartGroups) {
 		document.querySelector('#paymentTotal').dataset.amount = String(quote.total);
 		const checkoutButton = document.querySelector('#checkoutButton');
 		if (checkoutButton) checkoutButton.disabled = false;
+		setCartQuoteStatus('ready', 'Giá và tồn kho đã được xác minh.');
 	} catch (error) {
 		if (version !== cartQuoteVersion) return;
 		const message = error instanceof Error ? error.message : 'Không thể tính giá đơn hàng.';
@@ -815,20 +943,35 @@ async function refreshCartQuote(version, cartGroups) {
 		document.querySelector('#cartTotal').textContent = 'Không khả dụng';
 		document.querySelector('#paymentTotal').textContent = 'Không khả dụng';
 		document.querySelector('#couponMessage').textContent = `Không thể tính giá: ${message}`;
+		setCartQuoteStatus('error', `Không thể tính giá: ${message}`, true);
 		console.error('Không thể tải báo giá giỏ hàng:', error);
 	}
 }
 
 function toggleCart(open) {
 	const cartPanel = document.querySelector('#cartPanel');
+	const wasOpen = cartPanel.classList.contains('open');
+	if (open && !wasOpen) cartReturnFocus = document.activeElement;
 	cartPanel.classList.toggle('open', open);
 	cartPanel.setAttribute('aria-hidden', String(!open));
 	document.querySelector('#overlay').classList.toggle('visible', open);
+	if (open) {
+		document.querySelector('#closeCart').focus();
+	} else if (wasOpen) {
+		if (cartReturnFocus?.isConnected) cartReturnFocus.focus();
+		cartReturnFocus = null;
+	}
 	if (open && typeof aiChat !== 'undefined' && aiChat.classList.contains('open')) {
 		aiChat.classList.remove('open');
 		aiChat.setAttribute('aria-hidden', 'true');
 	}
 }
+
+document.addEventListener('keydown', (event) => {
+	if (event.key === 'Escape' && document.querySelector('#cartPanel')?.classList.contains('open')) {
+		toggleCart(false);
+	}
+});
 
 if (bookGrid) {
 	bookGrid.addEventListener('click', (event) => {
@@ -845,6 +988,28 @@ if (cartItems) {
 		if (button) changeCartQuantity(button.dataset.cartTitle, Number(button.dataset.cartChange));
 	});
 }
+const mobileNavToggle = document.querySelector('#mobileNavToggle');
+const mainNavigation = document.querySelector('#mainNavigation');
+if (mobileNavToggle && mainNavigation) {
+	const setMobileNavigationOpen = (open, restoreFocus = false) => {
+		mobileNavToggle.setAttribute('aria-expanded', String(open));
+		mobileNavToggle.setAttribute('aria-label', open ? 'Đóng điều hướng' : 'Mở điều hướng');
+		mainNavigation.classList.toggle('is-open', open);
+		if (restoreFocus) mobileNavToggle.focus();
+	};
+	mobileNavToggle.addEventListener('click', () => {
+		setMobileNavigationOpen(mobileNavToggle.getAttribute('aria-expanded') !== 'true');
+	});
+	mainNavigation.addEventListener('click', (event) => {
+		if (event.target.closest('a')) setMobileNavigationOpen(false);
+	});
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape' && mobileNavToggle.getAttribute('aria-expanded') === 'true') {
+			setMobileNavigationOpen(false, true);
+		}
+	});
+}
+
 if (searchInput) searchInput.addEventListener('input', () => { currentCatalogPage = 1; renderBooks(); });
 if (categoryFilter) categoryFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
 if (priceFilter) priceFilter.addEventListener('change', () => { currentCatalogPage = 1; renderBooks(); });
@@ -1827,6 +1992,7 @@ initializeScrollCinema();
 renderAccount();
 fillSavedCustomerInfo();
 hydrateAuthenticatedUser();
+renderCart();
 hydrateCatalog();
 if (hasCatalogShell) {
 	renderCategories();

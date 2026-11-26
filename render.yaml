@@ -9,7 +9,7 @@ services:
     healthCheckPath: /ready
     envVars:
       - key: NODE_VERSION
-        value: 20
+        value: 22
       - key: NODE_ENV
         value: production
       - key: APP_ENV
@@ -23,6 +23,8 @@ services:
       - key: REQUEST_TIMEOUT_MS
         value: 30000
       - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_CA_PATH
         sync: false
       - key: EXPECTED_DATABASE_NAME
         sync: false

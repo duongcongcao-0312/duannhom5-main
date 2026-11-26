@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="assets/toast.css">
 </head>
 <body>
+    <a class="skip-link" href="#adminMain">Bỏ qua điều hướng, đến nội dung chính</a>
     <div id="adminApp">
         <!-- Admin Navigation Header -->
         <header class="admin-header">
@@ -19,7 +20,7 @@
                 </a>
             </div>
             <nav class="admin-nav" id="adminNav">
-                <button class="nav-tab active" data-view="dashboard" type="button">📊 Tổng quan</button>
+                <button class="nav-tab active" data-view="dashboard" aria-current="page" type="button">📊 Tổng quan</button>
                 <button class="nav-tab" data-view="orders" type="button">📦 Đơn hàng</button>
                 <button class="nav-tab" data-view="books" type="button">📚 Quản lý sách</button>
                 <button class="nav-tab" data-view="categories" type="button">🗂️ Danh mục</button>
@@ -41,7 +42,7 @@
         </header>
 
         <!-- Main Content Area -->
-        <main class="admin-main">
+        <main class="admin-main" id="adminMain" tabindex="-1">
             <!-- VIEW: DASHBOARD -->
             <section id="viewDashboard" class="admin-view active">
                 <div class="view-header">

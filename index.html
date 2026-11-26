@@ -31,7 +31,8 @@
             <span class="brand-mark" aria-hidden="true"><span>B</span><i>N</i></span>
             <span>BookNest</span>
         </a>
-        <nav class="main-nav" aria-label="Điều hướng chính">
+        <button class="account-button mobile-nav-toggle" id="mobileNavToggle" type="button" aria-controls="mainNavigation" aria-expanded="false" aria-label="Mở điều hướng">☰ Menu</button>
+        <nav class="main-nav" id="mainNavigation" aria-label="Điều hướng chính">
             <a class="active" href="#top">Trang chủ</a>
             <a href="#books">Sách</a>
             <a href="#categories">Thể loại</a>
@@ -148,8 +149,12 @@
                     <button class="secondary-button" id="resetFiltersBtn" type="button" title="Đặt lại bộ lọc" hidden>↻ Đặt lại</button>
                 </div>
             </div>
+            <div class="catalog-status" id="catalogStatus" role="status" aria-live="polite" hidden></div>
             <div class="book-grid" id="bookGrid"></div>
-            <p class="empty-state" id="emptyState" hidden>Không tìm thấy cuốn sách phù hợp.</p>
+            <div class="empty-state" id="emptyState" hidden>
+                <p id="emptyStateMessage">Không tìm thấy cuốn sách phù hợp.</p>
+                <button class="secondary-button" id="emptyStateResetBtn" type="button" hidden>Đặt lại bộ lọc</button>
+            </div>
             <nav class="catalog-pagination" id="catalogPagination" aria-label="Phân trang sách" hidden>
                 <button class="secondary-button" id="previousBooksPage" type="button">Trang trước</button>
                 <span id="booksPageStatus" aria-live="polite"></span>
@@ -202,9 +207,11 @@
         </section>
     </main>
 
-    <aside class="cart-panel" id="cartPanel" aria-label="Giỏ hàng" aria-hidden="true">
-        <div class="cart-header"><h2>Giỏ hàng</h2><button id="closeCart" type="button" aria-label="Đóng giỏ hàng">×</button></div>
+    <aside class="cart-panel" id="cartPanel" role="dialog" aria-modal="true" aria-labelledby="cartTitle" aria-hidden="true">
+        <div class="cart-header"><h2 id="cartTitle">Giỏ hàng</h2><button id="closeCart" type="button" aria-label="Đóng giỏ hàng">×</button></div>
         <div id="cartItems"><p class="cart-empty">Giỏ hàng đang trống.</p></div>
+        <p id="cartQuoteStatus" class="cart-status" role="status" aria-live="polite" data-state="empty"></p>
+        <p id="cartStorageStatus" class="cart-storage-status" role="alert" data-state="ready" hidden></p>
         <div class="coupon-box"><label for="couponInput">Mã ưu đãi</label><div><input id="couponInput" type="text" maxlength="20" placeholder="Ví dụ: BOOKNEST10"><button id="applyCoupon" type="button">Áp dụng</button></div><p id="couponMessage" role="status"></p></div>
         <div class="cart-footer"><div><span>Tạm tính</span><strong id="cartSubtotal">0 đ</strong></div><div class="discount-line" id="discountLine" hidden><span>Ưu đãi thành viên</span><strong id="cartDiscount">-0 đ</strong></div><div><span>Thành tiền</span><strong id="cartTotal">0 đ</strong></div><button class="primary-button" id="checkoutButton" type="button" disabled>Thanh toán</button></div>
     </aside>
@@ -253,7 +260,7 @@
         <form id="loginForm" class="account-form">
             <p class="account-note">Đăng nhập để lưu giỏ hàng và nhận ưu đãi tài khoản.</p>
             <label class="service-field">Email<input name="email" type="email" placeholder="ban@example.com" required></label>
-            <label class="service-field">Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label>
+            <label class="service-field">Mật khẩu<input name="email" type="email" placeholder="ban@example.com" autocomplete="username" required></label>
             <p class="form-error" id="loginError" role="alert" hidden></p>
             <button class="primary-button payment-submit" type="submit">Đăng nhập</button>
             <button class="text-button" id="forgotPasswordButton" type="button">Quên mật khẩu?</button>

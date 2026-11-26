@@ -18,6 +18,7 @@ test("pre-deploy check accepts explicit CORS origins and ordered migrations", ()
     ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example,https://admin.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    EXPECTED_DATABASE_NAME: "booknest",
     RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   });
@@ -33,6 +34,7 @@ test("pre-deploy check rejects missing SePay production settings", () => {
     ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    EXPECTED_DATABASE_NAME: "booknest",
     RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   };
@@ -53,6 +55,7 @@ test("pre-deploy check rejects malformed SePay values without exposing credentia
       ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example",
       DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+      EXPECTED_DATABASE_NAME: "booknest",
       RATE_LIMIT_HMAC_KEY: validRateLimitKey,
       ...validSePayConfig,
       SEPAY_API_KEY: syntheticCredential,
@@ -74,6 +77,7 @@ test("pre-deploy check rejects unsafe CORS origins without exposing values", () 
       ADMIN_PASSWORD: "password1234",
       CORS_ORIGINS: "https://shop.example/app",
       DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+      EXPECTED_DATABASE_NAME: "booknest",
       RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     }),
     /CORS_ORIGINS/,
@@ -86,6 +90,7 @@ test("pre-deploy check requires at least 12 non-space admin password characters"
     ADMIN_EMAIL: "deploy@example.com",
     CORS_ORIGINS: "https://shop.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    EXPECTED_DATABASE_NAME: "booknest",
     RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   };
@@ -118,6 +123,7 @@ test("pre-deploy check requires a long rate-limit HMAC key and valid trusted pro
     ADMIN_PASSWORD: "password1234",
     CORS_ORIGINS: "https://shop.example",
     DATABASE_URL: "postgresql://deploy:secret@db.example.com:5432/booknest",
+    EXPECTED_DATABASE_NAME: "booknest",
     RATE_LIMIT_HMAC_KEY: validRateLimitKey,
     ...validSePayConfig,
   };

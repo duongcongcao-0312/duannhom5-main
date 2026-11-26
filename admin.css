@@ -1,18 +1,57 @@
 :root {
-    --primary: #1d5545;
-    --primary-hover: #154034;
-    --primary-light: #e8f3ef;
-    --accent: #c99436;
-    --bg-main: #f6f8f7;
-    --bg-card: #ffffff;
-    --text-main: #1f2937;
-    --text-muted: #6b7280;
-    --border: #e5e7eb;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --info: #3b82f6;
-    --danger: #ef4444;
-    --radius: 10px;
+    --color-text: #1f2937;
+    --color-text-muted: #6b7280;
+    --color-text-placeholder: #6b7280;
+    --color-background: #f6f8f7;
+    --color-surface: #ffffff;
+    --color-primary: #1d5545;
+    --color-on-primary: #ffffff;
+    --color-primary-hover: #154034;
+    --color-primary-subtle: #e8f3ef;
+    --color-accent: #8a5a00;
+    --color-success: #065f46;
+    --color-warning: #92400e;
+    --color-info: #1e40af;
+    --color-danger: #991b1b;
+    --color-disabled-text: #6b7280;
+    --color-focus: #1d5545;
+    --color-border: #e5e7eb;
+    --color-control-border: #6b7280;
+    --color-success-surface: #d1fae5;
+    --color-warning-surface: #fef3c7;
+    --color-info-surface: #dbeafe;
+    --color-shipping: #6b21a8;
+    --color-shipping-surface: #f3e8ff;
+    --color-danger-surface: #fee2e2;
+    --color-danger-border: #fecaca;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-size-body: 1rem;
+    --font-size-small: 0.875rem;
+    --font-size-large: 1.25rem;
+    --line-height-body: 1.5;
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+    --radius-control: 6px;
+    --radius-card: 10px;
+    --primary: var(--color-primary);
+    --primary-hover: var(--color-primary-hover);
+    --primary-light: var(--color-primary-subtle);
+    --accent: var(--color-accent);
+    --bg-main: var(--color-background);
+    --bg-card: var(--color-surface);
+    --text-main: var(--color-text);
+    --text-muted: var(--color-text-muted);
+    --border: var(--color-border);
+    --success: var(--color-success);
+    --warning: var(--color-warning);
+    --info: var(--color-info);
+    --danger: var(--color-danger);
+    --radius: var(--radius-card);
     --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
@@ -24,10 +63,11 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-body);
     background-color: var(--bg-main);
     color: var(--text-main);
-    line-height: 1.5;
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
     min-height: 100vh;
 }
 
@@ -37,7 +77,7 @@ body {
     border: 1px solid #d85f4e;
     border-radius: 8px;
     box-shadow: var(--shadow-lg);
-    color: #7a2118;
+    color: var(--color-danger);
     display: flex;
     gap: 16px;
     justify-content: space-between;
@@ -67,6 +107,27 @@ body {
 }
 
 /* HEADER */
+.skip-link {
+    background: var(--color-primary);
+    border-radius: var(--radius-control);
+    color: var(--color-on-primary);
+    left: 1rem;
+    padding: 0.75rem 1rem;
+    position: fixed;
+    top: 1rem;
+    transform: translateY(calc(-100% - 1rem));
+    z-index: 1000;
+}
+
+.skip-link:focus-visible {
+    transform: translateY(0);
+}
+
+:focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: 3px;
+}
+
 .admin-header {
     background: #ffffff;
     border-bottom: 1px solid var(--border);
@@ -331,7 +392,7 @@ body {
 
 .monitoring-card strong[data-status="unavailable"],
 .monitoring-card strong[data-status="failed"] {
-    color: #b42318;
+    color: var(--color-danger);
 }
 
 .monitoring-card p {
@@ -413,28 +474,28 @@ body {
 }
 
 .status-received {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--color-warning-surface);
+    color: var(--color-warning);
 }
 
 .status-processing {
-    background: #dbeafe;
-    color: #1e40af;
+    background: var(--color-info-surface);
+    color: var(--color-info);
 }
 
 .status-shipping {
-    background: #f3e8ff;
-    color: #6b21a8;
+    background: var(--color-shipping-surface);
+    color: var(--color-shipping);
 }
 
 .status-completed {
-    background: #d1fae5;
-    color: #065f46;
+    background: var(--color-success-surface);
+    color: var(--color-success);
 }
 
 .status-cancelled {
-    background: #fee2e2;
-    color: #991b1b;
+    background: var(--color-danger-surface);
+    color: var(--color-danger);
 }
 
 .payment-badge {
@@ -446,19 +507,19 @@ body {
 }
 
 .payment-paid {
-    background: #d1fae5;
-    color: #065f46;
+    background: var(--color-success-surface);
+    color: var(--color-success);
 }
 
 .payment-pending {
-    background: #fef3c7;
-    color: #b45309;
+    background: var(--color-warning-surface);
+    color: var(--color-warning);
 }
 
 /* BUTTONS & FORMS */
 .btn-primary {
     background: var(--primary);
-    color: #fff;
+    color: var(--color-on-primary);
     border: none;
     padding: 0.6rem 1.25rem;
     border-radius: 6px;
@@ -474,7 +535,7 @@ body {
 
 .btn-secondary {
     background: #f3f4f6;
-    color: #374151;
+    color: var(--color-text);
     border: 1px solid var(--border);
     padding: 0.6rem 1.25rem;
     border-radius: 6px;
@@ -484,9 +545,9 @@ body {
 }
 
 .btn-danger {
-    background: #fee2e2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
+    background: var(--color-danger-surface);
+    color: var(--color-danger);
+    border: 1px solid var(--color-danger-border);
     padding: 0.6rem 1.25rem;
     border-radius: 6px;
     font-weight: 600;
@@ -538,13 +599,13 @@ body {
 }
 
 .btn-edit {
-    background: #e0f2fe;
-    color: #0369a1;
+    background: var(--color-info-surface);
+    color: var(--color-info);
 }
 
 .btn-delete {
-    background: #fee2e2;
-    color: #b91c1c;
+    background: var(--color-danger-surface);
+    color: var(--color-danger);
 }
 
 .filter-actions {
@@ -691,15 +752,15 @@ body {
 
 .login-hint {
     font-size: 0.8rem;
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--color-warning-surface);
+    color: var(--color-warning);
     padding: 0.6rem 0.85rem;
     border-radius: 6px;
     margin: 1rem 0;
 }
 
 .login-error {
-    color: #b91c1c;
+    color: var(--color-danger);
     font-size: 0.85rem;
     margin-bottom: 1rem;
     font-weight: 600;
@@ -733,10 +794,44 @@ body {
     }
     .admin-nav {
         overflow-x: auto;
+        flex-wrap: nowrap;
+        max-width: 100%;
+        min-width: 0;
+        overscroll-behavior-x: contain;
         white-space: nowrap;
         padding-bottom: 0.5rem;
     }
     .header-right {
         justify-content: space-between;
     }
+}
+
+.btn-secondary,
+.btn-refresh,
+.form-select,
+.form-input,
+.form-textarea,
+.staff-role-select {
+    border-color: var(--color-control-border);
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--color-text-placeholder);
+}
+
+:disabled {
+    color: var(--color-disabled-text);
+}
+
+.admin-table-state {
+    padding: 1.25rem;
+}
+
+.admin-table-state--error {
+    color: var(--color-danger);
+}
+
+.admin-table-state-action {
+    margin-left: 0.5rem;
 }

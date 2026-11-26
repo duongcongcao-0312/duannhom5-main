@@ -269,6 +269,7 @@ test("production server requires an explicit rate-limit HMAC secret", () => {
         ...process.env,
         RENDER: "",
         DATABASE_URL: "postgresql://test:test@db.example.com:5432/booknest",
+        EXPECTED_DATABASE_NAME: "booknest",
         ADMIN_EMAIL: "admin@example.com",
         ADMIN_PASSWORD: "password1234",
         RATE_LIMIT_HMAC_KEY: "",

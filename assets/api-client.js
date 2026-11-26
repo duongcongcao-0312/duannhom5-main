@@ -55,6 +55,27 @@ window.booknestAuth = {
 const API_REQUEST_TIMEOUT_MS = 15000;
 const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const API_RETRY_DELAYS_MS = [500, 1000];
+let csrfTokenPromise = null;
+
+async function getCsrfToken() {
+    if (!csrfTokenPromise) {
+        csrfTokenPromise = fetch(window.booknestApiUrl('/api/auth/csrf-token'), {
+            method: 'GET',
+            credentials: 'include',
+            headers: { Accept: 'application/json' }
+        }).then(async (response) => {
+            if (!response.ok) throw new Error('Không thể lấy mã bảo vệ CSRF.');
+            const data = await response.json();
+            if (typeof data.csrfToken !== 'string' || !data.csrfToken) {
+                throw new Error('Máy chủ không trả về mã bảo vệ CSRF.');
+            }
+            return data.csrfToken;
+        }).finally(() => {
+            csrfTokenPromise = null;
+        });
+    }
+    return csrfTokenPromise;
+}
 
 function showApiConnectionNotice(message) {
     if (typeof window.booknestToast === 'function') {
@@ -93,6 +114,11 @@ function showApiConnectionNotice(message) {
 
 window.booknestApiFetch = async function (path, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
+    const headers = new Headers(options.headers || {});
+    const sendsCookies = !SAFE_RETRY_METHODS.has(method);
+    if (sendsCookies && !headers.has('X-CSRF-Token')) {
+        headers.set('X-CSRF-Token', await getCsrfToken());
+    }
     const maxAttempts = SAFE_RETRY_METHODS.has(method) && !isLocalDemoEnvironment()
         ? API_RETRY_DELAYS_MS.length + 1
         : 1;
@@ -108,10 +134,10 @@ window.booknestApiFetch = async function (path, options = {}) {
         }, API_REQUEST_TIMEOUT_MS);
 
         try {
-            const headers = { ...(options.headers || {}) };
             response = await fetch(window.booknestApiUrl(path), {
                 ...options,
                 headers,
+                ...(sendsCookies ? { credentials: 'include' } : {}),
                 signal: controller.signal
             });
         } catch (error) {

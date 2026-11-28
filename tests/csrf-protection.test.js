@@ -7,6 +7,16 @@ const path = require("node:path");
 const test = require("node:test");
 const { createServer } = require("../server");
 
+test("API client has no unresolved merge markers and sends same-origin CSRF cookies as headers", async () => {
+  const source = await fs.readFile(
+    path.join(__dirname, "..", "assets", "api-client.js"),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /^(?:<{7}|={7}|>{7})/m);
+  assert.match(source, /getBooknestCsrfToken/);
+  assert.match(source, /headers\.set\('X-CSRF-Token', csrfToken \|\| await getCsrfToken\(\)\)/);
+});
+
 async function withServer(t, overrides = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "booknest-csrf-"));
   const server = createServer({

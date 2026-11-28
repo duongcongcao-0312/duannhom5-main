@@ -52,6 +52,21 @@ window.booknestAuth = {
     }
 };
 
+function getBooknestCsrfToken() {
+    const cookieName = 'bn_csrf_token=';
+    const cookies = document.cookie.split(';');
+
+    for (const cookie of cookies) {
+        const value = cookie.trim();
+
+        if (value.startsWith(cookieName)) {
+            return value.slice(cookieName.length);
+        }
+    }
+
+    return '';
+}
+
 const API_REQUEST_TIMEOUT_MS = 15000;
 const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const API_RETRY_DELAYS_MS = [500, 1000];
@@ -108,7 +123,28 @@ window.booknestApiFetch = async function (path, options = {}) {
         }, API_REQUEST_TIMEOUT_MS);
 
         try {
-            const headers = { ...(options.headers || {}) };
+            
+const headers = new Headers(options.headers || {});
+
+const requestUrl = new URL(
+    window.booknestApiUrl(path),
+    window.location.href
+);
+
+const requiresCsrf = ['POST', 'PUT', 'PATCH', 'DELETE']
+    .includes(method);
+
+if (
+    requiresCsrf &&
+    requestUrl.origin === window.location.origin
+) {
+    const csrfToken = getBooknestCsrfToken();
+
+    if (csrfToken && !headers.has('X-CSRF-Token')) {
+        headers.set('X-CSRF-Token', csrfToken);
+    }
+}
+
             response = await fetch(window.booknestApiUrl(path), {
                 ...options,
                 headers,
